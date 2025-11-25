@@ -23,7 +23,7 @@ class CatalogoBase(models.Model):
     )
     fecha_creacion = models.DateTimeField(auto_now_add=True)
 
-    puntaje_ph = models.IntegerField(
+    puntaje_base = models.IntegerField(
         default=0, 
         verbose_name="Puntaje PH (Lógica Diagnóstico)",
         help_text="Usado por el motor de reglas (ej. Sano=10, Dañado=50)"

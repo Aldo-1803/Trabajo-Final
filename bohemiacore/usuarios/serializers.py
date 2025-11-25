@@ -60,27 +60,27 @@ class UsuarioPerfilReadSerializer(serializers.ModelSerializer):
     
     def get_tipo_cabello(self, obj):
         if hasattr(obj, 'cliente') and obj.cliente.tipo_cabello:
-            return obj.cliente.tipo_cabello.id
+            return obj.cliente.tipo_cabello.nombre
         return None
     
     def get_grosor_cabello(self, obj):
         if hasattr(obj, 'cliente') and obj.cliente.grosor_cabello:
-            return obj.cliente.grosor_cabello.id
+            return obj.cliente.grosor_cabello.nombre
         return None
     
     def get_porosidad_cabello(self, obj):
         if hasattr(obj, 'cliente') and obj.cliente.porosidad_cabello:
-            return obj.cliente.porosidad_cabello.id
+            return obj.cliente.porosidad_cabello.nombre
         return None
     
     def get_cuero_cabelludo(self, obj):
         if hasattr(obj, 'cliente') and obj.cliente.cuero_cabelludo:
-            return obj.cliente.cuero_cabelludo.id
+            return obj.cliente.cuero_cabelludo.nombre
         return None
     
     def get_estado_general(self, obj):
         if hasattr(obj, 'cliente') and obj.cliente.estado_general:
-            return obj.cliente.estado_general.id
+            return obj.cliente.estado_general.nombre
         return None
     
     def get_historial_servicios(self, obj):

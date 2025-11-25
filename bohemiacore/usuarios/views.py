@@ -298,47 +298,29 @@ class DiagnosticoView(APIView):
                     'fuente': f"Análisis v6.0 (Regla Nivel 1: {regla})"
                 })
 
-        # --- 2. NIVEL 2 vs NIVEL 3 (Servicios vs Matriz) ---
+        # --- 2. NIVEL 2: LÓGICA DE MATRIZ ---
+        # Calculamos el puntaje basado en los atributos del perfil
         
         puntaje_salud_total = 0
         reglas_activadas = []
-        fuente_principal = ""
+        fuente_principal = "Análisis v6.0 (Nivel 2: Matriz de Perfil)"
 
         try:
-            servicios_del_perfil = perfil.historial_servicios.all()
-            
-            if servicios_del_perfil.exists():
-                # --- NIVEL 2: LÓGICA DE SERVICIOS (Anulación) ---
-                # Buscamos el servicio con el puntaje MÁS BAJO (el más dañino)
-                puntaje_minimo_servicio = servicios_del_perfil.aggregate(
-                    puntaje_minimo=Min('puntaje_base')
-                )['puntaje_minimo']
-                
-                puntaje_salud_total = puntaje_minimo_servicio
-                fuente_principal = "Análisis v6.0 (Nivel 2: Historial de Servicios)"
-                reglas_activadas.append(f"Puntaje de Servicio: {puntaje_salud_total} pts")
-
-            else:
-                # --- NIVEL 3: LÓGICA DE MATRIZ (Fallback) ---
-                # (Si no hay servicios, calculamos la matriz)
-                
-                if perfil.estado_general:
-                    puntaje_salud_total += perfil.estado_general.puntaje_base
-                    reglas_activadas.append(f"Estado({perfil.estado_general.puntaje_base} pts)")
-                if perfil.cuero_cabelludo:
-                    puntaje_salud_total += perfil.cuero_cabelludo.puntaje_base
-                    reglas_activadas.append(f"Cuero({perfil.cuero_cabelludo.puntaje_base} pts)")
-                if perfil.tipo_cabello:
-                    puntaje_salud_total += perfil.tipo_cabello.puntaje_base
-                    reglas_activadas.append(f"Tipo({perfil.tipo_cabello.puntaje_base} pts)")
-                if perfil.grosor_cabello:
-                    puntaje_salud_total += perfil.grosor_cabello.puntaje_base
-                    reglas_activadas.append(f"Grosor({perfil.grosor_cabello.puntaje_base} pts)")
-                if perfil.porosidad_cabello:
-                    puntaje_salud_total += perfil.porosidad_cabello.puntaje_base
-                    reglas_activadas.append(f"Porosidad({perfil.porosidad_cabello.puntaje_base} pts)")
-                
-                fuente_principal = "Análisis v6.0 (Nivel 3: Matriz de Perfil)"
+            if perfil.estado_general:
+                puntaje_salud_total += perfil.estado_general.puntaje_base
+                reglas_activadas.append(f"Estado({perfil.estado_general.puntaje_base} pts)")
+            if perfil.cuero_cabelludo:
+                puntaje_salud_total += perfil.cuero_cabelludo.puntaje_base
+                reglas_activadas.append(f"Cuero({perfil.cuero_cabelludo.puntaje_base} pts)")
+            if perfil.tipo_cabello:
+                puntaje_salud_total += perfil.tipo_cabello.puntaje_base
+                reglas_activadas.append(f"Tipo({perfil.tipo_cabello.puntaje_base} pts)")
+            if perfil.grosor_cabello:
+                puntaje_salud_total += perfil.grosor_cabello.puntaje_base
+                reglas_activadas.append(f"Grosor({perfil.grosor_cabello.puntaje_base} pts)")
+            if perfil.porosidad_cabello:
+                puntaje_salud_total += perfil.porosidad_cabello.puntaje_base
+                reglas_activadas.append(f"Porosidad({perfil.porosidad_cabello.puntaje_base} pts)")
                 
         except AttributeError as e:
             return Response(
