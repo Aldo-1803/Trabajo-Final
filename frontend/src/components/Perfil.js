@@ -1,83 +1,16 @@
-// frontend/src/components/Perfil.js
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 
-const DiagnosticoCard = ({ diagnostico, loading }) => {
-    if (loading) {
-        return (
-            <div className="bg-white rounded-2xl p-8 shadow-lg">
-                <div className="animate-pulse">
-                    <div className="h-8 bg-amber-200 rounded w-3/4 mb-4"></div>
-                    <div className="space-y-3">
-                        <div className="h-4 bg-amber-100 rounded w-full"></div>
-                        <div className="h-4 bg-amber-100 rounded w-5/6"></div>
-                    </div>
-                </div>
-            </div>
-        );
-    }
-
-    if (!diagnostico) {
-        return (
-            <div className="bg-white rounded-2xl p-8 shadow-lg border-2 border-amber-200">
-                <p className="text-center text-amber-900">No hay datos de diagnóstico disponibles</p>
-            </div>
-        );
-    }
-
-    return (
-        <div className="bg-white rounded-2xl p-8 shadow-lg border-l-4" style={{ borderColor: '#7a5c3c' }}>
-            <h2 className="text-2xl font-bold mb-6" style={{ color: '#7a5c3c' }}>💇 Tu Diagnóstico</h2>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="p-4 rounded-lg" style={{ backgroundColor: '#f5e1ce' }}>
-                    <p className="text-sm font-semibold" style={{ color: '#7a5c3c' }}>Tipo de Cabello</p>
-                    <p className="text-lg font-bold mt-2" style={{ color: '#b08e6b' }}>
-                        {diagnostico.tipo_cabello?.nombre || 'No especificado'}
-                    </p>
-                </div>
-                
-                <div className="p-4 rounded-lg" style={{ backgroundColor: '#f5e1ce' }}>
-                    <p className="text-sm font-semibold" style={{ color: '#7a5c3c' }}>Grosor</p>
-                    <p className="text-lg font-bold mt-2" style={{ color: '#b08e6b' }}>
-                        {diagnostico.grosor_cabello?.nombre || 'No especificado'}
-                    </p>
-                </div>
-
-                <div className="p-4 rounded-lg" style={{ backgroundColor: '#f5e1ce' }}>
-                    <p className="text-sm font-semibold" style={{ color: '#7a5c3c' }}>Porosidad</p>
-                    <p className="text-lg font-bold mt-2" style={{ color: '#b08e6b' }}>
-                        {diagnostico.porosidad_cabello?.nombre || 'No especificado'}
-                    </p>
-                </div>
-
-                <div className="p-4 rounded-lg" style={{ backgroundColor: '#f5e1ce' }}>
-                    <p className="text-sm font-semibold" style={{ color: '#7a5c3c' }}>Cuero Cabelludo</p>
-                    <p className="text-lg font-bold mt-2" style={{ color: '#b08e6b' }}>
-                        {diagnostico.cuero_cabelludo?.nombre || 'No especificado'}
-                    </p>
-                </div>
-
-                <div className="p-4 rounded-lg col-span-1 md:col-span-2" style={{ backgroundColor: '#f5e1ce' }}>
-                    <p className="text-sm font-semibold" style={{ color: '#7a5c3c' }}>Estado General</p>
-                    <p className="text-lg font-bold mt-2" style={{ color: '#b08e6b' }}>
-                        {diagnostico.estado_general?.nombre || 'No especificado'}
-                    </p>
-                </div>
-            </div>
-        </div>
-    );
-};
-
 const Perfil = () => {
     const [usuario, setUsuario] = useState(null);
+    const [diagnostico, setDiagnostico] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const navigate = useNavigate();
 
     useEffect(() => {
-        const fetchPerfil = async () => {
+        const fetchDatos = async () => {
             try {
                 setLoading(true);
                 const token = localStorage.getItem('access_token');
@@ -87,13 +20,21 @@ const Perfil = () => {
                     return;
                 }
 
-                const response = await axios.get('/api/usuarios/perfil/', {
-                    headers: {
-                        'Authorization': `Bearer ${token}`
-                    }
+                // 1. Obtener perfil del usuario
+                const perfilResponse = await axios.get('/api/usuarios/perfil/', {
+                    headers: { 'Authorization': `Bearer ${token}` }
                 });
+                setUsuario(perfilResponse.data);
 
-                setUsuario(response.data);
+                // 2. Obtener diagnóstico
+                try {
+                    const diagResponse = await axios.get('/api/usuarios/diagnostico/', {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+                    setDiagnostico(diagResponse.data);
+                } catch (diagErr) {
+                    console.error('Error al cargar diagnóstico:', diagErr);
+                }
             } catch (err) {
                 console.error('Error al cargar perfil:', err);
                 setError('Error al cargar tu perfil');
@@ -105,7 +46,7 @@ const Perfil = () => {
             }
         };
 
-        fetchPerfil();
+        fetchDatos();
     }, [navigate]);
 
     const logout = () => {
@@ -141,7 +82,7 @@ const Perfil = () => {
                     </div>
                 )}
 
-                {/* Datos del Usuario */}
+                {/* Información Personal */}
                 <div className="bg-white rounded-2xl p-8 shadow-lg mb-8">
                     <h2 className="text-2xl font-bold mb-6" style={{ color: '#7a5c3c' }}>👤 Información Personal</h2>
                     
@@ -174,8 +115,73 @@ const Perfil = () => {
                     </div>
                 </div>
 
-                {/* Diagnóstico de Cabello */}
-                <DiagnosticoCard diagnostico={usuario?.cliente} loading={loading} />
+                {/* Diagnóstico */}
+                {diagnostico && (
+                    <div className="bg-gradient-to-r from-rose-50 to-amber-50 rounded-2xl p-8 shadow-lg border-l-4 border-rose-400 mb-8">
+                        <h2 className="text-2xl font-bold mb-4 text-rose-900">🔍 Tu Diagnóstico Personalizado</h2>
+                        
+                        <div className="bg-white rounded-lg p-6 mb-4">
+                            <p className="text-lg text-gray-700 leading-relaxed">
+                                {diagnostico.mensaje_diagnostico}
+                            </p>
+                        </div>
+
+                        <div className="bg-white rounded-lg p-4 mb-4">
+                            <p className="text-sm font-semibold text-rose-700 mb-2">💡 Recomendación:</p>
+                            <p className="text-gray-700 font-medium">{diagnostico.accion}</p>
+                        </div>
+
+                        {diagnostico.puntaje_final !== undefined && (
+                            <div className="p-4 rounded-lg" style={{ backgroundColor: '#f5e1ce' }}>
+                                <p className="text-sm font-semibold text-gray-700">Puntaje de Salud: 
+                                    <span className="text-lg font-bold text-rose-600 ml-2">{diagnostico.puntaje_final}/10</span>
+                                </p>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* Perfil Capilar */}
+                <div className="bg-white rounded-2xl p-8 shadow-lg border-l-4 mb-8" style={{ borderColor: '#7a5c3c' }}>
+                    <h2 className="text-2xl font-bold mb-6" style={{ color: '#7a5c3c' }}>💇 Tu Perfil Capilar</h2>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="p-4 rounded-lg" style={{ backgroundColor: '#f5e1ce' }}>
+                            <p className="text-sm font-semibold" style={{ color: '#7a5c3c' }}>Tipo de Cabello</p>
+                            <p className="text-lg font-bold mt-2" style={{ color: '#b08e6b' }}>
+                                {usuario?.tipo_cabello || 'No especificado'}
+                            </p>
+                        </div>
+                        
+                        <div className="p-4 rounded-lg" style={{ backgroundColor: '#f5e1ce' }}>
+                            <p className="text-sm font-semibold" style={{ color: '#7a5c3c' }}>Grosor</p>
+                            <p className="text-lg font-bold mt-2" style={{ color: '#b08e6b' }}>
+                                {usuario?.grosor_cabello || 'No especificado'}
+                            </p>
+                        </div>
+
+                        <div className="p-4 rounded-lg" style={{ backgroundColor: '#f5e1ce' }}>
+                            <p className="text-sm font-semibold" style={{ color: '#7a5c3c' }}>Porosidad</p>
+                            <p className="text-lg font-bold mt-2" style={{ color: '#b08e6b' }}>
+                                {usuario?.porosidad_cabello || 'No especificado'}
+                            </p>
+                        </div>
+
+                        <div className="p-4 rounded-lg" style={{ backgroundColor: '#f5e1ce' }}>
+                            <p className="text-sm font-semibold" style={{ color: '#7a5c3c' }}>Cuero Cabelludo</p>
+                            <p className="text-lg font-bold mt-2" style={{ color: '#b08e6b' }}>
+                                {usuario?.cuero_cabelludo || 'No especificado'}
+                            </p>
+                        </div>
+
+                        <div className="p-4 rounded-lg col-span-1 md:col-span-2" style={{ backgroundColor: '#f5e1ce' }}>
+                            <p className="text-sm font-semibold" style={{ color: '#7a5c3c' }}>Estado General</p>
+                            <p className="text-lg font-bold mt-2" style={{ color: '#b08e6b' }}>
+                                {usuario?.estado_general || 'No especificado'}
+                            </p>
+                        </div>
+                    </div>
+                </div>
 
                 {/* Botones de Acción */}
                 <div className="mt-8 flex gap-4">
@@ -184,7 +190,7 @@ const Perfil = () => {
                         className="flex-1 font-bold py-3 px-6 rounded-lg text-white transition duration-200 transform hover:scale-105"
                         style={{ background: 'linear-gradient(135deg, #7a5c3c 0%, #b08e6b 100%)' }}
                     >
-                        ✏️ Editar Perfil
+                        Editar Perfil
                     </button>
 
                     <button
@@ -195,7 +201,7 @@ const Perfil = () => {
                             color: '#7a5c3c'
                         }}
                     >
-                        🚪 Cerrar Sesión
+                        Cerrar Sesión
                     </button>
                 </div>
             </div>
@@ -210,11 +216,7 @@ axios.interceptors.response.use(
     response => response,
     async (error) => {
         const originalRequest = error.config;
-
-        // --- ¡AQUÍ ESTÁ LA CORRECCIÓN! ---
-        // Verificamos primero que 'error.response' exista.
-        // Si no existe (ej. ERR_CONNECTION_REFUSED), simplemente 
-        // rechazamos el error y dejamos que el .catch() del componente (Login.js) lo maneje.
+        
         if (error.response && 
             error.response.status === 401 && 
             error.response.data.code === 'token_not_valid' && 

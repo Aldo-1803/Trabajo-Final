@@ -1,4 +1,8 @@
 from django.db import models
+from django.utils import timezone
+from django.conf import settings
+from django.core.exceptions import ValidationError
+
 
 # ----------------------------------------------------
 # 1. CLASE BASE ABSTRACTA (Su excelente diseño)
@@ -129,7 +133,7 @@ class Servicio(CatalogoBase):
     # 1. CATEGORIA (Tu atributo clave)
     categoria = models.ForeignKey(
         CategoriaServicio,
-        on_delete=models.SET_NULL, # Si borras la categoría, el servicio no se borra
+        on_delete=models.SET_NULL, 
         null=True,
         blank=True,
         verbose_name="Categoría"
@@ -149,6 +153,12 @@ class Servicio(CatalogoBase):
         default=0.00,
         verbose_name="Precio Base"
     )
+    
+    #Campo para identificar si requiere tiempo de reposo (paralelismo)
+    permite_simultaneidad = models.BooleanField(
+        default=False, 
+        help_text="Si es True, Yani puede atender a otra persona durante el reposo."
+    )
 
     class Meta:
         verbose_name = "Servicio"
@@ -159,3 +169,117 @@ class Servicio(CatalogoBase):
         if self.categoria:
             return f"[{self.categoria.nombre}] {self.nombre}"
         return self.nombre
+    
+
+# ----------------------------------------------------
+# 4. MODELOS DE CONFIGURACIÓN DEL AGENDA
+# ----------------------------------------------------
+class Configuracion(models.Model):
+    """
+    PATRÓN SINGLETON: Guarda las reglas globales del negocio.
+    """
+    intervalo_turnos = models.IntegerField(default=30, help_text="Minutos de cada bloque en la grilla visual")
+    max_dias_anticipacion = models.IntegerField(default=60, help_text="Cuanto tiempo antes se puede reservar")
+    
+    # Política de Señas
+    monto_sena = models.DecimalField(max_digits=10, decimal_places=2, default=5000.00)
+    tiempo_limite_pago_sena = models.IntegerField(default=24, help_text="Horas para pagar antes de cancelar")
+
+    class Meta:
+        verbose_name = "Configuración del Sistema"
+        verbose_name_plural = "Configuración"
+
+    def save(self, *args, **kwargs):
+        # Esto fuerza a que siempre sea el ID=1. Si intentas crear otro, sobrescribe el existente.
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return "Configuración General (No borrar)"
+
+
+class DiasSemana(models.IntegerChoices):
+    """
+    ENUM para evitar una tabla extra en la BD.
+    Es más rápido y fácil de usar en el código.
+    """
+    LUNES = 0, 'Lunes'
+    MARTES = 1, 'Martes'
+    MIERCOLES = 2, 'Miércoles'
+    JUEVES = 3, 'Jueves'
+    VIERNES = 4, 'Viernes'
+    SABADO = 5, 'Sábado'
+    DOMINGO = 6, 'Domingo'
+
+
+class HorarioLaboral(models.Model):
+    """
+    Define la 'plantilla' de disponibilidad de Yani.
+    Ej: Lunes de 10:00 a 16:00.
+    """
+    dia = models.IntegerField(choices=DiasSemana.choices, unique=True)
+    hora_inicio = models.TimeField()
+    hora_fin = models.TimeField()
+    activo = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['dia']
+        verbose_name = "Horario Laboral"
+        verbose_name_plural = "Horarios Laborales"
+
+    def __str__(self):
+        return f"{self.get_dia_display()}: {self.hora_inicio} - {self.hora_fin}"
+
+
+class Turno(models.Model):
+    class Estado(models.TextChoices):
+        # --- FLUJO NORMAL ---
+        SOLICITADO = 'solicitado', 'Solicitado (Requiere Análisis)'
+        ESPERANDO_SENA = 'esperando_sena', 'Aprobado (Esperando Seña)'
+        CONFIRMADO = 'confirmado', 'Confirmado (Seña OK)'
+        
+        # --- ESTADOS FINALES ---
+        REALIZADO = 'realizado', 'Realizado'
+        CANCELADO = 'cancelado', 'Cancelado / Rechazado'
+        AUSENTE = 'ausente', 'Ausente (No vino)'
+
+    # Relaciones
+    cliente = models.ForeignKey(
+        'usuarios.Cliente', 
+        on_delete=models.CASCADE, 
+        related_name='mis_turnos'
+    )
+    servicio = models.ForeignKey(Servicio, on_delete=models.PROTECT)
+    
+    # Datos temporales
+    fecha = models.DateField()
+    hora_inicio = models.TimeField()
+    hora_fin_calculada = models.TimeField(blank=True, null=True)
+    
+    # Estado
+    estado = models.CharField(
+        max_length=20, 
+        choices=Estado.choices, 
+        default=Estado.SOLICITADO
+    )
+    
+    # Auditoría
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    comprobante_pago = models.FileField(upload_to='comprobantes/', null=True, blank=True)
+
+    class Meta:
+        ordering = ['fecha', 'hora_inicio']
+        # Restricción opcional: No permitir duplicados exactos (mismo día, misma hora, mismo cliente)
+        unique_together = ['fecha', 'hora_inicio', 'cliente']
+
+    def save(self, *args, **kwargs):
+        # Cálculo automático de la hora de fin al guardar
+        if self.hora_inicio and self.servicio:
+            # Truco para sumar minutos a un objeto Time: combinar con fecha dummy
+            inicio_dt = timezone.datetime.combine(timezone.now(), self.hora_inicio)
+            fin_dt = inicio_dt + timezone.timedelta(minutes=self.servicio.duracion_estimada)
+            self.hora_fin_calculada = fin_dt.time()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"Turno {self.fecha} {self.hora_inicio} - {self.cliente}"

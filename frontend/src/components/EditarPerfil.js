@@ -1,5 +1,3 @@
-// frontend/src/components/EditarPerfil.js
-
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
@@ -35,7 +33,7 @@ const SelectInput = ({ name, value, onChange, options, label, loading }) => (
 const EditarPerfil = () => {
     const navigate = useNavigate();
     
-    // --- 1. ESTADO DEL FORMULARIO (MODIFICADO) ---
+    // --- 1. ESTADO DEL FORMULARIO ---
     const [formData, setFormData] = useState({
         first_name: '',
         last_name: '',
@@ -48,8 +46,6 @@ const EditarPerfil = () => {
         estado_general: '',
         // Campos de texto
         productos_actuales: '',
-        // --- ¡CAMBIO CLAVE! ---
-        // 'historial_quimico' (string) se reemplaza por:
         historial_servicios: [], // <-- Un array de IDs
     });
 
@@ -63,16 +59,16 @@ const EditarPerfil = () => {
     });
     
     // --- ¡NUEVO ESTADO! ---
-    const [serviciosQuimicos, setServiciosQuimicos] = useState([]); // Para la lista del checklist
+    const [serviciosQuimicos, setServiciosQuimicos] = useState([]);
 
     // --- 3. ESTADO DE CARGA Y ERRORES ---
     const [loadingCatalogos, setLoadingCatalogos] = useState(true);
     const [loadingPerfil, setLoadingPerfil] = useState(true);
-    const [loadingServicios, setLoadingServicios] = useState(true); // ¡Nuevo loading!
+    const [loadingServicios, setLoadingServicios] = useState(true); 
     const [error, setError] = useState('');
     const [successMessage, setSuccessMessage] = useState('');
 
-    // --- 4. HOOK DE EFECTO (MODIFICADO) ---
+    // --- 4. HOOK DE EFECTO ---
     useEffect(() => {
         const fetchDatos = async () => {
             try {
@@ -106,16 +102,13 @@ const EditarPerfil = () => {
                 });
                 setLoadingCatalogos(false);
 
-                // --- B. ¡NUEVO! Cargar los Servicios Químicos ---
                 const serviciosRes = await axios.get('/api/gestion/servicios-quimicos/');
-                setServiciosQuimicos(serviciosRes.data.results); // (Usamos .results)
+                setServiciosQuimicos(serviciosRes.data.results);
                 setLoadingServicios(false);
 
-                // --- C. Cargar el Perfil del Usuario (como antes) ---
                 const perfilRes = await axios.get('/api/usuarios/perfil/');
                 const perfilData = perfilRes.data;
 
-                // Rellenamos el formData con los datos actuales
                 setFormData({
                     first_name: perfilData.first_name || '',
                     last_name: perfilData.last_name || '',
@@ -126,8 +119,6 @@ const EditarPerfil = () => {
                     cuero_cabelludo: perfilData.cuero_cabelludo || '',
                     estado_general: perfilData.estado_general || '',
                     productos_actuales: perfilData.productos_actuales || '',
-                    // --- ¡CAMBIO CLAVE! ---
-                    // El backend ahora devuelve un array de IDs
                     historial_servicios: perfilData.historial_servicios || [], 
                 });
                 setLoadingPerfil(false);
@@ -153,7 +144,6 @@ const EditarPerfil = () => {
         }));
     };
 
-    // --- ¡NUEVO MANEJADOR! (Para el checklist) ---
     const handleServicioChange = (e) => {
         const servicioId = parseInt(e.target.value, 10);
         const isChecked = e.target.checked;
@@ -163,12 +153,10 @@ const EditarPerfil = () => {
             let nuevosServicios;
 
             if (isChecked) {
-                // Añadir el ID si no está
                 if (!serviciosActuales.includes(servicioId)) {
                     nuevosServicios = [...serviciosActuales, servicioId];
                 }
             } else {
-                // Quitar el ID si ya está
                 nuevosServicios = serviciosActuales.filter((id) => id !== servicioId);
             }
             
@@ -207,7 +195,7 @@ const EditarPerfil = () => {
         }
     };
 
-    // --- 6. RENDERIZADO DEL COMPONENTE (MODIFICADO) ---
+    // --- 6. RENDERIZADO DEL COMPONENTE ---
     const isLoading = loadingCatalogos || loadingPerfil || loadingServicios;
 
     return (
@@ -215,7 +203,7 @@ const EditarPerfil = () => {
             <div className="max-w-2xl w-full space-y-8 bg-white p-10 rounded-xl shadow-lg">
                 <div>
                     <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-                        ✏️ Editar mi Perfil
+                        Editar mi Perfil
                     </h2>
                 </div>
 
@@ -228,7 +216,6 @@ const EditarPerfil = () => {
                     <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
                         
                         <h3 className="text-lg font-medium text-gray-800 border-b pb-2">Datos Personales</h3>
-                        {/* ... Campos first_name, last_name, email (sin cambios) ... */}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
                                 <label htmlFor="first_name" className="block text-sm font-medium text-gray-700">Nombre</label>
@@ -246,58 +233,12 @@ const EditarPerfil = () => {
 
                         <h3 className="text-lg font-medium text-gray-800 border-b pb-2 pt-4">Perfil Capilar</h3>
 
-                        {/* ... Selects de Catálogos (sin cambios) ... */}
                         <SelectInput name="tipo_cabello" label="Tipo de Cabello (General)" value={formData.tipo_cabello} onChange={handleChange} options={catalogos.tipos} loading={loadingCatalogos}/>
                         <SelectInput name="porosidad" label="Porosidad" value={formData.porosidad} onChange={handleChange} options={catalogos.porosidades} loading={loadingCatalogos}/>
                         <SelectInput name="grosor" label="Grosor" value={formData.grosor} onChange={handleChange} options={catalogos.grosores} loading={loadingCatalogos}/>
                         <SelectInput name="cuero_cabelludo" label="Cuero Cabelludo" value={formData.cuero_cabelludo} onChange={handleChange} options={catalogos.cueros} loading={loadingCatalogos}/>
                         <SelectInput name="estado_general" label="Estado General del Cabello" value={formData.estado_general} onChange={handleChange} options={catalogos.estados} loading={loadingCatalogos}/>
 
-                        {/* ... Textarea de Productos Actuales (sin cambios) ... */}
-                        <div>
-                            <label htmlFor="productos_actuales" className="block text-sm font-medium text-gray-700">Productos que usas actualmente</label>
-                            <textarea id="productos_actuales" name="productos_actuales" rows="3" className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm" value={formData.productos_actuales} onChange={handleChange}></textarea>
-                        </div>
-                        
-                        {/* --- ¡SECCIÓN MODIFICADA! --- */}
-                        {/* (Se elimina el textarea 'historial_quimico') */}
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700">
-                                Historial de Servicios (Servicios relevantes)
-                            </label>
-                            <p className="text-xs text-gray-500 mb-2">
-                                Selecciona los servicios que te has realizado (en Bohemia o en otro lugar).
-                            </p>
-                            <div className="mt-2 space-y-2 max-h-40 overflow-y-auto border border-gray-200 rounded-md p-4">
-                                {loadingServicios ? (
-                                    <p>Cargando servicios...</p>
-                                ) : (
-                                    serviciosQuimicos.map((servicio) => (
-                                        <div key={servicio.id} className="flex items-center">
-                                            <input
-                                                id={`servicio-${servicio.id}`}
-                                                name="historial_servicios"
-                                                type="checkbox"
-                                                value={servicio.id}
-                                                // ¡Magia! Marca el check si el ID está en el array del form
-                                                checked={formData.historial_servicios.includes(servicio.id)}
-                                                onChange={handleServicioChange} // <-- ¡Usa el nuevo manejador!
-                                                className="h-4 w-4 text-rose-600 border-gray-300 rounded focus:ring-rose-500"
-                                            />
-                                            <label htmlFor={`servicio-${servicio.id}`} className="ml-3 block text-sm text-gray-700">
-                                                {servicio.nombre} 
-                                                <span className="text-xs text-gray-400"> ({servicio.categoria})</span>
-                                            </label>
-                                        </div>
-                                    ))
-                                )}
-                                {!loadingServicios && serviciosQuimicos.length === 0 && (
-                                    <p className="text-sm text-gray-500">No hay servicios químicos configurados.</p>
-                                )}
-                            </div>
-                        </div>
-
-                        {/* Botones de Acción (sin cambios) */}
                         <div className="flex gap-4">
                             <button type="button" onClick={() => navigate('/perfil')} className="group relative w-full flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none">
                                 Cancelar

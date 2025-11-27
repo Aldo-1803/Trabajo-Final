@@ -12,37 +12,37 @@ class Migration(migrations.Migration):
     operations = [
         migrations.AddField(
             model_name='categoriaservicio',
-            name='puntaje_ph',
+            name='puntaje_base',
             field=models.IntegerField(default=0, help_text='Usado por el motor de reglas (ej. Sano=10, Dañado=50)', verbose_name='Puntaje PH (Lógica Diagnóstico)'),
         ),
         migrations.AddField(
             model_name='cuerocabelludo',
-            name='puntaje_ph',
+            name='puntaje_base',
             field=models.IntegerField(default=0, help_text='Usado por el motor de reglas (ej. Sano=10, Dañado=50)', verbose_name='Puntaje PH (Lógica Diagnóstico)'),
         ),
         migrations.AddField(
             model_name='estadogeneral',
-            name='puntaje_ph',
+            name='puntaje_base',
             field=models.IntegerField(default=0, help_text='Usado por el motor de reglas (ej. Sano=10, Dañado=50)', verbose_name='Puntaje PH (Lógica Diagnóstico)'),
         ),
         migrations.AddField(
             model_name='grosorcabello',
-            name='puntaje_ph',
+            name='puntaje_base',
             field=models.IntegerField(default=0, help_text='Usado por el motor de reglas (ej. Sano=10, Dañado=50)', verbose_name='Puntaje PH (Lógica Diagnóstico)'),
         ),
         migrations.AddField(
             model_name='porosidadcabello',
-            name='puntaje_ph',
+            name='puntaje_base',
             field=models.IntegerField(default=0, help_text='Usado por el motor de reglas (ej. Sano=10, Dañado=50)', verbose_name='Puntaje PH (Lógica Diagnóstico)'),
         ),
         migrations.AddField(
             model_name='servicio',
-            name='puntaje_ph',
+            name='puntaje_base',
             field=models.IntegerField(default=0, help_text='Usado por el motor de reglas (ej. Sano=10, Dañado=50)', verbose_name='Puntaje PH (Lógica Diagnóstico)'),
         ),
         migrations.AddField(
             model_name='tipocabello',
-            name='puntaje_ph',
+            name='puntaje_base',
             field=models.IntegerField(default=0, help_text='Usado por el motor de reglas (ej. Sano=10, Dañado=50)', verbose_name='Puntaje PH (Lógica Diagnóstico)'),
         ),
     ]
