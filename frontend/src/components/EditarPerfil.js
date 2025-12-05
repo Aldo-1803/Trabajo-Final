@@ -59,7 +59,7 @@ const EditarPerfil = () => {
     });
     
     // --- ¡NUEVO ESTADO! ---
-    const [serviciosQuimicos, setServiciosQuimicos] = useState([]);
+    // const [serviciosQuimicos, setServiciosQuimicos] = useState([]);
 
     // --- 3. ESTADO DE CARGA Y ERRORES ---
     const [loadingCatalogos, setLoadingCatalogos] = useState(true);
@@ -102,8 +102,8 @@ const EditarPerfil = () => {
                 });
                 setLoadingCatalogos(false);
 
-                const serviciosRes = await axios.get('/api/gestion/servicios-quimicos/');
-                setServiciosQuimicos(serviciosRes.data.results);
+                // const serviciosRes = await axios.get('/api/gestion/servicios-quimicos/');
+                // setServiciosQuimicos(serviciosRes.data.results);
                 setLoadingServicios(false);
 
                 const perfilRes = await axios.get('/api/usuarios/perfil/');
@@ -144,28 +144,7 @@ const EditarPerfil = () => {
         }));
     };
 
-    const handleServicioChange = (e) => {
-        const servicioId = parseInt(e.target.value, 10);
-        const isChecked = e.target.checked;
-
-        setFormData((prev) => {
-            const serviciosActuales = prev.historial_servicios;
-            let nuevosServicios;
-
-            if (isChecked) {
-                if (!serviciosActuales.includes(servicioId)) {
-                    nuevosServicios = [...serviciosActuales, servicioId];
-                }
-            } else {
-                nuevosServicios = serviciosActuales.filter((id) => id !== servicioId);
-            }
-            
-            return {
-                ...prev,
-                historial_servicios: nuevosServicios,
-            };
-        });
-    };
+    // handleServicioChange function removed as it was not being used
 
     const handleSubmit = async (e) => {
         e.preventDefault();

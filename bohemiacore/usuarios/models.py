@@ -123,6 +123,13 @@ class Cliente(models.Model):
         verbose_name="Historial de Servicios (Estructurado)"
     )
 
+    rutinas = models.ManyToManyField(
+        'gestion.Rutina',  
+        blank=True,
+        related_name='clientes_guardaron',
+        verbose_name="Mis Rutinas Guardadas"
+    )
+
     fecha_actualizacion = models.DateTimeField(auto_now=True)
 
     class Meta:

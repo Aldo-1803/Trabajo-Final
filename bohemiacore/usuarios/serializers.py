@@ -38,7 +38,7 @@ class UsuarioPerfilReadSerializer(serializers.ModelSerializer):
         model = Usuario
         fields = [
             'email', 'first_name', 'last_name', 'zona', 'numero', 'fecha_nacimiento',
-            'sexo', 'redes', 'tipo_cabello', 'grosor_cabello',
+            'sexo', 'redes','is_staff', 'tipo_cabello', 'grosor_cabello',
             'porosidad_cabello', 'cuero_cabelludo', 'estado_general',
             'historial_servicios'
         ]

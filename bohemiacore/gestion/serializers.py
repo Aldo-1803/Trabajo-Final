@@ -4,9 +4,13 @@ from .models import (
     CueroCabelludo, EstadoGeneral
 )
 
+from .models import PasoRutina, Rutina, AgendaCuidados, RutinaCliente, PasoRutinaCliente
 from usuarios.models import Usuario, Cliente
-
 from .models import Servicio, CategoriaServicio, Turno
+import os
+from django.core.exceptions import ValidationError 
+from .models import Notificacion
+from .models import ReglaDiagnostico
 
 # 1. EL SERIALIZER BASE (El "Molde")
 # Define los campos que TODOS los catálogos compartirán
@@ -17,7 +21,6 @@ class CatalogoBaseSerializer(serializers.ModelSerializer):
 
 # 2. LOS SERIALIZERS ESPECÍFICOS (Heredan los campos)
 # Ahora solo definimos el 'model' y heredamos los campos del molde
-
 class TipoCabelloSerializer(CatalogoBaseSerializer):
     class Meta(CatalogoBaseSerializer.Meta):
         model = TipoCabello
@@ -38,18 +41,21 @@ class EstadoGeneralSerializer(CatalogoBaseSerializer):
     class Meta(CatalogoBaseSerializer.Meta):
         model = EstadoGeneral
 
-
+# 3. SERIALIZERS ADICIONALES PARA OTROS MODELOS
 class ServicioSerializer(serializers.ModelSerializer):
-    """
-    Serializer para el modelo Servicio.
-    Muestra el nombre de la categoría en lugar de su ID.
-    """
+    # Campos de lectura para mostrar nombres en lugar de IDs en la tabla
     categoria_nombre = serializers.CharField(source='categoria.nombre', read_only=True)
+    rutina_nombre = serializers.CharField(source='rutina_recomendada.nombre', read_only=True)
     
     class Meta:
         model = Servicio
-        # Solo enviamos los campos que el frontend necesita
-        fields = ['id', 'nombre', 'categoria_nombre', 'duracion_estimada', 'precio_base']
+        fields = [
+            'id', 'nombre', 'descripcion', 'categoria', 'categoria_nombre',
+            'duracion_estimada', 'precio_base',
+            'rutina_recomendada', 'rutina_nombre',
+            'impacto_porosidad', 'impacto_estado',
+            'activo'
+        ]
    
 class TurnoSerializer(serializers.ModelSerializer):
     cliente_nombre = serializers.CharField(source='cliente.usuario.get_full_name', read_only=True)
@@ -80,6 +86,26 @@ class TurnoSerializer(serializers.ModelSerializer):
             'estado': {'required': False},
         }
 
+    def validate_comprobante_pago(self, value):
+        """
+        Validación Técnica del Comprobante (Item 4 Cátedra)
+        """
+        if not value:
+            return value
+
+        # 1. Validar Tamaño (Máximo 5MB)
+        limit_mb = 5
+        if value.size > limit_mb * 1024 * 1024:
+            raise serializers.ValidationError(f"El archivo es muy grande. Máximo permitido: {limit_mb}MB.")
+
+        # 2. Validar Extensión (Solo imágenes o PDF)
+        ext = os.path.splitext(value.name)[1].lower()
+        valid_extensions = ['.jpg', '.jpeg', '.png', '.pdf']
+        if ext not in valid_extensions:
+            raise serializers.ValidationError("Formato no soportado. Suba una imagen (JPG, PNG) o PDF.")
+
+        return value
+
 class TurnoCreateSerializer(serializers.ModelSerializer):
     """
     Serializer ESPECÍFICO para crear turnos desde el cliente.
@@ -92,3 +118,116 @@ class TurnoCreateSerializer(serializers.ModelSerializer):
         # ALERTA: Esto es la Solución Definitiva
         read_only_fields = ['cliente', 'estado']
      
+
+class PasoRutinaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PasoRutina
+        fields = ['id', 'orden', 'titulo', 'descripcion', 'frecuencia', 'plantilla']
+
+class RutinaSerializer(serializers.ModelSerializer):
+    pasos = PasoRutinaSerializer(many=True, read_only=True)
+    creada_por_nombre = serializers.CharField(source='creada_por.get_full_name', read_only=True)
+    estado_display = serializers.CharField(source='get_estado_display', read_only=True)
+    puede_asignarse = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Rutina
+        fields = [
+            'id', 'nombre', 'objetivo', 'descripcion', 'version', 
+            'estado', 'estado_display', 'creada_por', 'creada_por_nombre',
+            'fecha_creacion', 'fecha_obsoleta', 'pasos', 'puede_asignarse'
+        ]
+        read_only_fields = ['id', 'fecha_creacion', 'fecha_obsoleta', 'creada_por', 'creada_por_nombre', 'estado_display']
+    
+    def get_puede_asignarse(self, obj):
+        """Retorna True si la rutina puede asignarse a nuevos clientes."""
+        return obj.puede_asignarse()
+    
+    def create(self, validated_data):
+        """Auto-asigna creada_por al usuario autenticado durante la creación."""
+        validated_data['creada_por'] = self.context['request'].user
+        return super().create(validated_data)
+
+
+class PasoRutinaClienteSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PasoRutinaCliente
+        fields = '__all__'
+
+
+class RutinaClienteSerializer(serializers.ModelSerializer):
+    pasos = PasoRutinaClienteSerializer(many=True, read_only=True)
+    estado_display = serializers.CharField(source='get_estado_display', read_only=True)
+
+    class Meta:
+        model = RutinaCliente
+        fields = ['id', 'nombre', 'objetivo', 'descripcion', 'pasos', 'estado', 'estado_display', 'fecha_asignacion', 'version_asignada', 'descargar_notificacion']
+        read_only_fields = ['id', 'nombre', 'objetivo', 'descripcion', 'pasos', 'estado', 'estado_display', 'fecha_asignacion', 'version_asignada', 'descargar_notificacion']
+
+
+class RutinaClienteCreateSerializer(serializers.Serializer):
+    """
+    Serializer ESPECÍFICO para que el cliente seleccione una rutina del catálogo.
+    """
+    rutina_id = serializers.IntegerField(help_text="ID de la rutina a asignar")
+    
+    def validate_rutina_id(self, value):
+        """Valida que la rutina exista y pueda asignarse."""
+        try:
+            rutina = Rutina.objects.get(id=value)
+        except Rutina.DoesNotExist:
+            raise serializers.ValidationError("La rutina no existe.")
+        
+        if not rutina.puede_asignarse():
+            raise serializers.ValidationError(
+                f"La rutina no puede asignarse en estado '{rutina.get_estado_display()}'."
+            )
+        
+        return value
+    
+    def create(self, validated_data):
+        """
+        Crea una copia de la rutina para el cliente.
+        El cliente se obtiene de la request en la view.
+        """
+        rutina_id = validated_data['rutina_id']
+        rutina = Rutina.objects.get(id=rutina_id)
+        cliente = self.context['cliente']  # Se pasa desde la view
+        
+        return rutina.asignar_a_cliente(cliente)
+
+class AgendaCuidadosSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AgendaCuidados
+        fields = ['id', 'fecha', 'titulo', 'descripcion', 'completado']
+
+
+class NotificacionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Notificacion
+        fields = [
+            'id', 'titulo', 'mensaje', 'tipo', 'canal', 
+            'estado', 'fecha_envio', 'origen_entidad', 'origen_id'
+        ]
+
+class ReglaDiagnosticoSerializer(serializers.ModelSerializer):
+    # Campos de solo lectura para mostrar nombres en la tabla
+    rutina_nombre = serializers.CharField(source='rutina_sugerida.nombre', read_only=True)
+    
+    # Nombres de las condiciones para facilitar la lectura en la tabla
+    tipo_nombre = serializers.CharField(source='tipo_cabello.nombre', read_only=True)
+    estado_nombre = serializers.CharField(source='estado_general.nombre', read_only=True)
+    cuero_nombre = serializers.CharField(source='cuero_cabelludo.nombre', read_only=True)
+
+    class Meta:
+        model = ReglaDiagnostico
+        fields = [
+            'id', 'prioridad', 
+            'tipo_cabello', 'tipo_nombre',
+            'grosor_cabello', 
+            'porosidad_cabello',
+            'cuero_cabelludo', 'cuero_nombre',
+            'estado_general', 'estado_nombre',
+            'mensaje_resultado', 'accion_resultado',
+            'rutina_sugerida', 'rutina_nombre'
+        ]

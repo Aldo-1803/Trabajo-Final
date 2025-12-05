@@ -1,53 +1,66 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
+import CampanaNotificaciones from './CampanaNotificaciones';
+
+// ============================================================================
+// COMPONENTE PRINCIPAL
+// ============================================================================
 
 const Perfil = () => {
+    // ========================================================================
+    // ESTADO
+    // ========================================================================
     const [usuario, setUsuario] = useState(null);
     const [diagnostico, setDiagnostico] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const navigate = useNavigate();
 
+    // ========================================================================
+    // EFECTOS
+    // ========================================================================
     useEffect(() => {
-        const fetchDatos = async () => {
-            try {
-                setLoading(true);
-                const token = localStorage.getItem('access_token');
-                
-                if (!token) {
-                    navigate('/login');
-                    return;
-                }
+        fetchDatos();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [navigate]);
 
-                // 1. Obtener perfil del usuario
-                const perfilResponse = await axios.get('/api/usuarios/perfil/', {
+    // ========================================================================
+    // FUNCIONES
+    // ========================================================================
+    const fetchDatos = async () => {
+        try {
+            setLoading(true);
+            const token = localStorage.getItem('access_token');
+            
+            if (!token) {
+                navigate('/login');
+                return;
+            }
+
+            const perfilResponse = await axios.get('/api/usuarios/perfil/', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            setUsuario(perfilResponse.data);
+
+            try {
+                const diagResponse = await axios.get('/api/usuarios/diagnostico/', {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
-                setUsuario(perfilResponse.data);
-
-                // 2. Obtener diagnóstico
-                try {
-                    const diagResponse = await axios.get('/api/usuarios/diagnostico/', {
-                        headers: { 'Authorization': `Bearer ${token}` }
-                    });
-                    setDiagnostico(diagResponse.data);
-                } catch (diagErr) {
-                    console.error('Error al cargar diagnóstico:', diagErr);
-                }
-            } catch (err) {
-                console.error('Error al cargar perfil:', err);
-                setError('Error al cargar tu perfil');
-                if (err.response?.status === 401) {
-                    navigate('/login');
-                }
-            } finally {
-                setLoading(false);
+                setDiagnostico(diagResponse.data);
+            } catch (diagErr) {
+                console.error('Error al cargar diagnóstico:', diagErr);
             }
-        };
-
-        fetchDatos();
-    }, [navigate]);
+        } catch (err) {
+            console.error('Error al cargar perfil:', err);
+            setError('Error al cargar tu perfil');
+            if (err.response?.status === 401) {
+                navigate('/login');
+            }
+        } finally {
+            setLoading(false);
+        }
+    };
 
     const logout = () => {
         localStorage.removeItem('access_token');
@@ -56,162 +69,203 @@ const Perfil = () => {
         navigate('/login');
     };
 
+    // ========================================================================
+    // RENDER - LOADING
+    // ========================================================================
     if (loading) {
         return (
-            <div className="min-h-screen flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #e8c39e 0%, #ffffff 100%)' }}>
-                <div className="animate-spin rounded-full h-16 w-16 border-4" style={{ borderColor: '#e8c39e', borderTopColor: '#7a5c3c' }}></div>
+            <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#F5EBE0' }}>
+                <div className="animate-spin rounded-full h-16 w-16 border-4" style={{ borderColor: '#E3D5CA', borderTopColor: '#817773' }}></div>
             </div>
         );
     }
 
+    // ========================================================================
+    // RENDER - MAIN
+    // ========================================================================
     return (
-        <div className="min-h-screen" style={{ background: 'linear-gradient(135deg, #e8c39e 0%, #ffffff 100%)' }}>
-            {/* Header */}
-            <div className="px-6 sm:px-8 py-12 text-white" style={{ background: 'linear-gradient(135deg, #7a5c3c 0%, #b08e6b 100%)' }}>
-                <div className="max-w-4xl mx-auto">
-                    <h1 className="text-4xl font-bold mb-2">Mi Perfil</h1>
-                    <p className="text-amber-50">Bienvenido, {usuario?.first_name || 'Usuario'}</p>
-                </div>
-            </div>
+        <div style={{ backgroundColor: '#F5EBE0' }} className="min-h-screen">
+            {/* HEADER UNIFICADO */}
+            <HeaderUnificado usuario={usuario} navigate={navigate} logout={logout} />
 
-            {/* Contenido */}
-            <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-                {error && (
-                    <div className="mb-6 p-4 rounded-lg border-l-4" style={{ backgroundColor: '#ffe8e8', borderColor: '#c73e3e' }}>
-                        <p style={{ color: '#c73e3e' }} className="font-medium">⚠️ {error}</p>
-                    </div>
-                )}
+            {/* CONTENIDO PRINCIPAL */}
+            <div className="max-w-5xl mx-auto px-4 py-12">
+                {/* ALERTA DE ERROR */}
+                {error && <ErrorAlert error={error} />}
 
-                {/* Información Personal */}
-                <div className="bg-white rounded-2xl p-8 shadow-lg mb-8">
-                    <h2 className="text-2xl font-bold mb-6" style={{ color: '#7a5c3c' }}>👤 Información Personal</h2>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div>
-                            <p className="text-sm font-semibold" style={{ color: '#7a5c3c' }}>Nombre</p>
-                            <p className="text-lg font-bold mt-2" style={{ color: '#b08e6b' }}>
-                                {usuario?.first_name} {usuario?.last_name}
-                            </p>
-                        </div>
-
-                        <div>
-                            <p className="text-sm font-semibold" style={{ color: '#7a5c3c' }}>Email</p>
-                            <p className="text-lg font-bold mt-2" style={{ color: '#b08e6b' }}>{usuario?.email}</p>
-                        </div>
-
-                        <div>
-                            <p className="text-sm font-semibold" style={{ color: '#7a5c3c' }}>Teléfono</p>
-                            <p className="text-lg font-bold mt-2" style={{ color: '#b08e6b' }}>
-                                {usuario?.numero || 'No especificado'}
-                            </p>
-                        </div>
-
-                        <div>
-                            <p className="text-sm font-semibold" style={{ color: '#7a5c3c' }}>Zona</p>
-                            <p className="text-lg font-bold mt-2" style={{ color: '#b08e6b' }}>
-                                {usuario?.zona || 'No especificada'}
-                            </p>
-                        </div>
-                    </div>
+                {/* GRID DE TARJETAS */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                    <InformacionPersonal usuario={usuario} />
+                    <PerfilCapilar usuario={usuario} />
                 </div>
 
-                {/* Diagnóstico */}
-                {diagnostico && (
-                    <div className="bg-gradient-to-r from-rose-50 to-amber-50 rounded-2xl p-8 shadow-lg border-l-4 border-rose-400 mb-8">
-                        <h2 className="text-2xl font-bold mb-4 text-rose-900">🔍 Tu Diagnóstico Personalizado</h2>
-                        
-                        <div className="bg-white rounded-lg p-6 mb-4">
-                            <p className="text-lg text-gray-700 leading-relaxed">
-                                {diagnostico.mensaje_diagnostico}
-                            </p>
-                        </div>
-
-                        <div className="bg-white rounded-lg p-4 mb-4">
-                            <p className="text-sm font-semibold text-rose-700 mb-2">💡 Recomendación:</p>
-                            <p className="text-gray-700 font-medium">{diagnostico.accion}</p>
-                        </div>
-
-                        {diagnostico.puntaje_final !== undefined && (
-                            <div className="p-4 rounded-lg" style={{ backgroundColor: '#f5e1ce' }}>
-                                <p className="text-sm font-semibold text-gray-700">Puntaje de Salud: 
-                                    <span className="text-lg font-bold text-rose-600 ml-2">{diagnostico.puntaje_final}/10</span>
-                                </p>
-                            </div>
-                        )}
-                    </div>
-                )}
-
-                {/* Perfil Capilar */}
-                <div className="bg-white rounded-2xl p-8 shadow-lg border-l-4 mb-8" style={{ borderColor: '#7a5c3c' }}>
-                    <h2 className="text-2xl font-bold mb-6" style={{ color: '#7a5c3c' }}>💇 Tu Perfil Capilar</h2>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div className="p-4 rounded-lg" style={{ backgroundColor: '#f5e1ce' }}>
-                            <p className="text-sm font-semibold" style={{ color: '#7a5c3c' }}>Tipo de Cabello</p>
-                            <p className="text-lg font-bold mt-2" style={{ color: '#b08e6b' }}>
-                                {usuario?.tipo_cabello || 'No especificado'}
-                            </p>
-                        </div>
-                        
-                        <div className="p-4 rounded-lg" style={{ backgroundColor: '#f5e1ce' }}>
-                            <p className="text-sm font-semibold" style={{ color: '#7a5c3c' }}>Grosor</p>
-                            <p className="text-lg font-bold mt-2" style={{ color: '#b08e6b' }}>
-                                {usuario?.grosor_cabello || 'No especificado'}
-                            </p>
-                        </div>
-
-                        <div className="p-4 rounded-lg" style={{ backgroundColor: '#f5e1ce' }}>
-                            <p className="text-sm font-semibold" style={{ color: '#7a5c3c' }}>Porosidad</p>
-                            <p className="text-lg font-bold mt-2" style={{ color: '#b08e6b' }}>
-                                {usuario?.porosidad_cabello || 'No especificado'}
-                            </p>
-                        </div>
-
-                        <div className="p-4 rounded-lg" style={{ backgroundColor: '#f5e1ce' }}>
-                            <p className="text-sm font-semibold" style={{ color: '#7a5c3c' }}>Cuero Cabelludo</p>
-                            <p className="text-lg font-bold mt-2" style={{ color: '#b08e6b' }}>
-                                {usuario?.cuero_cabelludo || 'No especificado'}
-                            </p>
-                        </div>
-
-                        <div className="p-4 rounded-lg col-span-1 md:col-span-2" style={{ backgroundColor: '#f5e1ce' }}>
-                            <p className="text-sm font-semibold" style={{ color: '#7a5c3c' }}>Estado General</p>
-                            <p className="text-lg font-bold mt-2" style={{ color: '#b08e6b' }}>
-                                {usuario?.estado_general || 'No especificado'}
-                            </p>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Botones de Acción */}
-                <div className="mt-8 flex gap-4">
-                    <button
-                        onClick={() => navigate('/editar-perfil')}
-                        className="flex-1 font-bold py-3 px-6 rounded-lg text-white transition duration-200 transform hover:scale-105"
-                        style={{ background: 'linear-gradient(135deg, #7a5c3c 0%, #b08e6b 100%)' }}
-                    >
-                        Editar Perfil
-                    </button>
-
-                    <button
-                        onClick={logout}
-                        className="flex-1 font-bold py-3 px-6 rounded-lg transition duration-200 transform hover:scale-105"
-                        style={{
-                            background: 'linear-gradient(135deg, #e8c39e 0%, #f5e1ce 100%)',
-                            color: '#7a5c3c'
-                        }}
-                    >
-                        Cerrar Sesión
-                    </button>
-                </div>
+                {/* DIAGNÓSTICO */}
+                {diagnostico && <DiagnosticoCard diagnostico={diagnostico} navigate={navigate} />}
             </div>
         </div>
     );
 };
 
-export default Perfil;
+// ============================================================================
+// COMPONENTES SECUNDARIOS
+// ============================================================================
 
-// Interceptor para manejar el refresh token
+const HeaderUnificado = ({ usuario, navigate, logout }) => (
+    <div style={{ background: 'linear-gradient(135deg, #817773 0%, #AB9A91 100%)' }} className="text-white py-8 px-4">
+        <div className="max-w-5xl mx-auto">
+            {/* FILA SUPERIOR: Avatar + Info + Campana */}
+            <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-6 gap-6">
+                {/* AVATAR Y DATOS */}
+                <div className="flex items-center gap-4">
+                    <div className="w-16 h-16 rounded-full flex items-center justify-center text-3xl font-bold" style={{ backgroundColor: '#E3D5CA' }}>
+                        👤
+                    </div>
+                    <div>
+                        <h1 className="text-3xl font-bold">{usuario?.first_name || 'Usuario'}</h1>
+                        <p className="text-amber-50 text-sm">{usuario?.email}</p>
+                    </div>
+                </div>
+                
+                {/* CAMPANA - A LA DERECHA */}
+                <div className="bg-white text-gray-800 rounded-full p-2 shadow-lg transform hover:scale-110 transition-transform">
+                    <CampanaNotificaciones />
+                </div>
+            </div>
+
+            {/* FILA INFERIOR: Botones de navegación */}
+            <div className="flex flex-wrap gap-2">
+                <NavButton label="Editar" onClick={() => navigate('/editar-perfil')} />
+                <NavButton label="Reservar" onClick={() => navigate('/reservar')} />
+                <NavButton label="Turnos" onClick={() => navigate('/mis-turnos')} />
+                <NavButton label="Agenda" onClick={() => navigate('/mi-agenda')} />
+                <NavButton label="Mis Rutinas" onClick={() => navigate('/mis-rutinas')} />
+                <NavButton label="Catálogo de Rutinas" onClick={() => navigate('/catalogo-rutinas')} />
+                <NavButton label="Salir" onClick={logout} />
+            </div>
+        </div>
+    </div>
+);
+
+// Componentes no utilizados removidos para evitar errores de sintaxis
+
+const NavButton = ({ label, onClick }) => (
+    <button
+        onClick={onClick}
+        className="flex-1 md:flex-none text-sm font-bold py-2 px-3 rounded-lg bg-white bg-opacity-20 hover:bg-opacity-30 transition duration-300"
+    >
+        {label}
+    </button>
+);
+
+const ErrorAlert = ({ error }) => (
+    <div className="mb-8 p-4 rounded-lg border-l-4" style={{ backgroundColor: '#FFE8E8', borderColor: '#C73E3E' }}>
+        <p style={{ color: '#C73E3E' }} className="font-medium">⚠️ {error}</p>
+    </div>
+);
+
+const InformacionPersonal = ({ usuario }) => (
+    <div style={{ backgroundColor: 'white', borderLeft: '5px solid #AB9A91' }} className="rounded-xl p-8 shadow-lg">
+        <h2 style={{ color: '#817773' }} className="text-2xl font-bold mb-6">📋 Información Personal</h2>
+        
+        <div className="space-y-4">
+            <InfoRow label="Nombre Completo" value={`${usuario?.first_name} ${usuario?.last_name}`} />
+            <InfoRow label="Teléfono" value={usuario?.numero || 'No especificado'} />
+            <InfoRow label="Zona" value={usuario?.zona || 'No especificada'} />
+        </div>
+    </div>
+);
+
+const PerfilCapilar = ({ usuario }) => (
+    <div style={{ backgroundColor: 'white', borderLeft: '5px solid #D5BDAF' }} className="rounded-xl p-8 shadow-lg">
+        <h2 style={{ color: '#817773' }} className="text-2xl font-bold mb-6">Tu Perfil Capilar</h2>
+        
+        <div className="space-y-3">
+            <AtributoRow label="Tipo de Cabello:" value={usuario?.tipo_cabello || '—'} />
+            <AtributoRow label="Grosor:" value={usuario?.grosor_cabello || '—'} />
+            <AtributoRow label="Porosidad:" value={usuario?.porosidad_cabello || '—'} />
+            <AtributoRow label="Cuero Cabelludo:" value={usuario?.cuero_cabelludo || '—'} />
+            <AtributoRow label="Estado General:" value={usuario?.estado_general || '—'} />
+        </div>
+    </div>
+);
+
+const DiagnosticoCard = ({ diagnostico, navigate }) => (
+    <div style={{ backgroundColor: 'white', borderLeft: '5px solid #E3D5CA' }} className="rounded-xl p-8 shadow-lg mb-8">
+        <h2 style={{ color: '#817773' }} className="text-2xl font-bold mb-6">Diagnóstico Personalizado</h2>
+        
+        {/* Mensaje Principal */}
+        <div className="bg-gradient-to-r from-transparent to-transparent rounded-lg p-6 mb-4 border-l-4" style={{ borderColor: '#AB9A91', backgroundColor: '#F5EBE0' }}>
+            <p style={{ color: '#817773' }} className="text-lg leading-relaxed font-medium">
+                {diagnostico.mensaje_diagnostico}
+            </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            {/* Acción Recomendada */}
+            <div style={{ backgroundColor: '#F5EBE0' }} className="rounded-lg p-4">
+                <p style={{ color: '#AB9A91' }} className="text-sm font-semibold">Acción Sugerida:</p>
+                <p style={{ color: '#817773' }} className="font-medium mt-2">{diagnostico.accion}</p>
+            </div>
+
+            {/* Puntaje */}
+            {diagnostico.puntaje_final !== undefined && (
+                <div style={{ backgroundColor: '#E3D5CA' }} className="rounded-lg p-4 flex items-center justify-center">
+                    <div className="text-center">
+                        <p style={{ color: '#817773' }} className="text-sm font-semibold mb-2">Puntaje de Salud</p>
+                        <p style={{ color: '#817773' }} className="text-4xl font-bold">{diagnostico.puntaje_final}/10</p>
+                    </div>
+                </div>
+            )}
+        </div>
+
+        {/* --- BLOQUE DE RUTINA SUGERIDA --- */}
+        {diagnostico.rutina_nombre && (
+            <div className="mt-6 p-6 rounded-xl border-2 border-dashed" style={{ borderColor: '#AB9A91', backgroundColor: '#FAF7F5' }}>
+                <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+                    <div>
+                        <p className="text-sm font-bold uppercase tracking-wider" style={{ color: '#AB9A91' }}>
+                             Recomendación para ti
+                        </p>
+                        <h3 className="text-xl font-bold" style={{ color: '#817773' }}>
+                            {diagnostico.rutina_nombre}
+                        </h3>
+                        <p className="text-sm text-gray-500 mt-1">
+                            Revisa los pasos y productos antes de adoptarla.
+                        </p>
+                    </div>
+                    
+                    <button
+                        // Redirige a la vista de detalle (ej: /rutina/5)
+                        onClick={() => navigate(`/rutina/${diagnostico.rutina_id}`)}
+                        className="px-6 py-3 rounded-lg text-white font-bold shadow-md transform hover:scale-105 transition-all flex items-center gap-2"
+                        style={{ background: 'linear-gradient(135deg, #AB9A91 0%, #817773 100%)' }}
+                    >
+                        <span></span> Ver detalle de rutina
+                    </button>
+                </div>
+            </div>
+        )}
+    </div>
+);
+
+
+const InfoRow = ({ label, value }) => (
+    <div>
+        <p style={{ color: '#AB9A91' }} className="text-sm font-semibold">{label}</p>
+        <p style={{ color: '#817773' }} className="text-lg font-bold mt-1">{value}</p>
+    </div>
+);
+
+const AtributoRow = ({ label, value }) => (
+    <div className="flex justify-between items-center p-3 rounded" style={{ backgroundColor: '#F5EBE0' }}>
+        <span style={{ color: '#AB9A91' }} className="font-semibold">{label}</span>
+        <span style={{ color: '#817773' }} className="font-bold">{value}</span>
+    </div>
+);
+
+// ============================================================================
+// INTERCEPTOR AXIOS - REFRESH TOKEN
+// ============================================================================
 axios.interceptors.response.use(
     response => response,
     async (error) => {
@@ -251,7 +305,8 @@ axios.interceptors.response.use(
             }
         }
 
-        // 6. Para cualquier otro error (incluyendo el de conexión), simplemente lo devolvemos.
         return Promise.reject(error);
     }
 );
+
+export default Perfil;

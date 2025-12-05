@@ -37,7 +37,7 @@ class LogoutView(APIView):
     """
     Vista para invalidar (blacklist) un Refresh Token.
     """
-    permission_classes = (IsAuthenticated,) # <-- Solo usuarios logueados pueden hacer logout
+    permission_classes = (IsAuthenticated,) # 
 
     def post(self, request):
         try:
@@ -66,7 +66,7 @@ class RegistroView(APIView):
         """
         serializer = RegistroSerializer(data=request.data)
         if serializer.is_valid():
-            usuario = serializer.save()  # Guarda el usuario y cliente asociado
+            usuario = serializer.save() # Guarda el usuario y cliente asociado
             usuario.es_cliente = True  # Asigna automáticamente el rol de cliente
             usuario.save()
             return Response(
@@ -270,11 +270,14 @@ class DiagnosticoView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        # --- INICIO DE LA LÓGICA DEL MOTOR DE REGLAS V6.0 (Tu Lógica) ---
+        # --- VARIABLES UNIFICADAS (Inicialización) ---
+        # Definimos esto al principio para usarlas en Nivel 1 y Nivel 2
+        rutina_id = None
+        rutina_nombre = None
         
-        # --- 1. NIVEL 1: REGLAS DE EXCEPCIÓN (Tu modelo ReglaDiagnostico) ---
-        
-        reglas_nivel_1 = ReglaDiagnostico.objects.all()
+        # --- 1. NIVEL 1: REGLAS DE EXCEPCIÓN (Prioridad Alta) ---
+        # Ejemplo: Desequilibrio de pH
+        reglas_nivel_1 = ReglaDiagnostico.objects.all().order_by('prioridad')
         
         for regla in reglas_nivel_1:
             match = True 
@@ -290,64 +293,70 @@ class DiagnosticoView(APIView):
                 match = False
             
             if match:
-                # ¡COINCIDENCIA DE NIVEL 1! Devolvemos la excepción.
+                # ¡COINCIDENCIA DE NIVEL 1 ENCONTRADA!
+                if regla.rutina_sugerida:
+                    rutina_id = regla.rutina_sugerida.id
+                    rutina_nombre = regla.rutina_sugerida.nombre
+
                 return Response({
                     'mensaje_diagnostico': regla.mensaje_resultado,
                     'accion': regla.accion_resultado,
-                    'puntaje_final': 0, # Nivel 1 no usa puntaje
-                    'fuente': f"Análisis v6.0 (Regla Nivel 1: {regla})"
-                })
+                    'puntaje_final': 0,
+                    'fuente': f"Análisis Directo (Regla: {regla.mensaje_resultado[:30]}...)",
+                    'rutina_id': rutina_id,          # Variable unificada
+                    'rutina_nombre': rutina_nombre,  # Variable unificada
+                }, status=status.HTTP_200_OK)
 
-        # --- 2. NIVEL 2: LÓGICA DE MATRIZ ---
-        # Calculamos el puntaje basado en los atributos del perfil
-        
+        # --- 2. NIVEL 2: LÓGICA DE MATRIZ (Si no hubo coincidencia arriba) ---
         puntaje_salud_total = 0
         reglas_activadas = []
-        fuente_principal = "Análisis v6.0 (Nivel 2: Matriz de Perfil)"
+        fuente_principal = "Análisis Estándar (Matriz de Perfil)"
 
         try:
             if perfil.estado_general:
                 puntaje_salud_total += perfil.estado_general.puntaje_base
-                reglas_activadas.append(f"Estado({perfil.estado_general.puntaje_base} pts)")
+                reglas_activadas.append(f"Estado({perfil.estado_general.puntaje_base})")
             if perfil.cuero_cabelludo:
                 puntaje_salud_total += perfil.cuero_cabelludo.puntaje_base
-                reglas_activadas.append(f"Cuero({perfil.cuero_cabelludo.puntaje_base} pts)")
+                reglas_activadas.append(f"Cuero({perfil.cuero_cabelludo.puntaje_base})")
             if perfil.tipo_cabello:
                 puntaje_salud_total += perfil.tipo_cabello.puntaje_base
-                reglas_activadas.append(f"Tipo({perfil.tipo_cabello.puntaje_base} pts)")
+                reglas_activadas.append(f"Tipo({perfil.tipo_cabello.puntaje_base})")
             if perfil.grosor_cabello:
                 puntaje_salud_total += perfil.grosor_cabello.puntaje_base
-                reglas_activadas.append(f"Grosor({perfil.grosor_cabello.puntaje_base} pts)")
+                reglas_activadas.append(f"Grosor({perfil.grosor_cabello.puntaje_base})")
             if perfil.porosidad_cabello:
                 puntaje_salud_total += perfil.porosidad_cabello.puntaje_base
-                reglas_activadas.append(f"Porosidad({perfil.porosidad_cabello.puntaje_base} pts)")
+                reglas_activadas.append(f"Porosidad({perfil.porosidad_cabello.puntaje_base})")
                 
         except AttributeError as e:
             return Response(
-                {"error": f"Error de configuración: {e}. ¿Falta 'puntaje_base' en models.py o en la migración?"}, 
+                {"error": f"Error de configuración en modelos: {str(e)}"}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
         
-        # --- 3. GENERACIÓN DE MENSAJE (Basado en tu lógica de puntaje 1-10) ---
-        
+        # --- 3. GENERACIÓN DE MENSAJE NIVEL 2 ---
         mensaje_diagnostico = ""
         accion_recomendada = ""
         
-        # (Usamos tu escala: 1=Malo, 10=Bueno)
-        if puntaje_salud_total <= 3: # Umbral para "Dañado"
-            mensaje_diagnostico = "Tu perfil indica que tu cabello está muy dañado y necesita una rutina de reparación intensiva."
-            accion_recomendada = "Recomendamos rutina de Reparación Intensiva."
-        elif puntaje_salud_total <= 7: # Umbral para "Normal"
-            mensaje_diagnostico = "Tu cabello está en un estado normal, pero necesita mantenimiento regular."
-            accion_recomendada = "Recomendamos rutina de Mantenimiento (Hidratación/Nutrición)."
-        else: # (Puntaje > 7 = "Sano")
-            mensaje_diagnostico = "¡Felicidades! Tu cabello está en un estado óptimo y saludable."
-            accion_recomendada = "Recomendamos una rutina de cuidado preventivo."
+        if puntaje_salud_total <= 3: 
+            mensaje_diagnostico = "Cabello dañado. Requiere reparación intensiva."
+            accion_recomendada = "Reparación Intensiva"
+            # AQUÍ PODRÍAS ASIGNAR UNA RUTINA POR DEFECTO SI QUISIERAS:
+            # rutina_id = 1 (ID de rutina de reparación)
+        elif puntaje_salud_total <= 7:
+            mensaje_diagnostico = "Estado regular. Requiere mantenimiento."
+            accion_recomendada = "Hidratación y Nutrición"
+        else:
+            mensaje_diagnostico = "Estado saludable. Mantener cuidado preventivo."
+            accion_recomendada = "Cuidado Preventivo"
 
-        # --- 4. RESPUESTA FINAL (Nivel 2/3) ---
+        # --- 4. RESPUESTA FINAL ---
         return Response({
             'mensaje_diagnostico': mensaje_diagnostico,
             'accion': accion_recomendada,
             'puntaje_final': puntaje_salud_total,
-            'fuente': f"{fuente_principal} (Reglas: {', '.join(reglas_activadas)})"
-        })
+            'fuente': f"{fuente_principal} - Pts: {puntaje_salud_total}",
+            'rutina_id': rutina_id,
+            'rutina_nombre': rutina_nombre,
+        }, status=status.HTTP_200_OK)

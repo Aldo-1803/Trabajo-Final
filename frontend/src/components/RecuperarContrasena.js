@@ -52,7 +52,7 @@ const RecuperarContrasena = () => {
                     {/* Mensaje de error */}
                     {error && (
                         <div className="mb-6 p-4 bg-red-50 border-l-4 border-red-400 rounded-lg">
-                            <p className="text-red-700 font-medium">⚠️ {error}</p>
+                            <p className="text-red-700 font-medium">{error}</p>
                         </div>
                     )}
                     
@@ -79,7 +79,7 @@ const RecuperarContrasena = () => {
                             placeholder="tu@email.com"
                         />
                         <p className="text-gray-600 text-xs mt-3 bg-amber-50 p-3 rounded-lg border border-amber-200">
-                            💡 Ingresa el correo asociado a tu cuenta y te enviaremos instrucciones para recuperar tu contraseña.
+                            Ingresa el correo asociado a tu cuenta y te enviaremos instrucciones para recuperar tu contraseña.
                         </p>
                     </div>
 
@@ -109,7 +109,7 @@ const RecuperarContrasena = () => {
                         onClick={() => navigate('/login')}
                         className="w-full bg-gradient-to-r from-amber-200 to-orange-200 hover:from-amber-300 hover:to-orange-300 text-amber-900 font-bold py-3 px-6 rounded-lg shadow-md transition duration-200 transform hover:scale-105"
                     >
-                        🔐 Volver a Iniciar Sesión
+                        Volver a Iniciar Sesión
                     </button>
 
                     <button 
@@ -117,7 +117,7 @@ const RecuperarContrasena = () => {
                         onClick={() => navigate('/registro')}
                         className="w-full text-rose-600 hover:text-rose-700 font-semibold py-2 px-6 rounded-lg transition duration-200 underline hover:no-underline"
                     >
-                        📝 ¿No tienes cuenta? Regístrate
+                        ¿No tienes cuenta? Regístrate
                     </button>
                 </div>
             </div>

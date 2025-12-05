@@ -83,7 +83,7 @@ const Registro = () => {
         setLoading(true);
 
         try {
-            const response = await axios.post('/api/usuarios/registro/', formData);
+            await axios.post('/api/usuarios/registro/', formData);
             alert('¡Registro exitoso! Ahora inicia sesión.');
             navigate('/login');
         } catch (error) {
@@ -143,7 +143,7 @@ const Registro = () => {
                 {/* Error de Opciones */}
                 {errorOpciones && (
                     <div className="mx-6 mt-6 p-4 bg-red-50 border-l-4 border-red-400 rounded-lg">
-                        <p className="text-red-700 font-medium">⚠️ {errorOpciones}</p>
+                        <p className="text-red-700 font-medium">{errorOpciones}</p>
                     </div>
                 )}
 
