@@ -27,12 +27,12 @@ from . import views
 # Crear el router automático
 router = DefaultRouter()
 
-# --- CAMBIO IMPORTANTE: RUTAS EN SINGULAR PARA COINCIDIR CON FRONTEND ---
-router.register(r'tipo-cabello', TipoCabelloViewSet, basename='tipocabello')
-router.register(r'grosor-cabello', GrosorCabelloViewSet, basename='grosorcabello')
-router.register(r'porosidad-cabello', PorosidadCabelloViewSet, basename='porosidadcabello')
-router.register(r'cuero-cabelludo', CueroCabelludoViewSet, basename='cuerocabelludo')
-router.register(r'estado-general', EstadoGeneralViewSet, basename='estadogeneral')
+# --- RUTAS PARA CATÁLOGOS DE CABELLO (Plurales para coincidir con Frontend) ---
+router.register(r'tipos-cabello', TipoCabelloViewSet, basename='tipocabello')
+router.register(r'grosores-cabello', GrosorCabelloViewSet, basename='grosorcabello')
+router.register(r'porosidades-cabello', PorosidadCabelloViewSet, basename='porosidadcabello')
+router.register(r'cueros-cabelludos', CueroCabelludoViewSet, basename='cuerocabelludo')
+router.register(r'estados-generales', EstadoGeneralViewSet, basename='estadogeneral')
 
 # Resto de rutas (estas ya estaban bien o son nuevas)
 router.register(r'servicios', ServicioViewSet, basename='servicio')

@@ -7,7 +7,8 @@ from rest_framework import generics
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
-from datetime import datetime, date
+from datetime import datetime, date, time
+import datetime as datetime_module
 from .service import DisponibilidadService 
 from django.db.models import Q
 from .serializers import AgendaCuidadosSerializer
@@ -29,7 +30,7 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 
 
 
-from .models import TipoCabello, GrosorCabello, PorosidadCabello, CueroCabelludo, EstadoGeneral, Servicio, Turno
+from .models import TipoCabello, GrosorCabello, PorosidadCabello, CueroCabelludo, EstadoGeneral, Servicio, Turno, Configuracion, ListaEspera
 from .serializers import (
     TipoCabelloSerializer,
     GrosorCabelloSerializer,
@@ -43,7 +44,8 @@ from .serializers import (
     RutinaClienteSerializer,
     RutinaClienteCreateSerializer,
     PasoRutinaSerializer,
-    ReglaDiagnosticoSerializer
+    ReglaDiagnosticoSerializer,
+    NotificacionSerializer
 )
 from .models import Rutina, RutinaCliente, PasoRutinaCliente
 
@@ -201,36 +203,261 @@ class TurnoViewSet(viewsets.ModelViewSet):
     pagination_class = None 
 
     def get_serializer_class(self):
-        """
-        Selector dinámico de Serializer
-        """
         if self.action == 'create':
             return TurnoCreateSerializer
         return TurnoSerializer
     
     def get_queryset(self):
         queryset = super().get_queryset()
+        # Filtro para que el cliente solo vea sus propios turnos (Seguridad)
+        if not self.request.user.is_staff and hasattr(self.request.user, 'cliente'):
+             queryset = queryset.filter(cliente=self.request.user.cliente)
+             
         estado = self.request.query_params.get('estado')
         if estado:
             queryset = queryset.filter(estado=estado)
         return queryset
 
     def perform_create(self, serializer):
+        # ... (Tu código de creación se mantiene igual) ...
         user = self.request.user
-        
-        # Validación de seguridad: ¿El usuario tiene perfil de cliente?
         if not user.is_staff and not hasattr(user, 'cliente'):
             from rest_framework.exceptions import ValidationError
-            raise ValidationError({"error": "Este usuario no tiene un perfil de cliente asociado."})
+            raise ValidationError({"error": "Usuario sin perfil de cliente."})
 
         if user.is_staff:
             serializer.save()
         else:
-            # Aquí inyectamos el cliente manualmente
-            serializer.save(
-                cliente=user.cliente, 
-                estado='solicitado'
+            serializer.save(cliente=user.cliente, estado='solicitado')
+
+    # =====================================================================
+    # AQUÍ ESTÁ EL PROCESO AUTOMATIZADO #2 (Integrado como Acción)
+    # =====================================================================
+    @action(detail=True, methods=['post'], url_path='gestionar')
+    def gestionar_cancelacion(self, request, pk=None):
+        """
+        Lógica de Reprogramación Diferenciada por Estado (A, B, C).
+        """
+        import datetime
+        
+        turno = self.get_object()
+        usuario = request.user
+        es_profesional = usuario.is_staff
+        
+        # Configuración
+        config = Configuracion.objects.first()
+        limite_cambios = config.max_reprogramaciones if config else 2
+        horas_limite = config.horas_limite_cancelacion if config else 48
+
+        accion = request.data.get('accion') # 'CONSULTAR', 'REPROGRAMAR', 'CANCELAR'
+
+        # Cálculos de tiempo (Solo necesarios para Estado C, pero los preparamos)
+        ahora = timezone.now()
+        # Aseguramos que fecha_hora_turno sea aware (con zona horaria)
+        fecha_hora_turno = timezone.datetime.combine(turno.fecha, turno.hora_inicio)
+        if timezone.is_naive(fecha_hora_turno):
+            fecha_hora_turno = timezone.make_aware(fecha_hora_turno)
+        
+        diferencia = fecha_hora_turno - ahora
+        horas_restantes = diferencia.total_seconds() / 3600
+
+        # =====================================================================
+        # 1. BLOQUEO DE SEGURIDAD (Solo aplica a CONFIRMADOS)
+        # =====================================================================
+        # La regla de 48hs solo aplica si el turno ya es firme (Estado C)
+        es_confirmado = turno.estado == Turno.Estado.CONFIRMADO
+        
+        if not es_profesional and es_confirmado and horas_restantes < horas_limite:
+            if accion in ['REPROGRAMAR', 'CANCELAR']:
+                return Response({
+                    "error": "Restricción de tiempo",
+                    "mensaje_bloqueo": f"Faltan menos de {horas_limite}hs. Ya no se puede modificar por la App.",
+                    "contacto": "WhatsApp: +54 9 ..."
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            if accion == 'CONSULTAR':
+                return Response({
+                    "puede_reprogramar": False,
+                    "mensaje": "Tiempo límite excedido (menos de 48hs).",
+                    "tipo_alerta": "danger"
+                })
+
+        # =====================================================================
+        # 2. ACCIÓN: CONSULTAR (Información según Estado)
+        # =====================================================================
+        if accion == 'CONSULTAR':
+            # --- ESTADO A: SOLICITADO ---
+            if turno.estado == Turno.Estado.SOLICITADO:
+                return Response({
+                    "puede_reprogramar": True,
+                    "mensaje": "Aún no confirmamos tu turno. Puedes modificar la fecha libremente.",
+                    "tipo_alerta": "info"
+                })
+            
+            # --- ESTADO B: ESPERANDO SEÑA ---
+            elif turno.estado == Turno.Estado.ESPERANDO_SENA:
+                return Response({
+                    "puede_reprogramar": True,
+                    "mensaje": "Si cambias la fecha ahora, deberemos volver a validar la disponibilidad (vuelve a estado Solicitado).",
+                    "tipo_alerta": "warning"
+                })
+
+            # --- ESTADO C: CONFIRMADO ---
+            elif turno.estado == Turno.Estado.CONFIRMADO:
+                cambios_restantes = limite_cambios - turno.cambios_realizados
+                puede = cambios_restantes > 0
+                msg = f"Te quedan {cambios_restantes} cambios disponibles." if puede else "Has agotado tus cambios."
+                return Response({
+                    "puede_reprogramar": puede,
+                    "mensaje": msg,
+                    "cambios_realizados": turno.cambios_realizados,
+                    "limite_cambios": limite_cambios,
+                    "tipo_alerta": "info" if puede else "danger"
+                })
+
+        # =====================================================================
+        # 3. ACCIÓN: REPROGRAMAR (Lógica Diferenciada)
+        # =====================================================================
+        elif accion == 'REPROGRAMAR':
+            # Validación de datos de entrada (común a todos)
+            nueva_fecha_str = request.data.get('nueva_fecha')
+            nueva_hora_str = request.data.get('nueva_hora')
+            if not nueva_fecha_str or not nueva_hora_str:
+                return Response({"error": "Faltan datos"}, status=400)
+
+            try:
+                # Conversión segura
+                nueva_fecha = datetime.datetime.strptime(nueva_fecha_str, '%Y-%m-%d').date()
+                nueva_hora = datetime.datetime.strptime(nueva_hora_str, '%H:%M').time()
+            except ValueError:
+                return Response({"error": "Formato inválido"}, status=400)
+
+            # --- LÓGICA ESTADO A (Solicitado) ---
+            if turno.estado == Turno.Estado.SOLICITADO:
+                turno.fecha = nueva_fecha
+                turno.hora_inicio = nueva_hora
+                # No cambia estado, no suma contador
+                turno.save()
+                return Response({"mensaje": "Solicitud modificada correctamente."})
+
+            # --- LÓGICA ESTADO B (Esperando Seña) ---
+            elif turno.estado == Turno.Estado.ESPERANDO_SENA:
+                turno.fecha = nueva_fecha
+                turno.hora_inicio = nueva_hora
+                turno.estado = Turno.Estado.SOLICITADO # REINICIO DEL FLUJO
+                # No suma contador
+                turno.save()
+                return Response({"mensaje": "Fecha cambiada. Tu turno espera nueva aprobación."})
+
+            # --- LÓGICA ESTADO C (Confirmado) ---
+            elif turno.estado == Turno.Estado.CONFIRMADO:
+                if turno.cambios_realizados >= limite_cambios:
+                    return Response({"error": "Límite de cambios excedido."}, status=400)
+                
+                turno.fecha = nueva_fecha
+                turno.hora_inicio = nueva_hora
+                turno.cambios_realizados += 1
+                # Mantiene estado Confirmado (Seña se traslada)
+                turno.save()
+                
+                # Aquí iría el disparador de optimización (liberar hueco viejo), 
+                # pero como es un update sobre el mismo objeto, el hueco se libera implícitamente.
+                
+                return Response({"mensaje": "Turno reprogramado. Seña transferida."})
+
+        # =====================================================================
+        # 4. ACCIÓN: CANCELAR (Lógica General)
+        # =====================================================================
+        elif accion == 'CANCELAR':
+            # 1. Guardar datos del hueco (Snapshot)
+            fecha_hueco = turno.fecha
+            hora_hueco = turno.hora_inicio
+            servicio_hueco = turno.servicio
+            cliente_que_cancela = turno.cliente
+            
+            # 2. Ejecutar la cancelación
+            turno.estado = Turno.Estado.CANCELADO
+            turno.save()
+            
+            candidatos_notificados = []
+
+            # === MOTOR DE OPTIMIZACIÓN DE AGENDA ===
+            
+            # GRUPO 1: Lista de Espera (Gente sin turno)
+            espera_q = ListaEspera.objects.filter(
+                activa=True,
+                notificado=False,
+                fecha_deseada_inicio__lte=fecha_hueco,
+                fecha_deseada_fin__gte=fecha_hueco
             )
+            
+            # GRUPO 2: Adelanto de Turnos (Gente con turno futuro)
+            futuros_q = Turno.objects.filter(
+                estado=Turno.Estado.CONFIRMADO,
+                servicio=servicio_hueco, # Mismo servicio
+                fecha__gt=fecha_hueco    # Fecha futura
+            ).exclude(cliente=cliente_que_cancela) # No avisar al que canceló
+            
+            # --- Ejecución de Notificaciones ---
+            
+            # Procesar Grupo 1 (Lista de Espera)
+            for cand in espera_q:
+                print(f"[LISTA ESPERA] Notificando a {cand.cliente.usuario.first_name} sobre hueco el {fecha_hueco}")
+                
+                # Crear notificación con datos_extra
+                Notificacion.objects.create(
+                    usuario=cand.cliente.usuario,
+                    tipo='ADELANTO',  
+                    canal='app',
+                    titulo="¡Disponibilidad de Turno!",
+                    mensaje=f"Se liberó un espacio para {servicio_hueco.nombre} el {fecha_hueco} a las {hora_hueco.strftime('%H:%M')}. ¿Te gustaría reservarlo?",
+                    origen_entidad='Turno',
+                    origen_id=turno.id,
+                    datos_extra={
+                        "fecha_oferta": str(fecha_hueco),
+                        "hora_oferta": str(hora_hueco),
+                        "servicio_id": servicio_hueco.id,
+                        "turno_cancelado_id": turno.id
+                    }
+                )
+                
+                cand.notificado = True
+                cand.save()
+                candidatos_notificados.append(f"LE: {cand.cliente.usuario.first_name}")
+
+            # Procesar Grupo 2 (Adelanto de Turnos)
+            for turno_futuro in futuros_q:
+                print(f"[ADELANTO] Ofreciendo a {turno_futuro.cliente.usuario.first_name} (Turno del {turno_futuro.fecha}) adelantar al {fecha_hueco}")
+                
+                # Crear notificación con datos_extra
+                Notificacion.objects.create(
+                    usuario=turno_futuro.cliente.usuario,
+                    tipo='ADELANTO',
+                    canal='app',
+                    titulo="¡Oportunidad de Adelantar Turno!",
+                    mensaje=f"Se liberó un espacio para {servicio_hueco.nombre} el {fecha_hueco} a las {hora_hueco.strftime('%H:%M')}. ¿Te gustaría adelantar tu turno del {turno_futuro.fecha}?",
+                    origen_entidad='Turno',
+                    origen_id=turno_futuro.id,
+                    datos_extra={
+                        "fecha_oferta": str(fecha_hueco),
+                        "hora_oferta": str(hora_hueco),
+                        "turno_actual_id": turno_futuro.id,
+                        "servicio_id": servicio_hueco.id
+                    }
+                )
+                
+                candidatos_notificados.append(f"Adelanto: {turno_futuro.cliente.usuario.first_name}")
+
+            return Response({
+                "mensaje": "Turno cancelado correctamente.",
+                "automatizacion_info": {
+                    "hueco_liberado": f"{fecha_hueco} a las {hora_hueco.strftime('%H:%M')}",
+                    "total_notificados": len(candidatos_notificados),
+                    "detalle": candidatos_notificados
+                }
+            })
+
+        return Response({"error": "Acción inválida"}, status=400)
 
 class MiAgendaCuidadosView(generics.ListAPIView):
     """
@@ -248,19 +475,93 @@ class MiAgendaCuidadosView(generics.ListAPIView):
     
 
 class NotificacionViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Endpoint para listar notificaciones.
+    Solo lectura (el usuario no crea notificaciones, el sistema lo hace).
+    """
     serializer_class = NotificacionSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        # Devuelve solo las notificaciones del usuario logueado
-        return Notificacion.objects.filter(usuario=self.request.user)
-
+        # FILTRO DE SEGURIDAD: Solo devolver las notificaciones del usuario actual
+        return Notificacion.objects.filter(usuario=self.request.user).order_by('-fecha_envio')
+    
     @action(detail=True, methods=['post'])
     def marcar_leida(self, request, pk=None):
         notificacion = self.get_object()
         notificacion.estado = 'leido'
         notificacion.save()
         return Response({'status': 'ok'})
+    
+    @action(detail=True, methods=['post'])
+    def aceptar(self, request, pk=None):
+        """
+        Endpoint para aceptar una oferta de adelanto de turno.
+        Extrae los datos de la notificación y actualiza el turno correspondiente.
+        """
+        notificacion = self.get_object()
+        
+        # Validar que sea del tipo ADELANTO
+        if notificacion.tipo != 'ADELANTO':
+            return Response(
+                {'error': 'Esta notificación no es una oferta de adelanto'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validar que tenga datos_extra
+        if not notificacion.datos_extra:
+            return Response(
+                {'error': 'Datos incompletos en la notificación'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Extraer datos de la notificación
+            fecha_oferta = notificacion.datos_extra.get('fecha_oferta')
+            hora_oferta = notificacion.datos_extra.get('hora_oferta')
+            turno_actual_id = notificacion.datos_extra.get('turno_actual_id')
+            
+            if not all([fecha_oferta, hora_oferta, turno_actual_id]):
+                return Response(
+                    {'error': 'Datos incompletos en la oferta'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Obtener el turno
+            turno = Turno.objects.get(id=turno_actual_id, cliente=self.request.user.cliente)
+            
+            # Convertir strings a tipos correctos
+            import datetime as dt
+            nueva_fecha = dt.datetime.strptime(fecha_oferta, '%Y-%m-%d').date()
+            nueva_hora = dt.datetime.strptime(hora_oferta, '%H:%M').time()
+            
+            # Actualizar el turno
+            turno.fecha = nueva_fecha
+            turno.hora_inicio = nueva_hora
+            turno.save()
+            
+            # Marcar la notificación como leída
+            notificacion.estado = 'leido'
+            notificacion.save()
+            
+            return Response({
+                'mensaje': 'Turno adelantado correctamente',
+                'turno_id': turno.id,
+                'nueva_fecha': nueva_fecha,
+                'nueva_hora': nueva_hora
+            }, status=status.HTTP_200_OK)
+            
+        except Turno.DoesNotExist:
+            return Response(
+                {'error': 'No se encontró el turno'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            print(f"Error al aceptar oferta: {str(e)}")
+            return Response(
+                {'error': f'Error al procesar la oferta: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
 class AdminDashboardStatsView(APIView):
     """

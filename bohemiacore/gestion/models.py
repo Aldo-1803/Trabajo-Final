@@ -216,6 +216,12 @@ class Configuracion(models.Model):
     # Política de Señas
     monto_sena = models.DecimalField(max_digits=10, decimal_places=2, default=5000.00)
     tiempo_limite_pago_sena = models.IntegerField(default=24, help_text="Horas para pagar antes de cancelar")
+    #Límite de reprogramaciones
+    max_reprogramaciones = models.IntegerField(default=2, help_text="Cuántas veces se puede cambiar el turno sin perder la seña")
+    horas_limite_cancelacion = models.IntegerField(
+        default=48, 
+        help_text="Horas antes del turno en las que se bloquea la cancelación automática por parte del cliente."
+    )
 
     class Meta:
         verbose_name = "Configuración del Sistema"
@@ -258,6 +264,7 @@ class HorarioLaboral(models.Model):
     hora_inicio = models.TimeField()
     hora_fin = models.TimeField()
     activo = models.BooleanField(default=True)
+    cambios_realizados = models.PositiveIntegerField(default=0, help_text="Contador de reprogramaciones hechas por el cliente")
 
     class Meta:
         ordering = ['dia']
@@ -303,6 +310,10 @@ class Turno(models.Model):
     # Auditoría
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     comprobante_pago = models.FileField(upload_to='comprobantes/', null=True, blank=True)
+    cambios_realizados = models.IntegerField(
+        default=0, 
+        help_text="Contador de cuántas veces se ha reprogramado este turno"
+    )
 
     class Meta:
         ordering = ['fecha', 'hora_inicio']
@@ -320,6 +331,46 @@ class Turno(models.Model):
 
     def __str__(self):
         return f"Turno {self.fecha} {self.hora_inicio} - {self.cliente}"
+    
+class ListaEspera(models.Model):
+    """
+    Registra clientas interesadas en un hueco si se libera.
+    Funciona como una cola de prioridad FIFO (First In, First Out).
+    """
+    cliente = models.ForeignKey(
+        'usuarios.Cliente', 
+        on_delete=models.CASCADE,
+        related_name='esperas'
+    )
+    servicio_interes = models.ForeignKey(
+        Servicio, 
+        on_delete=models.SET_NULL, 
+        null=True,
+        help_text="Servicio que la clienta quiere realizarse"
+    )
+    
+    # Rango de fechas en las que la clienta puede asistir
+    fecha_deseada_inicio = models.DateField()
+    fecha_deseada_fin = models.DateField()
+    
+    # Preferencia horaria (opcional, para filtrar mejor)
+    hora_rango_inicio = models.TimeField(default="08:00")
+    hora_rango_fin = models.TimeField(default="20:00")
+    
+    # Estado de la solicitud
+    fecha_registro = models.DateTimeField(auto_now_add=True)
+    notificado = models.BooleanField(default=False, help_text="Si ya se le avisó de un hueco disponible")
+    
+    # Para desactivar la solicitud si la clienta ya consiguió turno o se arrepintió
+    activa = models.BooleanField(default=True)
+
+    class Meta:
+        verbose_name = "Lista de Espera"
+        verbose_name_plural = "Listas de Espera"
+        ordering = ['fecha_registro'] # Prioridad por orden de llegada
+
+    def __str__(self):
+        return f"Espera: {self.cliente} ({self.fecha_deseada_inicio} al {self.fecha_deseada_fin})"
     
 #----------------------------------------------------
 # 7. MODELOS DE RUTINAS
@@ -719,6 +770,7 @@ class Notificacion(models.Model):
         ('informativa', 'Informativa'),
         ('alerta', 'Alerta'),
         ('recordatorio', 'Recordatorio'),
+        ('ADELANTO', 'Oferta de Adelanto de Turno'),
     ]
     
     CANAL_CHOICES = [
@@ -746,6 +798,8 @@ class Notificacion(models.Model):
     # Referencia genérica manual
     origen_entidad = models.CharField(max_length=50, blank=True, null=True, help_text="Ej: 'Turno', 'Promocion'")
     origen_id = models.IntegerField(blank=True, null=True, help_text="ID de la entidad origen")
+
+    datos_extra = models.JSONField(null=True, blank=True)
 
     class Meta:
         ordering = ['-fecha_envio']

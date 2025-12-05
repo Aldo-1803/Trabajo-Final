@@ -201,14 +201,10 @@ class AgendaCuidadosSerializer(serializers.ModelSerializer):
         model = AgendaCuidados
         fields = ['id', 'fecha', 'titulo', 'descripcion', 'completado']
 
-
 class NotificacionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Notificacion
-        fields = [
-            'id', 'titulo', 'mensaje', 'tipo', 'canal', 
-            'estado', 'fecha_envio', 'origen_entidad', 'origen_id'
-        ]
+        fields = ['id', 'titulo', 'mensaje', 'tipo', 'estado', 'fecha_envio', 'datos_extra', 'usuario', 'canal']
 
 class ReglaDiagnosticoSerializer(serializers.ModelSerializer):
     # Campos de solo lectura para mostrar nombres en la tabla

@@ -16,7 +16,6 @@ const MisRutinas = () => {
     try {
       setLoading(true);
       const token = localStorage.getItem('access_token');
-      // Sugerencia: Considera usar una variable de entorno para la URL base en lugar de hardcodear localhost
       const response = await axios.get('http://localhost:8000/api/gestion/rutinas-cliente/', {
         headers: { Authorization: `Bearer ${token}` }
       });

@@ -5,6 +5,7 @@ const CampanaNotificaciones = () => {
     const [notificaciones, setNotificaciones] = useState([]);
     const [showDropdown, setShowDropdown] = useState(false);
     const [unreadCount, setUnreadCount] = useState(0);
+    const [procesando, setProcesando] = useState({});
 
     const fetchNotificaciones = async () => {
         try {
@@ -59,11 +60,78 @@ const CampanaNotificaciones = () => {
         }
     };
 
+    // Nueva función: Procesar oferta de adelanto
+    const handleAceptarOferta = async (notif) => {
+        try {
+            // Extraer datos de la notificación
+            const { fecha_oferta, hora_oferta, turno_actual_id } = notif.datos_extra;
+            
+            // Validar datos
+            if (!fecha_oferta || !hora_oferta) {
+                alert('Datos incompletos en la notificación');
+                return;
+            }
+
+            // Confirmación visual
+            if (!window.confirm(`¿Confirmas adelantar tu turno al ${fecha_oferta} a las ${hora_oferta}?`)) {
+                return;
+            }
+
+            setProcesando(prev => ({ ...prev, [notif.id]: true }));
+            const token = localStorage.getItem('access_token');
+
+            // Opción 1: Si existe endpoint específico de aceptar notificación
+            try {
+                await axios.post(
+                    `http://127.0.0.1:8000/api/gestion/notificaciones/${notif.id}/aceptar/`,
+                    {},
+                    { headers: { 'Authorization': `Bearer ${token}` } }
+                );
+            } catch (err) {
+                // Si no existe ese endpoint, usamos el PATCH directo al turno
+                console.log('Endpoint específico no disponible, usando PATCH directo...');
+                
+                if (turno_actual_id) {
+                    await axios.patch(
+                        `http://127.0.0.1:8000/api/gestion/turnos/${turno_actual_id}/`,
+                        {
+                            fecha: fecha_oferta,
+                            hora_inicio: hora_oferta
+                        },
+                        { headers: { 'Authorization': `Bearer ${token}` } }
+                    );
+                } else {
+                    throw new Error('ID de turno no encontrado en notificación');
+                }
+            }
+
+            // Si llegamos aquí, el cambio fue exitoso
+            alert("¡Turno adelantado correctamente!");
+            
+            // Marcar notificación como leída
+            await marcarComoLeida(notif.id);
+            
+            // Recargar notificaciones
+            await fetchNotificaciones();
+            
+        } catch (error) {
+            console.error('Error al aceptar oferta:', error);
+            const errorMsg = error.response?.data?.error 
+                || error.response?.data?.detail 
+                || error.message 
+                || "Error al procesar la solicitud";
+            alert(errorMsg);
+        } finally {
+            setProcesando(prev => ({ ...prev, [notif.id]: false }));
+        }
+    };
+
     // Función auxiliar para el color del icono según el tipo
     const getIconoTipo = (tipo) => {
         switch(tipo) {
             case 'alerta': return '🔴'; // Rojo para cancelaciones/urgente
             case 'recordatorio': return '⏰';
+            case 'ADELANTO': return '⏩'; // Adelanto rápido
             default: return 'ℹ️'; // Info normal
         }
     };
@@ -106,10 +174,10 @@ const CampanaNotificaciones = () => {
                             notificaciones.map((notif) => (
                                 <div 
                                     key={notif.id} 
-                                    onClick={() => notif.estado === 'pendiente' && marcarComoLeida(notif.id)}
-                                    className={`p-4 border-b border-gray-50 cursor-pointer transition-colors hover:bg-pink-50 
+                                    className={`p-4 border-b border-gray-50 transition-colors 
                                         ${notif.estado === 'pendiente' ? 'bg-blue-50 border-l-4 border-l-pink-500' : 'bg-white opacity-80'}`}
                                 >
+                                    {/* Título y Mensaje */}
                                     <div className="flex justify-between items-start mb-1">
                                         <h4 className={`text-sm ${notif.estado === 'pendiente' ? 'font-bold text-gray-900' : 'font-semibold text-gray-600'}`}>
                                             {getIconoTipo(notif.tipo)} {notif.titulo}
@@ -119,14 +187,56 @@ const CampanaNotificaciones = () => {
                                         </span>
                                     </div>
                                     
-                                    <p className={`text-xs ${notif.estado === 'pendiente' ? 'text-gray-800' : 'text-gray-500'}`}>
+                                    <p className={`text-xs mb-3 ${notif.estado === 'pendiente' ? 'text-gray-800' : 'text-gray-500'}`}>
                                         {notif.mensaje}
                                     </p>
                                     
-                                    {/* Indicador visual de "Click para leer" */}
-                                    {notif.estado === 'pendiente' && (
+                                    {/* --- LÓGICA CONDICIONAL PARA INTERACCIÓN --- */}
+                                    
+                                    {/* Si es tipo ADELANTO y aún está pendiente (no aceptada) */}
+                                    {notif.tipo === 'ADELANTO' && notif.datos_extra && notif.estado === 'pendiente' && (
+                                        <div className="mt-3 bg-gradient-to-r from-blue-50 to-indigo-50 p-3 rounded border-2 border-blue-200">
+                                            <p className="text-xs text-blue-800 mb-3 font-bold">
+                                                📅 Nueva fecha: <span className="text-blue-900">{notif.datos_extra.fecha_oferta}</span> a las <span className="text-blue-900">{notif.datos_extra.hora_oferta}</span>
+                                            </p>
+                                            
+                                            <div className="flex gap-2">
+                                                <button 
+                                                    onClick={() => handleAceptarOferta(notif)}
+                                                    disabled={procesando[notif.id]}
+                                                    className="flex-1 bg-green-600 text-white text-xs font-bold py-2 rounded hover:bg-green-700 shadow-sm transition disabled:bg-gray-400 disabled:cursor-not-allowed"
+                                                >
+                                                    {procesando[notif.id] ? '⏳ Procesando...' : '✅ ACEPTAR'}
+                                                </button>
+                                                <button 
+                                                    onClick={() => marcarComoLeida(notif.id)}
+                                                    disabled={procesando[notif.id]}
+                                                    className="px-3 py-2 border border-gray-300 rounded text-gray-500 text-xs hover:bg-gray-100 transition disabled:bg-gray-100 disabled:cursor-not-allowed"
+                                                >
+                                                    Ignorar
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+                                    
+                                    {/* Si es ADELANTO pero ya fue aceptada/leída */}
+                                    {notif.tipo === 'ADELANTO' && notif.estado === 'leido' && (
+                                        <div className="mt-3 bg-green-50 p-3 rounded border-2 border-green-200">
+                                            <p className="text-xs text-green-700 font-bold">
+                                                ✅ Turno adelantado correctamente
+                                            </p>
+                                        </div>
+                                    )}
+
+                                    {/* Si no es ADELANTO, solo click para marcar como leído */}
+                                    {notif.tipo !== 'ADELANTO' && notif.estado === 'pendiente' && (
                                         <div className="mt-2 flex justify-end">
-                                            <span className="text-[10px] text-pink-600 font-bold uppercase tracking-wide">Marcar como leída</span>
+                                            <button
+                                                onClick={() => marcarComoLeida(notif.id)}
+                                                className="text-[10px] text-pink-600 font-bold uppercase tracking-wide hover:text-pink-700 transition"
+                                            >
+                                                Marcar como leída →
+                                            </button>
                                         </div>
                                     )}
                                 </div>
