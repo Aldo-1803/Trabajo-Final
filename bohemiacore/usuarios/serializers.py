@@ -303,3 +303,28 @@ class SetNewPasswordSerializer(serializers.Serializer):
             raise serializers.ValidationError({"password": "Las contraseñas no coinciden."})
         validate_password(attrs['password'])
         return attrs
+
+
+class ClienteListSerializer(serializers.ModelSerializer):
+    # Usamos SerializerMethodField para evitar crasheos si el usuario no existe
+    id = serializers.ReadOnlyField(source='usuario.id')
+    email = serializers.SerializerMethodField()
+    first_name = serializers.SerializerMethodField()
+    last_name = serializers.SerializerMethodField()
+    date_joined = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Cliente
+        fields = ['id', 'email', 'first_name', 'last_name', 'numero', 'date_joined', 'zona']
+
+    def get_email(self, obj):
+        return obj.usuario.email if obj.usuario else "Sin Usuario"
+
+    def get_first_name(self, obj):
+        return obj.usuario.first_name if obj.usuario else "---"
+
+    def get_last_name(self, obj):
+        return obj.usuario.last_name if obj.usuario else "---"
+
+    def get_date_joined(self, obj):
+        return obj.usuario.date_joined if obj.usuario else None

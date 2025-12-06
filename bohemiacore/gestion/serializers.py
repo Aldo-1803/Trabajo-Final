@@ -11,6 +11,8 @@ import os
 from django.core.exceptions import ValidationError 
 from .models import Notificacion
 from .models import ReglaDiagnostico
+from .models import Producto
+from .models import Equipamiento
 
 # 1. EL SERIALIZER BASE (El "Molde")
 # Define los campos que TODOS los catálogos compartirán
@@ -40,6 +42,10 @@ class CueroCabelludoSerializer(CatalogoBaseSerializer):
 class EstadoGeneralSerializer(CatalogoBaseSerializer):
     class Meta(CatalogoBaseSerializer.Meta):
         model = EstadoGeneral
+
+class CategoriaServicioSerializer(CatalogoBaseSerializer):
+    class Meta(CatalogoBaseSerializer.Meta):
+        model = CategoriaServicio
 
 # 3. SERIALIZERS ADICIONALES PARA OTROS MODELOS
 class ServicioSerializer(serializers.ModelSerializer):
@@ -227,3 +233,51 @@ class ReglaDiagnosticoSerializer(serializers.ModelSerializer):
             'mensaje_resultado', 'accion_resultado',
             'rutina_sugerida', 'rutina_nombre'
         ]
+    
+
+# --- A. SERIALIZER USUARIOS (ADMIN) ---
+class UsuarioAdminSerializer(serializers.ModelSerializer):
+    """
+    Permite al admin crear/editar usuarios profesionales.
+    """
+    password = serializers.CharField(write_only=True, required=False)
+
+    class Meta:
+        model = Usuario
+        fields = ['id', 'email', 'first_name', 'last_name', 'is_staff', 'is_active', 'password']
+    
+    def create(self, validated_data):
+        # Usamos create_user para hashear la contraseña correctamente
+        password = validated_data.pop('password', None)
+        user = Usuario.objects.create_user(**validated_data)
+        if password:
+            user.set_password(password)
+            user.save()
+        return user
+
+    def update(self, instance, validated_data):
+        password = validated_data.pop('password', None)
+        # Actualización estándar
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        if password:
+            instance.set_password(password)
+        instance.save()
+        return instance
+
+# --- B. SERIALIZER PRODUCTOS ---
+class ProductoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Producto
+        fields = '__all__'
+
+    def validate_precio(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("El precio de venta debe ser mayor a cero.") #
+        return value
+
+# --- D. SERIALIZER EQUIPAMIENTO ---
+class EquipamientoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Equipamiento
+        fields = '__all__'

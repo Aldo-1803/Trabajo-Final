@@ -116,16 +116,43 @@ const GestionarRutinas = () => {
   };
 
   const handleDelete = async (id) => {
-    if (window.confirm('¿Estás seguro de eliminar esta rutina?')) {
-      try {
-        const token = localStorage.getItem('access_token');
-        await axios.delete(`http://127.0.0.1:8000/api/gestion/rutinas/${id}/`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        fetchRutinas();
-      } catch (err) {
-        setError('Error al eliminar la rutina');
+    // 1. Confirmación inicial
+    if (!window.confirm('¿Estás seguro de eliminar esta rutina?')) return;
+
+    try {
+      const token = localStorage.getItem('access_token');
+      
+      // 2. Llamada al Backend
+      const res = await axios.delete(`http://127.0.0.1:8000/api/gestion/rutinas/${id}/`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      // 3. Manejo de Respuestas Inteligentes (La lógica de tu Tesis)
+      
+      // CASO A: ELIMINACIÓN FÍSICA (Nadie la usaba)
+      // El backend devuelve status 204 No Content
+      if (res.status === 204) {
+          alert("✅ Rutina eliminada permanentemente del sistema.");
+      } 
+      
+      // CASO B: MARCADA COMO OBSOLETA (Estaba en uso)
+      // El backend devuelve status 200 OK con un JSON explicativo
+      else if (res.status === 200) {
+          // Mostramos el mensaje detallado que armamos en Python
+          // Ej: "La rutina está en uso. Se marcó como 'Obsoleta' y se notificó a los clientes."
+          alert(`⚠️ AVISO DE INTEGRIDAD:\n${res.data.mensaje}`);
+          
+          if (res.data.notificados) {
+              console.log(res.data.notificados); // Para debug
+          }
       }
+
+      // 4. Recargar la lista para ver el cambio de estado (de Publicada a Obsoleta o Desaparecida)
+      fetchRutinas();
+
+    } catch (err) {
+      console.error(err);
+      alert('Error al intentar eliminar la rutina. Revisa la consola.');
     }
   };
 

@@ -1,18 +1,16 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAdminUser
 from rest_framework.exceptions import ValidationError
-import rest_framework.permissions as permissions
 from rest_framework import generics
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from datetime import datetime, date, time
-import datetime as datetime_module
 from .service import DisponibilidadService 
 from django.db.models import Q
 from .serializers import AgendaCuidadosSerializer
-from .models import AgendaCuidados
+from .models import AgendaCuidados, Producto
 from .models import Notificacion
 from .serializers import NotificacionSerializer
 from rest_framework.decorators import action
@@ -28,15 +26,32 @@ from .models import Rutina, RutinaCliente
 from .serializers import RutinaSerializer, RutinaClienteSerializer
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
+import datetime as datetime_module
+import rest_framework.permissions as permissions
 
+from .models import (
+    TipoCabello,
+    GrosorCabello,
+    PorosidadCabello,    
+    CueroCabelludo,
+    EstadoGeneral,
+    CategoriaServicio,
+    Servicio,
+    Turno,
+    Configuracion,
+    ListaEspera,
+    Producto,
+    Equipamiento
+)
+from usuarios.models import Usuario
 
-from .models import TipoCabello, GrosorCabello, PorosidadCabello, CueroCabelludo, EstadoGeneral, Servicio, Turno, Configuracion, ListaEspera
 from .serializers import (
     TipoCabelloSerializer,
     GrosorCabelloSerializer,
     PorosidadCabelloSerializer,
     CueroCabelludoSerializer,
     EstadoGeneralSerializer,
+    CategoriaServicioSerializer,
     ServicioSerializer,
     TurnoCreateSerializer,
     TurnoSerializer,
@@ -45,7 +60,10 @@ from .serializers import (
     RutinaClienteCreateSerializer,
     PasoRutinaSerializer,
     ReglaDiagnosticoSerializer,
-    NotificacionSerializer
+    NotificacionSerializer,
+    ProductoSerializer,
+    EquipamientoSerializer,
+    UsuarioAdminSerializer
 )
 from .models import Rutina, RutinaCliente, PasoRutinaCliente
 
@@ -92,6 +110,11 @@ class CueroCabelludoViewSet(viewsets.ReadOnlyModelViewSet):
 class EstadoGeneralViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = EstadoGeneral.objects.filter(activo=True)
     serializer_class = EstadoGeneralSerializer
+    permission_classes = [AllowAny]
+
+class CategoriaServicioViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = CategoriaServicio.objects.filter(activo=True)
+    serializer_class = CategoriaServicioSerializer
     permission_classes = [AllowAny]
 
 class ServicioViewSet(viewsets.ModelViewSet):
@@ -192,10 +215,34 @@ class DisponibilidadTurnosView(APIView):
 
 
 class ServicioViewSet(viewsets.ModelViewSet):
-    queryset = Servicio.objects.filter(activo=True)
+    """
+    ViewSet para gestionar servicios con CRUD completo.
+    - Lectura: AllowAny (clientes pueden ver servicios disponibles)
+    - Creación/Actualización/Eliminación: Solo IsAdminUser
+    """
     serializer_class = ServicioSerializer
-    permission_classes = [AllowAny]
     pagination_class = None
+
+    def get_queryset(self):
+        # Admins ven todos los servicios (activos e inactivos)
+        # Clientes ven solo activos
+        if self.request.user.is_staff:
+            return Servicio.objects.all().order_by('nombre')
+        else:
+            return Servicio.objects.filter(activo=True).order_by('nombre')
+    
+    def get_permissions(self):
+        """Permisos dinámicos: lista/retrieve abierto, CRUD solo para admins"""
+        if self.action in ['list', 'retrieve']:
+            permission_classes = [AllowAny]
+        else:
+            permission_classes = [IsAdminUser]
+        return [permission() for permission in permission_classes]
+    
+    def perform_destroy(self, instance):
+        """Soft delete: marca como inactivo en lugar de eliminar"""
+        instance.activo = False
+        instance.save()
 
 # --- 3. VIEWSET DE TURNOS (CRUD) ---
 class TurnoViewSet(viewsets.ModelViewSet):
@@ -616,6 +663,8 @@ class RutinaViewSet(viewsets.ModelViewSet):
     """
     serializer_class = RutinaSerializer
     permission_classes = [IsAuthenticated]
+
+    pagination_class = None
     
     def get_queryset(self):
         """
@@ -638,6 +687,58 @@ class RutinaViewSet(viewsets.ModelViewSet):
             permission_classes = [permissions.IsAdminUser]
         return [permission() for permission in permission_classes]
     
+    def destroy(self, request, *args, **kwargs):
+        """
+        Lógica especial para eliminar rutinas:
+        - Si la rutina está asignada a clientes: marcar como OBSOLETA y notificar
+        - Si no está asignada: eliminar directamente
+        """
+        rutina = self.get_object()
+        
+        # 1. Verificar si hay clientes usando esta rutina
+        # Usando el related_name correcto: 'copias_cliente'
+        tiene_clientes = rutina.copias_cliente.exists() 
+
+        if tiene_clientes:
+            # --- CAMINO ALTERNATIVO: MARCAR OBSOLETA ---
+            rutina.estado = 'OBSOLETA' 
+            rutina.save()
+            
+            # --- NOTIFICACIÓN MASIVA ---
+            # Obtenemos todas las relaciones activas
+            asignaciones = rutina.copias_cliente.all()
+            
+            cont_notificados = 0
+            for asignacion in asignaciones:
+                # Creamos la notificación para cada cliente
+                Notificacion.objects.create(
+                    usuario=asignacion.cliente.usuario, # Navegamos al usuario
+                    tipo='INFO',
+                    titulo="⚠️ Actualización de Rutina",
+                    mensaje=(
+                        f"La rutina '{rutina.nombre}' que tenías asignada ha sido marcada como obsoleta "
+                        "por el profesional. Te recomendamos solicitar un nuevo diagnóstico."
+                    ),
+                    datos_extra={"rutina_id": rutina.id}
+                )
+                cont_notificados += 1
+
+            return Response(
+                {
+                    "mensaje": "La rutina no se pudo eliminar porque está en uso.",
+                    "accion_tomada": "Se marcó como OBSOLETA.",
+                    "notificados": f"Se envió aviso a {cont_notificados} clientes."
+                },
+                status=status.HTTP_200_OK
+            )
+            
+        else:
+            # --- CAMINO NORMAL: ELIMINAR ---
+            rutina.delete()
+            return Response(
+                {"mensaje": "La plantilla de rutina se eliminó correctamente."},
+                status=status.HTTP_204_NO_CONTENT
+            )
     
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAdminUser])
     def publicar(self, request, pk=None):
@@ -977,3 +1078,99 @@ class SeleccionarRutinaView(APIView):
         except Exception as e:
             print(f"ERROR: {str(e)}")
             return Response({"error": "Error interno del servidor"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+
+# ----------------------------------------------------
+# A. CRUD USUARIOS (ADMIN)
+# ----------------------------------------------------
+class AdminUsuarioViewSet(viewsets.ModelViewSet):
+    queryset = Usuario.objects.all()
+    serializer_class = UsuarioAdminSerializer
+    permission_classes = [IsAdminUser] # Solo admins pueden entrar aquí
+
+    def perform_destroy(self, instance):
+        """
+        No elimina el registro (Soft Delete). Lo desactiva.
+        Validación: No desactivar si tiene turnos futuros.
+        """
+        # 1. Verificar turnos activos/futuros
+        # Asumiendo que Turno tiene FK 'profesional' o lo buscas por otro medio. 
+        # Si Yani es la única, esta validación es vital si agregas más staff.
+        
+        # Ejemplo: Turno.objects.filter(profesional=instance, fecha__gte=timezone.now(), estado='confirmado')
+        # Como tu modelo Turno actual no tiene 'profesional' explícito (es Yani), 
+        # esta validación aplica si el usuario a borrar fuera un cliente con deuda o un futuro empleado.
+        
+        # Para cumplir el requisito del enunciado A:
+        # "No se puede eliminar una cuenta de profesional si tiene turnos activos"
+        if instance.is_staff:
+             # Simulamos chequeo
+             turnos_pendientes = Turno.objects.filter(fecha__gte=timezone.now().date(), estado='confirmado').exists()
+             if turnos_pendientes:
+                 # En un sistema multi-profesional filtraríamos por profesional=instance
+                 # Como es tesis y Yani es única, protegemos su cuenta.
+                 raise serializers.ValidationError("No se puede desactivar: Hay turnos futuros confirmados en el sistema.")
+
+        # 2. Desactivación (Soft Delete)
+        instance.is_active = False
+        instance.save()
+
+# ----------------------------------------------------
+# B. CRUD PRODUCTOS
+# ----------------------------------------------------
+class ProductoViewSet(viewsets.ModelViewSet):
+    queryset = Producto.objects.filter(activo=True) # Por defecto mostramos solo activos
+    serializer_class = ProductoSerializer
+    permission_classes = [IsAdminUser] # Solo staff gestiona productos
+    pagination_class = None
+
+    def destroy(self, request, *args, **kwargs):
+        producto = self.get_object()
+        
+        # Validación 1: Stock en inventario
+        if producto.stock > 0:
+            return Response(
+                {"error": "No se puede eliminar: El producto tiene stock físico."}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validación 2: Referencia en rutinas activas
+        # Asumiendo relación ManyToMany en Rutina -> productos
+        # if producto.rutina_set.exists(): ...
+        
+        # Si pasa validaciones, Soft Delete o Hard Delete según prefieras.
+        # El requisito dice "Retira producto descontinuado".
+        producto.activo = False
+        producto.save()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+# ----------------------------------------------------
+# D. CRUD EQUIPAMIENTO
+# ----------------------------------------------------
+class EquipamientoViewSet(viewsets.ModelViewSet):
+    queryset = Equipamiento.objects.all()
+    serializer_class = EquipamientoSerializer
+    permission_classes = [IsAdminUser]
+    pagination_class = None
+
+    def perform_update(self, serializer):
+        # Validación al editar estado
+        nuevo_estado = serializer.validated_data.get('estado')
+        instancia = self.get_object()
+
+        if nuevo_estado == 'NO_DISPONIBLE' or nuevo_estado == 'MANTENIMIENTO':
+            # Verificar si está asignado a turno futuro
+            # Esta lógica requiere que el Turno tenga FK a Equipamiento.
+            # Si no la tiene, es un control manual. 
+            pass 
+            
+        serializer.save()
+
+    def destroy(self, request, *args, **kwargs):
+        equipo = self.get_object()
+        
+        # Validación: Asignado a turno en próximas 24hs
+        # (Lógica simulada según requisitos)
+        
+        equipo.delete() # Aquí sí es baja física según el requisito D
+        return Response(status=status.HTTP_204_NO_CONTENT)

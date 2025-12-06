@@ -21,6 +21,10 @@ import MisRutinas from './components/MisRutinas';
 import GestionarServicios from './components/admin/GestionarServicios';
 import GestionarReglas from './components/admin/GestionarReglas';
 import DetalleRutina from './components/DetalleRutina';
+import GestionProductos from './components/admin/GestionProductos';
+import GestionUsuarios from './components/admin/GestionUsuarios';
+import GestionClientes from './components/admin/GestionClientes';
+import GestionEquipamiento from './components/admin/GestionEquipamiento';
 
 const App = () => {
     return (
@@ -44,7 +48,12 @@ const App = () => {
             <Route path="/mis-rutinas" element={<ProtectedRoute><MisRutinas /></ProtectedRoute>}/>
             <Route path="/admin/servicios" element={<ProtectedRoute><GestionarServicios /></ProtectedRoute>} />
             <Route path="/admin/reglas" element={<ProtectedRoute><GestionarReglas /></ProtectedRoute>} />
+            <Route path="/admin/rutina/:id" element={<ProtectedRoute><DetalleRutina /></ProtectedRoute>} />
             <Route path="/rutina/:id" element={<ProtectedRoute><DetalleRutina /></ProtectedRoute>} />
+            <Route path="/admin/productos" element={<ProtectedRoute><GestionProductos /></ProtectedRoute>} />
+            <Route path="/admin/usuarios" element={<ProtectedRoute><GestionUsuarios /></ProtectedRoute>} />
+            <Route path="/admin/clientes" element={<ProtectedRoute><GestionClientes /></ProtectedRoute>} />
+            <Route path="/admin/equipamiento" element={<ProtectedRoute><GestionEquipamiento /></ProtectedRoute>} />
 
             {/* Ruta por defecto */}
             <Route path="/" element={<Navigate to="/login" />} />

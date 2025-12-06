@@ -121,11 +121,25 @@ const DashboardAdmin = () => {
                             </div>
                         </button>
 
-                        <button className="w-full bg-white p-4 rounded-lg shadow hover:bg-gray-50 flex items-center gap-4 transition-colors text-left group">
+                        <button 
+                            onClick={() => navigate('/admin/clientes')}
+                            className="w-full bg-white p-4 rounded-lg shadow hover:bg-gray-50 flex items-center gap-4 transition-colors text-left group"
+                        >
                             <span className="p-2 bg-green-100 text-green-600 rounded-lg group-hover:bg-green-200">👥</span>
                             <div>
                                 <h4 className="font-bold text-gray-800">Clientes</h4>
                                 <p className="text-xs text-gray-500">Ver base de datos y perfiles</p>
+                            </div>
+                        </button>
+
+                        <button 
+                            onClick={() => navigate('/admin/usuarios')}
+                            className="w-full bg-white p-4 rounded-lg shadow hover:bg-gray-50 flex items-center gap-4 transition-colors text-left group"
+                        >
+                            <span className="p-2 bg-red-100 text-red-600 rounded-lg group-hover:bg-red-200">👤</span>
+                            <div>
+                                <h4 className="font-bold text-gray-800">Gestionar Usuarios</h4>
+                                <p className="text-xs text-gray-500">Permisos y cuentas de staff</p>
                             </div>
                         </button>
 
@@ -137,6 +151,28 @@ const DashboardAdmin = () => {
                             <div>
                                 <h4 className="font-bold text-gray-800">Servicios & Impacto</h4>
                                 <p className="text-xs text-gray-500">Configurar precios y reglas</p>
+                            </div>
+                        </button>
+
+                        <button 
+                            onClick={() => navigate('/admin/productos')}
+                            className="w-full bg-white p-4 rounded-lg shadow hover:bg-gray-50 flex items-center gap-4 transition-colors text-left group"
+                        >
+                            <span className="p-2 bg-orange-100 text-orange-600 rounded-lg group-hover:bg-orange-200">🛍️</span>
+                            <div>
+                                <h4 className="font-bold text-gray-800">Gestionar Productos</h4>
+                                <p className="text-xs text-gray-500">Inventario y catálogo</p>
+                            </div>
+                        </button>
+
+                        <button 
+                            onClick={() => navigate('/admin/equipamiento')}
+                            className="w-full bg-white p-4 rounded-lg shadow hover:bg-gray-50 flex items-center gap-4 transition-colors text-left group"
+                        >
+                            <span className="p-2 bg-indigo-100 text-indigo-600 rounded-lg group-hover:bg-indigo-200">🔧</span>
+                            <div>
+                                <h4 className="font-bold text-gray-800">Gestionar Equipamiento</h4>
+                                <p className="text-xs text-gray-500">Herramientas y estado</p>
                             </div>
                         </button>
 

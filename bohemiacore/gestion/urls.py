@@ -11,6 +11,7 @@ from .views import (
     PorosidadCabelloViewSet,
     CueroCabelludoViewSet,
     EstadoGeneralViewSet,
+    CategoriaServicioViewSet,
     ServicioViewSet,
     ServiciosQuimicosViewSet,
     TurnoViewSet,
@@ -33,6 +34,7 @@ router.register(r'grosores-cabello', GrosorCabelloViewSet, basename='grosorcabel
 router.register(r'porosidades-cabello', PorosidadCabelloViewSet, basename='porosidadcabello')
 router.register(r'cueros-cabelludos', CueroCabelludoViewSet, basename='cuerocabelludo')
 router.register(r'estados-generales', EstadoGeneralViewSet, basename='estadogeneral')
+router.register(r'categorias-servicio', CategoriaServicioViewSet, basename='categoria-servicio')
 
 # Resto de rutas (estas ya estaban bien o son nuevas)
 router.register(r'servicios', ServicioViewSet, basename='servicio')
@@ -43,6 +45,9 @@ router.register(r'rutinas', RutinaViewSet, basename='rutina')
 router.register(r'pasorutina', PasoRutinaViewSet, basename='pasorutina')
 router.register(r'reglas-diagnostico', ReglaDiagnosticoViewSet, basename='reglas-diagnostico')
 router.register(r'rutinas-cliente', RutinaClienteViewSet, basename='rutina-cliente')
+router.register(r'admin/usuarios', views.AdminUsuarioViewSet, basename='admin-usuarios')
+router.register(r'productos', views.ProductoViewSet, basename='productos')
+router.register(r'equipamiento', views.EquipamientoViewSet, basename='equipamiento')
 
 # Las URLs se generan automáticamente
 urlpatterns = [

@@ -6,6 +6,7 @@ from rest_framework import permissions
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework import viewsets
 from django.core.mail import send_mail
 from django.conf import settings
 from django.shortcuts import redirect
@@ -14,7 +15,7 @@ from django.utils.http import urlsafe_base64_encode
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_decode
 from django.utils.encoding import force_str
-from .serializers import RegistroSerializer
+from .serializers import RegistroSerializer, ClienteListSerializer
 from .serializers import SetNewPasswordSerializer
 from django.db.models import Min
 from .serializers import (
@@ -362,3 +363,16 @@ class DiagnosticoView(APIView):
             'rutina_id': rutina_id,
             'rutina_nombre': rutina_nombre,
         }, status=status.HTTP_200_OK)
+
+
+# --- VIEWSET PARA LISTAR CLIENTES (ADMIN) ---
+class ClienteViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    ViewSet para que el admin pueda listar todos los clientes.
+    Solo lectura (GET).
+    """
+    queryset = Cliente.objects.all().select_related('usuario')
+    serializer_class = ClienteListSerializer
+    permission_classes = [permissions.IsAdminUser]
+    pagination_class = None
+    

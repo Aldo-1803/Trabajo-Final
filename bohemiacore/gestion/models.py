@@ -806,3 +806,44 @@ class Notificacion(models.Model):
 
     def __str__(self):
         return f"[{self.canal}] {self.titulo} -> {self.usuario}"
+    
+
+# ----------------------------------------------------
+# B. MODELO PRODUCTOS
+# ----------------------------------------------------
+class Producto(models.Model):
+    nombre = models.CharField(max_length=100, unique=True) # Validación: Nombre único
+    descripcion = models.TextField(blank=True)
+    precio = models.DecimalField(max_digits=10, decimal_places=2) # Validación: Mayor a cero se hace en serializer
+    stock = models.IntegerField(default=0)
+    activo = models.BooleanField(default=True) # Para "eliminar" lógicamente si es necesario
+
+    class Meta:
+        verbose_name = "Producto"
+        verbose_name_plural = "Productos"
+
+    def __str__(self):
+        return f"{self.nombre} (${self.precio})"
+
+# ----------------------------------------------------
+# D. MODELO EQUIPAMIENTO
+# ----------------------------------------------------
+class Equipamiento(models.Model):
+    ESTADOS = [
+        ('DISPONIBLE', 'Disponible'),
+        ('MANTENIMIENTO', 'En Mantenimiento'),
+        ('NO_DISPONIBLE', 'No Disponible / Roto'),
+    ]
+
+    codigo = models.CharField(max_length=50, unique=True) # Validación: Código único
+    nombre = models.CharField(max_length=100)
+    estado = models.CharField(max_length=20, choices=ESTADOS, default='DISPONIBLE')
+    fecha_adquisicion = models.DateField(auto_now_add=True)
+    ultimo_mantenimiento = models.DateField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Equipamiento"
+        verbose_name_plural = "Equipamientos"
+
+    def __str__(self):
+        return f"[{self.codigo}] {self.nombre} - {self.get_estado_display()}"
