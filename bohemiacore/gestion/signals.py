@@ -2,7 +2,7 @@ from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.utils import timezone
 from datetime import timedelta
-from .models import Turno, ReglaCuidado, AgendaCuidados, RutinaCliente, PasoRutinaCliente
+from .models import Turno, ReglaCuidado, AgendaCuidados, RutinaCliente #PasoRutinaCliente
 from usuarios.models import Usuario
 from .models import Notificacion
 
@@ -194,6 +194,7 @@ def automatizacion_post_servicio(sender, instance, created, **kwargs):
                 print(f"    RutinaCliente ya existía: {rutina_cliente.nombre}")
             
             # 2. Verificar y copiar los pasos (tanto para nuevas como existentes)
+            """
             pasos_existentes = rutina_cliente.pasos.count()
             if pasos_existentes == 0:
                 print(f"    🔄 Copiando pasos de la rutina original...")
@@ -218,6 +219,7 @@ def automatizacion_post_servicio(sender, instance, created, **kwargs):
                 print(f"    ℹ️  La rutina ya tiene {pasos_existentes} pasos")
             
             print(f"   ✅ Rutina asignada correctamente. Disponible en 'Mis Rutinas'")
+            """
 
         # B. Restricciones puntuales (Si las hay)
         # (Ej: "No lavar por 48hs" - Esto es independiente de la rutina)

@@ -1,4 +1,4 @@
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, serializers
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAdminUser
 from rest_framework.exceptions import ValidationError
@@ -6,28 +6,20 @@ from rest_framework import generics
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
-from datetime import datetime, date, time
-from .service import DisponibilidadService 
-from django.db.models import Q
-from .serializers import AgendaCuidadosSerializer
-from .models import AgendaCuidados, Producto
-from .models import Notificacion
-from .serializers import NotificacionSerializer
-from rest_framework.decorators import action
-from django.utils import timezone
-from .models import PasoRutina
-from .serializers import PasoRutinaSerializer
-from .models import ReglaDiagnostico
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
-from .models import Rutina, RutinaCliente
-from .serializers import RutinaSerializer, RutinaClienteSerializer
+from rest_framework.decorators import action
 from rest_framework_simplejwt.authentication import JWTAuthentication
+from datetime import datetime, date, time
+from .service import DisponibilidadService 
+from django.db.models import Q
+from django.utils import timezone
 
-import datetime as datetime_module
 import rest_framework.permissions as permissions
+import datetime as datetime_module
+
 
 from .models import (
     TipoCabello,
@@ -41,7 +33,15 @@ from .models import (
     Configuracion,
     ListaEspera,
     Producto,
-    Equipamiento
+    Equipamiento,
+    Rutina,
+    Notificacion,
+    AgendaCuidados,
+    Producto,
+    ReglaDiagnostico,
+    RutinaCliente,
+    #PasoRutinaCliente
+    #PasoRutina
 )
 from usuarios.models import Usuario
 
@@ -58,14 +58,14 @@ from .serializers import (
     RutinaSerializer,
     RutinaClienteSerializer,
     RutinaClienteCreateSerializer,
-    PasoRutinaSerializer,
+    #PasoRutinaSerializer,
     ReglaDiagnosticoSerializer,
     NotificacionSerializer,
     ProductoSerializer,
     EquipamientoSerializer,
-    UsuarioAdminSerializer
+    UsuarioAdminSerializer,
+    AgendaCuidadosSerializer,
 )
-from .models import Rutina, RutinaCliente, PasoRutinaCliente
 
 class CatalogoBaseListView(generics.ListAPIView):
     permission_classes = [AllowAny]
@@ -74,7 +74,6 @@ class CatalogoBaseListView(generics.ListAPIView):
         # self.queryset se define en las clases hijas
         # Filtramos para devolver solo los que están activos
         return self.queryset.filter(activo=True)
-
 
 class TipoCabelloView(CatalogoBaseListView):
     queryset = TipoCabello.objects.all()
@@ -655,6 +654,7 @@ class AdminDashboardStatsView(APIView):
 # ============================================
 # VIEWSETS PARA RUTINAS
 # ============================================
+
 class RutinaViewSet(viewsets.ModelViewSet):
     """
     ViewSet para gestionar Rutinas (catálogo de rutinas disponibles).
@@ -782,6 +782,38 @@ class RutinaViewSet(viewsets.ModelViewSet):
             status=status.HTTP_200_OK
         )
     
+    @action(detail=True, methods=['get'], permission_classes=[permissions.IsAdminUser])
+    def usuarios_usando(self, request, pk=None):
+        """
+        Endpoint para obtener detalles de usuarios usando una rutina.
+        GET /api/gestion/rutinas/{id}/usuarios_usando/
+        
+        Retorna lista de clientes/usuarios que tienen esta rutina asignada.
+        """
+        rutina = self.get_object()
+        
+        # Obtener todas las asignaciones de esta rutina
+        asignaciones = rutina.copias_cliente.all()
+        
+        usuarios_list = []
+        for asignacion in asignaciones:
+            usuario = asignacion.cliente.usuario
+            usuarios_list.append({
+                'id': usuario.id,
+                'nombre': usuario.get_full_name(),
+                'email': usuario.email,
+                'fecha_asignacion': asignacion.fecha_asignacion,
+                'version_asignada': asignacion.version_asignada,
+                'estado': asignacion.estado
+            })
+        
+        return Response({
+            'rutina_id': rutina.id,
+            'rutina_nombre': rutina.nombre,
+            'total_usuarios': len(usuarios_list),
+            'usuarios': usuarios_list
+        }, status=status.HTTP_200_OK)
+    
     @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated])
     def seleccionar(self, request):
         """
@@ -817,17 +849,21 @@ class RutinaViewSet(viewsets.ModelViewSet):
                 nombre=rutina.nombre,
                 objetivo=rutina.objetivo,
                 descripcion=rutina.descripcion,
+                archivo=rutina.archivo,  # ✅ AGREGADO: Copiar el archivo
                 version_asignada=rutina.version
             )
             
             # Copiar los pasos de la rutina original
+            """
             for paso_original in rutina.pasos.all():
                 PasoRutinaCliente.objects.create(
                     rutina_cliente=rutina_cliente,
                     orden=paso_original.orden,
                     descripcion=paso_original.descripcion,
                     frecuencia=paso_original.frecuencia
-                )
+                
+            """
+
             
             return Response(
                 {
@@ -875,10 +911,10 @@ class RutinaClienteViewSet(viewsets.ReadOnlyModelViewSet):
     def get_permissions(self):
         """
         - list, retrieve: Clientes ven sus propias
-        - update, destroy: Solo staff
+        - update, destroy: Usuarios autenticados (solo sus propias rutinas)
         - create: No permitido (se crean automáticamente)
         """
-        if self.action in ['list', 'retrieve']:
+        if self.action in ['list', 'retrieve', 'destroy']:
             permission_classes = [IsAuthenticated]
         else:
             permission_classes = [permissions.IsAdminUser]
@@ -919,15 +955,36 @@ class RutinaClienteViewSet(viewsets.ReadOnlyModelViewSet):
         serializer = self.get_serializer(rutina_cliente)
         return Response(serializer.data, status=status.HTTP_200_OK)
     
+    def destroy(self, request, *args, **kwargs):
+        """
+        Permite que el cliente elimine su propia rutina.
+        DELETE /api/gestion/rutinas-cliente/{id}/
+        """
+        rutina_cliente = self.get_object()
+        
+        # Verificar que el usuario es el dueño de la rutina o es admin
+        if rutina_cliente.cliente.usuario != request.user and not request.user.is_staff:
+            return Response(
+                {'error': 'No tienes permiso para eliminar esta rutina'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        rutina_cliente.delete()
+        return Response(
+            {'mensaje': 'Rutina eliminada exitosamente'},
+            status=status.HTTP_204_NO_CONTENT
+        )
+    
+    """
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def marcar_paso_completado(self, request, pk=None):
-        """
+        ""
         Endpoint para MARCAR UN PASO COMO COMPLETADO.
         POST /api/gestion/rutinas-cliente/{id}/marcar_paso_completado/
         {
             "paso_id": 1
         }
-        """
+        ""
         rutina_cliente = self.get_object()
         
         # Verificar permisos
@@ -958,16 +1015,18 @@ class RutinaClienteViewSet(viewsets.ReadOnlyModelViewSet):
                 {'error': 'Paso no encontrado'},
                 status=status.HTTP_404_NOT_FOUND
             )
+    """
 
 
 # ============================================
 # VIEWSET PARA PASOS DE RUTINA
 # ============================================
+"""
 class PasoRutinaViewSet(viewsets.ModelViewSet):
-    """
+    ""
     ViewSet para gestionar PasoRutina (pasos de rutinas plantilla).
     Solo staff puede crear/editar/eliminar.
-    """
+    ""
     serializer_class = PasoRutinaSerializer
     permission_classes = [IsAuthenticated]
     
@@ -975,10 +1034,10 @@ class PasoRutinaViewSet(viewsets.ModelViewSet):
         return PasoRutina.objects.all()
     
     def get_permissions(self):
-        """
+        ""
         - list, retrieve: Autenticados
         - create, update, destroy: Solo staff
-        """
+        ""
         if self.action in ['list', 'retrieve']:
             permission_classes = [IsAuthenticated]
         else:
@@ -986,9 +1045,9 @@ class PasoRutinaViewSet(viewsets.ModelViewSet):
         return [permission() for permission in permission_classes]
     
     def create(self, request, *args, **kwargs):
-        """
+        ""
         Sobrescribimos create para mejor debugging y validación
-        """
+        ""
         print(f"DEBUG: Datos recibidos para crear PasoRutina: {request.data}")
         print(f"DEBUG: Usuario autenticado: {request.user}")
         
@@ -1011,6 +1070,8 @@ class PasoRutinaViewSet(viewsets.ModelViewSet):
         
         return super().create(request, *args, **kwargs)
     
+"""
+
 
 class ReglaDiagnosticoViewSet(viewsets.ModelViewSet):
     """

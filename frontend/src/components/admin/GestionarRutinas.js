@@ -7,17 +7,20 @@ const GestionarRutinas = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showForm, setShowForm] = useState(false);
+  const [showDetalles, setShowDetalles] = useState(null);
+  const [detalles, setDetalles] = useState(null);
   
-  // ESTADO DEL FORMULARIO (Actualizado con campos del Diagrama)
+  // ESTADO DEL FORMULARIO
   const [formData, setFormData] = useState({
     nombre: '',
     objetivo: '',
     descripcion: '',
-    estado: 'borrador', // Valor por defecto
-    pasos: [{ orden: 1, titulo: '', descripcion: '', frecuencia: '' }]
+    archivo: null,
+    estado: 'borrador'
   });
   
   const [editingId, setEditingId] = useState(null);
+  // eslint-disable-next-line no-unused-vars
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -49,68 +52,72 @@ const GestionarRutinas = () => {
     setFormData({ ...formData, [name]: value });
   };
 
-  // Manejo de Pasos Dinámicos
-  const handlePasoChange = (index, field, value) => {
-    const nuevosPasos = [...formData.pasos];
-    nuevosPasos[index][field] = value;
-    setFormData({ ...formData, pasos: nuevosPasos });
-  };
-
-  const addPaso = () => {
-    setFormData({
-      ...formData,
-      pasos: [...formData.pasos, { orden: formData.pasos.length + 1, titulo: '', descripcion: '', frecuencia: '' }]
-    });
-  };
-
-  const removePaso = (index) => {
-    const nuevosPasos = formData.pasos.filter((_, i) => i !== index);
-    // Reordenar
-    const pasosReordenados = nuevosPasos.map((p, i) => ({ ...p, orden: i + 1 }));
-    setFormData({ ...formData, pasos: pasosReordenados });
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    setFormData({ ...formData, archivo: file });
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    
+    // Validación: archivo requerido SOLO para crear (no para editar)
+    if (!editingId && !formData.archivo) {
+      alert('⚠️ Debe cargar un archivo para crear la rutina.');
+      return;
+    }
+    
     try {
       const token = localStorage.getItem('access_token');
-      const payload = { ...formData }; // Enviamos el estado ('borrador'/'publicada')
+      const formDataToSend = new FormData();
+      formDataToSend.append('nombre', formData.nombre);
+      formDataToSend.append('objetivo', formData.objetivo);
+      formDataToSend.append('descripcion', formData.descripcion);
+      formDataToSend.append('estado', formData.estado);
+      
+      // Solo agregar archivo si hay un nuevo archivo (al editar es opcional)
+      if (formData.archivo) {
+        formDataToSend.append('archivo', formData.archivo);
+      }
 
       if (editingId) {
-        await axios.put(`http://127.0.0.1:8000/api/gestion/rutinas/${editingId}/`, payload, {
-          headers: { Authorization: `Bearer ${token}` }
+        await axios.put(`http://127.0.0.1:8000/api/gestion/rutinas/${editingId}/`, formDataToSend, {
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'multipart/form-data'
+          }
         });
-        alert('Rutina actualizada exitosamente');
+        alert('✅ Rutina actualizada exitosamente');
       } else {
-        await axios.post('http://127.0.0.1:8000/api/gestion/rutinas/', payload, {
-          headers: { Authorization: `Bearer ${token}` }
+        const response = await axios.post('http://127.0.0.1:8000/api/gestion/rutinas/', formDataToSend, {
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'multipart/form-data'
+          }
         });
-        alert('Rutina creada exitosamente');
+        console.log('✅ Respuesta de creación:', response.data);
+        alert('✅ Rutina creada exitosamente');
       }
       
       setShowForm(false);
       resetForm();
       fetchRutinas();
     } catch (err) {
-      console.error(err);
-      setError('Error al guardar la rutina. Verifica los campos.');
+      console.error('❌ Error al guardar:', err);
+      console.error('Respuesta del servidor:', err.response?.data);
+      const errorMsg = err.response?.data?.archivo?.[0] || err.response?.data?.detail || 'Error al guardar la rutina. Verifica los campos.';
+      alert(`❌ Error: ${errorMsg}`);
     }
   };
 
   const handleEdit = (rutina) => {
     setEditingId(rutina.id);
-    // Aseguramos que los pasos tengan frecuencia (para evitar errores si es null)
-    const pasosSeguros = rutina.pasos.map(p => ({
-        ...p,
-        frecuencia: p.frecuencia || ''
-    }));
-    
     setFormData({
       nombre: rutina.nombre,
       objetivo: rutina.objetivo || '',
-      descripcion: rutina.descripcion,
-      estado: rutina.estado || 'borrador', 
-      pasos: pasosSeguros
+      descripcion: rutina.descripcion || '',
+      archivo: null, // Al editar, archivo es null (no es obligatorio cambiar)
+      archivoActual: rutina.archivo, // Guardamos la URL del archivo actual
+      estado: rutina.estado || 'borrador'
     });
     setShowForm(true);
   };
@@ -156,13 +163,34 @@ const GestionarRutinas = () => {
     }
   };
 
+  const handleVerDetalles = async (rutinaId, rutinaNombre) => {
+    try {
+      const token = localStorage.getItem('access_token');
+      const url = `http://127.0.0.1:8000/api/gestion/rutinas/${rutinaId}/usuarios_usando/`;
+      console.log('Llamando a:', url);
+      
+      const response = await axios.get(url, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      console.log('Respuesta:', response.data);
+      setDetalles(response.data);
+      setShowDetalles(rutinaId);
+    } catch (err) {
+      console.error('Error al cargar detalles:', err);
+      console.error('Detalles del error:', err.response?.data);
+      alert('Error al cargar usuarios que usan esta rutina: ' + (err.response?.data?.detail || err.message));
+    }
+  };
+
   const resetForm = () => {
     setFormData({
       nombre: '',
       objetivo: '',
       descripcion: '',
-      estado: 'borrador',
-      pasos: [{ orden: 1, titulo: '', descripcion: '', frecuencia: '' }]
+      archivo: null,
+      archivoActual: null,
+      estado: 'borrador'
     });
     setEditingId(null);
   };
@@ -170,27 +198,30 @@ const GestionarRutinas = () => {
   // Renderizado de Badge de Estado
   const getEstadoBadge = (estado) => {
     switch (estado) {
-        case 'publicada': return <span className="bg-green-100 text-green-800 px-2 py-1 rounded text-xs font-bold border border-green-200">PUBLICADA</span>;
-        case 'borrador': return <span className="bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-xs font-bold border border-yellow-200">BORRADOR</span>;
-        case 'obsoleta': return <span className="bg-red-100 text-red-800 px-2 py-1 rounded text-xs font-bold border border-red-200">OBSOLETA</span>;
+        case 'publicada': return <span className="px-2 py-1 rounded text-xs font-bold border" style={{ backgroundColor: '#E8F5E8', color: '#2E7D2E', borderColor: '#A8D5A8' }}>PUBLICADA</span>;
+        case 'borrador': return <span className="px-2 py-1 rounded text-xs font-bold border" style={{ backgroundColor: '#F5F1E8', color: '#8B7500', borderColor: '#D5BDAF' }}>BORRADOR</span>;
+        case 'obsoleta': return <span className="px-2 py-1 rounded text-xs font-bold border" style={{ backgroundColor: '#FFE8E8', color: '#C73E3E', borderColor: '#F5B5B5' }}>OBSOLETA</span>;
         default: return null;
     }
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
+    <div className="min-h-screen p-6" style={{ backgroundColor: '#F5EBE0' }}>
       <div className="max-w-6xl mx-auto">
         
         {/* HEADER */}
         <div className="flex justify-between items-center mb-8">
           <div>
-            <h1 className="text-3xl font-bold text-gray-800">Gestión de Rutinas</h1>
-            <p className="text-gray-500">Base de conocimiento experto</p>
+            <h1 className="text-3xl font-bold" style={{ color: '#817773' }}>Gestión de Rutinas</h1>
+            <p style={{ color: '#8B8682' }}>Base de conocimiento experto</p>
           </div>
           {!showForm && (
             <button
               onClick={() => { resetForm(); setShowForm(true); }}
-              className="bg-pink-600 hover:bg-pink-700 text-white px-6 py-3 rounded-lg font-bold shadow-lg transition-transform transform hover:-translate-y-1"
+              className="text-white px-6 py-3 rounded-lg font-bold shadow-lg transition-transform transform hover:-translate-y-1"
+              style={{ backgroundColor: '#AB9A91' }}
+              onMouseEnter={(e) => e.target.style.backgroundColor = '#817773'}
+              onMouseLeave={(e) => e.target.style.backgroundColor = '#AB9A91'}
             >
               + Nueva Rutina
             </button>
@@ -198,15 +229,15 @@ const GestionarRutinas = () => {
         </div>
 
         {error && (
-          <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-6 rounded shadow-sm">
+          <div className="mb-6 p-4 rounded shadow-sm border-l-4" style={{ backgroundColor: '#FFE8E8', borderColor: '#C73E3E', color: '#C73E3E' }}>
             {error}
           </div>
         )}
 
         {/* --- FORMULARIO DE CREACIÓN/EDICIÓN --- */}
         {showForm ? (
-          <div className="bg-white rounded-xl shadow-xl p-8 border border-gray-200 animate-fade-in-down">
-            <h2 className="text-2xl font-bold text-gray-800 mb-6 border-b pb-2">
+          <div className="rounded-xl shadow-xl p-8 border" style={{ backgroundColor: 'white', borderColor: '#D5D1CC' }}>
+            <h2 className="text-2xl font-bold mb-6" style={{ color: '#817773', borderBottom: '2px solid #E3D5CA', paddingBottom: '0.5rem' }}>
               {editingId ? '✏️ Editar Rutina' : 'Nueva Rutina'}
             </h2>
             
@@ -215,20 +246,22 @@ const GestionarRutinas = () => {
               {/* FILA 1: Nombre y Estado */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="md:col-span-2">
-                  <label className="block text-sm font-bold text-gray-700 mb-1">Nombre de la Rutina</label>
+                  <label className="block text-sm font-bold mb-1" style={{ color: '#817773' }}>Nombre de la Rutina</label>
                   <input
                     type="text" name="nombre"
                     value={formData.nombre} onChange={handleInputChange}
-                    className="w-full border p-2 rounded focus:ring-2 focus:ring-pink-500 outline-none"
+                    className="w-full border p-2 rounded focus:ring-2 outline-none"
+                    style={{ borderColor: '#D5D1CC', '--tw-ring-color': '#AB9A91' }}
                     placeholder="Ej: Rutina Detox & Equilibrio" required
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-bold text-gray-700 mb-1">Estado</label>
+                  <label className="block text-sm font-bold mb-1" style={{ color: '#817773' }}>Estado</label>
                   <select
                     name="estado"
                     value={formData.estado} onChange={handleInputChange}
-                    className="w-full border p-2 rounded bg-gray-50 font-medium"
+                    className="w-full border p-2 rounded font-medium"
+                    style={{ borderColor: '#D5D1CC', backgroundColor: '#F5EBE0' }}
                   >
                     <option value="borrador">Borrador</option>
                     <option value="publicada">Publicada</option>
@@ -239,82 +272,68 @@ const GestionarRutinas = () => {
 
               {/* FILA 2: Objetivo */}
               <div>
-                <label className="block text-sm font-bold text-gray-700 mb-1">Objetivo (Para el diagnóstico)</label>
+                <label className="block text-sm font-bold mb-1" style={{ color: '#817773' }}>Objetivo (Para el diagnóstico)</label>
                 <input
                   type="text" name="objetivo"
                   value={formData.objetivo} onChange={handleInputChange}
-                  className="w-full border p-2 rounded focus:ring-2 focus:ring-pink-500 outline-none"
+                  className="w-full border p-2 rounded focus:ring-2 outline-none"
+                  style={{ borderColor: '#D5D1CC', '--tw-ring-color': '#AB9A91' }}
                   placeholder="Ej: Regular oleosidad sin resecar puntas" required
                 />
               </div>
 
-              {/* Descripción */}
+              {/* Descripción (Notas internas) */}
               <div>
-                <label className="block text-sm font-bold text-gray-700 mb-1">Descripción General</label>
+                <label className="block text-sm font-bold mb-1" style={{ color: '#817773' }}>Notas Internas (Opcional)</label>
                 <textarea
                   name="descripcion"
-                  value={formData.descripcion} onChange={handleInputChange}
-                  className="w-full border p-2 rounded focus:ring-2 focus:ring-pink-500 outline-none"
-                  rows="2" required
+                  value={formData.descripcion}
+                  onChange={handleInputChange}
+                  className="w-full border p-2 rounded focus:ring-2 outline-none"
+                  style={{ borderColor: '#D5D1CC', '--tw-ring-color': '#AB9A91' }}
+                  rows="3"
+                  placeholder="Notas internas sobre la rutina (no visible para cliente)..."
                 />
               </div>
 
-              {/* SECCIÓN PASOS */}
-              <div className="bg-gray-50 p-6 rounded-lg border border-gray-200">
-                <h3 className="text-lg font-bold text-pink-600 mb-4">Pasos de la Rutina</h3>
+              {/* CARGA DE ARCHIVO PDF */}
+              <div>
+                <label className="block text-sm font-bold mb-1" style={{ color: '#817773' }}>
+                  📄 Cargar Rutina (PDF/Imagen)
+                </label>
+                <p className="text-xs mb-3" style={{ color: '#8B8682' }}>
+                  Sube el diseño de la rutina en formato PDF, JPG o PNG. (Máx. 10MB)
+                </p>
                 
-                {formData.pasos.map((paso, index) => (
-                  <div key={index} className="mb-4 bg-white p-4 rounded shadow-sm border border-gray-200 relative">
-                    <span className="absolute top-2 right-2 text-xs font-bold text-gray-300">PASO {index + 1}</span>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="md:col-span-2">
-                            <input
-                                type="text"
-                                placeholder="Título (Ej: Lavado con Shampoo Neutro)"
-                                value={paso.titulo}
-                                onChange={(e) => handlePasoChange(index, 'titulo', e.target.value)}
-                                className="w-full border p-2 rounded font-bold" required
-                            />
-                        </div>
-                        <div className="md:col-span-2">
-                            <input
-                                type="text"
-                                placeholder="Frecuencia (Ej: Cada 48hs)"
-                                value={paso.frecuencia}
-                                onChange={(e) => handlePasoChange(index, 'frecuencia', e.target.value)}
-                                className="w-full border p-2 rounded text-sm bg-blue-50" required
-                            />
-                        </div>
-                        <div className="md:col-span-2">
-                            <textarea
-                                placeholder="Instrucciones detalladas..."
-                                value={paso.descripcion}
-                                onChange={(e) => handlePasoChange(index, 'descripcion', e.target.value)}
-                                className="w-full border p-2 rounded text-sm" rows="2" required
-                            />
-                        </div>
-                    </div>
-                    
-                    {formData.pasos.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => removePaso(index)}
-                        className="text-red-500 text-xs font-bold mt-2 hover:underline"
-                      >
-                         Eliminar Paso
-                      </button>
-                    )}
+                {/* Mostrar archivo actual si está editando */}
+                {editingId && formData.archivoActual && (
+                  <div className="mb-4 p-3 rounded-lg border" style={{ backgroundColor: '#E8F0F5', borderColor: '#AB9A91' }}>
+                    <p className="text-sm font-bold mb-2" style={{ color: '#817773' }}>📎 Archivo actual:</p>
+                    <a 
+                      href={formData.archivoActual} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="underline text-sm"
+                      style={{ color: '#AB9A91' }}
+                    >
+                      Ver archivo guardado
+                    </a>
+                    <p className="text-xs mt-2" style={{ color: '#817773' }}>Carga un nuevo archivo para reemplazarlo (opcional)</p>
                   </div>
-                ))}
+                )}
                 
-                <button
-                  type="button"
-                  onClick={addPaso}
-                  className="w-full py-2 border-2 border-dashed border-pink-300 text-pink-600 font-bold rounded hover:bg-pink-50 transition"
-                >
-                  + Agregar Otro Paso
-                </button>
+                <input
+                  type="file"
+                  name="archivo"
+                  accept=".pdf,.jpg,.jpeg,.png"
+                  onChange={handleFileChange}
+                  className="w-full border-2 border-dashed p-4 rounded-lg text-gray-700 cursor-pointer transition"
+                  style={{ borderColor: '#D5BDAF' }}
+                  required={!editingId}
+                />
+                {formData.archivo && (
+                  <p className="text-xs mt-2" style={{ color: '#5A9B6F' }}>✓ {formData.archivo.name}</p>
+                )}
               </div>
 
               {/* BOTONES ACCIÓN */}
@@ -322,13 +341,19 @@ const GestionarRutinas = () => {
                 <button
                   type="button"
                   onClick={() => { setShowForm(false); resetForm(); }}
-                  className="px-6 py-2 bg-gray-300 text-gray-700 rounded font-bold hover:bg-gray-400"
+                  className="px-6 py-2 rounded font-bold transition"
+                  style={{ backgroundColor: '#E3D5CA', color: '#817773' }}
+                  onMouseEnter={(e) => e.target.style.backgroundColor = '#D5BDAF'}
+                  onMouseLeave={(e) => e.target.style.backgroundColor = '#E3D5CA'}
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="px-6 py-2 bg-gray-900 text-white rounded font-bold hover:bg-gray-800 shadow-lg"
+                  className="px-6 py-2 text-white rounded font-bold shadow-lg transition"
+                  style={{ backgroundColor: '#817773' }}
+                  onMouseEnter={(e) => e.target.style.backgroundColor = '#5A5451'}
+                  onMouseLeave={(e) => e.target.style.backgroundColor = '#817773'}
                 >
                   Guardar Rutina
                 </button>
@@ -340,42 +365,62 @@ const GestionarRutinas = () => {
           /* --- LISTA DE RUTINAS --- */
           <div className="grid grid-cols-1 gap-6">
             {rutinas.length === 0 && !loading && (
-                <div className="text-center py-12 bg-white rounded-xl shadow">
-                    <p className="text-gray-400 text-lg">No hay rutinas creadas.</p>
-                    <p className="text-gray-500 text-sm">Crea una para comenzar a recomendarla.</p>
+                <div className="text-center py-12 rounded-xl shadow" style={{ backgroundColor: 'white' }}>
+                    <p style={{ color: '#8B8682' }} className="text-lg">No hay rutinas creadas.</p>
+                    <p style={{ color: '#ABA89E' }} className="text-sm">Crea una para comenzar a recomendarla.</p>
                 </div>
             )}
 
             {rutinas.map((rutina) => (
-              <div key={rutina.id} className="bg-white rounded-xl shadow-md overflow-hidden border-l-4 border-pink-500 hover:shadow-lg transition-shadow">
+              <div key={rutina.id} className="rounded-xl shadow-md overflow-hidden border-l-4 hover:shadow-lg transition-shadow" style={{ backgroundColor: 'white', borderColor: '#D5BDAF' }}>
                 <div className="p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                   <div className="flex-1">
                     <div className="flex items-center gap-3 mb-1">
-                        <h3 className="text-xl font-bold text-gray-800">{rutina.nombre}</h3>
+                        <h3 className="text-xl font-bold" style={{ color: '#817773' }}>{rutina.nombre}</h3>
                         {getEstadoBadge(rutina.estado)}
-                        <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded border border-blue-100">
+                        <span className="text-xs rounded border px-2 py-0.5" style={{ backgroundColor: '#E3D5CA', color: '#817773', borderColor: '#D5BDAF' }}>
                             v{rutina.version || 1}
                         </span>
                     </div>
-                    <p className="text-sm text-gray-500 font-medium italic mb-2">{rutina.objetivo}</p>
-                    <p className="text-gray-600 text-sm line-clamp-2">{rutina.descripcion}</p>
+                    <p className="text-sm font-medium italic mb-2" style={{ color: '#8B8682' }}>{rutina.objetivo}</p>
+                    <p className="text-sm line-clamp-2" style={{ color: '#5A5451' }}>{rutina.descripcion}</p>
                     
-                    <div className="mt-3 flex items-center gap-4 text-xs text-gray-400">
-                        <span> {rutina.pasos?.length || 0} pasos</span>
-                        <span> Creada por: {rutina.creador_nombre || 'Sistema'}</span>
+                    <div className="mt-3 flex items-center gap-4 text-xs" style={{ color: '#ABA89E' }}>
+                        {rutina.archivo && <span>📄 Con archivo adjunto</span>}
+                        <span> Creada por: {rutina.creada_por_nombre || 'Sistema'}</span>
+                        <span className="rounded font-bold px-2 py-0.5" style={{ backgroundColor: '#E8D5CA', color: '#817773' }}>
+                          👥 {rutina.usuarios_usando || 0} usuario{rutina.usuarios_usando !== 1 ? 's' : ''}
+                        </span>
                     </div>
                   </div>
 
                   <div className="flex gap-2">
+                    {rutina.usuarios_usando > 0 && (
+                      <button
+                        onClick={() => handleVerDetalles(rutina.id, rutina.nombre)}
+                        className="px-4 py-2 rounded font-bold transition"
+                        style={{ backgroundColor: '#E8D5CA', color: '#817773' }}
+                        onMouseEnter={(e) => e.target.style.backgroundColor = '#D5BDAF'}
+                        onMouseLeave={(e) => e.target.style.backgroundColor = '#E8D5CA'}
+                      >
+                        Ver Usuarios
+                      </button>
+                    )}
                     <button
                       onClick={() => handleEdit(rutina)}
-                      className="px-4 py-2 bg-blue-50 text-blue-600 rounded font-bold hover:bg-blue-100 transition"
+                      className="px-4 py-2 rounded font-bold transition"
+                      style={{ backgroundColor: '#E3D5CA', color: '#817773' }}
+                      onMouseEnter={(e) => e.target.style.backgroundColor = '#D5BDAF'}
+                      onMouseLeave={(e) => e.target.style.backgroundColor = '#E3D5CA'}
                     >
                       Editar
                     </button>
                     <button
                       onClick={() => handleDelete(rutina.id)}
-                      className="px-4 py-2 bg-red-50 text-red-600 rounded font-bold hover:bg-red-100 transition"
+                      className="px-4 py-2 rounded font-bold transition text-white"
+                      style={{ backgroundColor: '#AB9A91' }}
+                      onMouseEnter={(e) => e.target.style.backgroundColor = '#817773'}
+                      onMouseLeave={(e) => e.target.style.backgroundColor = '#AB9A91'}
                     >
                       Eliminar
                     </button>
@@ -383,6 +428,60 @@ const GestionarRutinas = () => {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* MODAL DE DETALLES DE USUARIOS */}
+        {showDetalles && detalles && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-y-auto">
+              <div className="sticky top-0 text-white p-6 flex justify-between items-center" style={{ background: 'linear-gradient(135deg, #AB9A91 0%, #817773 100%)' }}>
+                <div>
+                  <h2 className="text-2xl font-bold">{detalles.rutina_nombre}</h2>
+                  <p className="mt-1" style={{ color: '#E3D5CA' }}>👥 {detalles.total_usuarios} usuario{detalles.total_usuarios !== 1 ? 's' : ''} utilizando</p>
+                </div>
+                <button
+                  onClick={() => setShowDetalles(null)}
+                  className="font-bold px-4 py-2 rounded"
+                  style={{ backgroundColor: 'rgba(255,255,255,0.1)' }}
+                  onMouseEnter={(e) => e.target.style.backgroundColor = 'rgba(255,255,255,0.2)'}
+                  onMouseLeave={(e) => e.target.style.backgroundColor = 'rgba(255,255,255,0.1)'}
+                >
+                  ✕ Cerrar
+                </button>
+              </div>
+
+              <div className="p-6">
+                {detalles.usuarios.length === 0 ? (
+                  <p style={{ color: '#8B8682' }} className="text-center py-8">No hay usuarios usando esta rutina</p>
+                ) : (
+                  <div className="space-y-4">
+                    {detalles.usuarios.map((usuario, idx) => (
+                      <div key={idx} className="border rounded-lg p-4 hover:bg-opacity-100 transition" style={{ backgroundColor: '#F5EBE0', borderColor: '#D5D1CC' }}>
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <h3 className="font-bold" style={{ color: '#817773' }}>{usuario.nombre}</h3>
+                            <p className="text-sm" style={{ color: '#8B8682' }}>{usuario.email}</p>
+                            <p className="text-xs mt-2" style={{ color: '#ABA89E' }}>
+                              Asignada: {new Date(usuario.fecha_asignacion).toLocaleDateString('es-ES')}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <span className="inline-block px-3 py-1 rounded font-bold text-xs mb-2" style={{ backgroundColor: '#E3D5CA', color: '#817773' }}>
+                              v{usuario.version_asignada}
+                            </span>
+                            <p className="text-xs" style={{ color: '#8B8682' }}>
+                              {usuario.estado === 'activa' && <span style={{ color: '#2E7D2E' }}>✓ Activa</span>}
+                              {usuario.estado === 'inactiva' && <span style={{ color: '#8B8682' }}>○ Inactiva</span>}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
       </div>

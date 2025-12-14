@@ -16,11 +16,12 @@ from .views import (
     ServiciosQuimicosViewSet,
     TurnoViewSet,
     RutinaViewSet,
-    PasoRutinaViewSet,
+    #PasoRutinaViewSet,
     ReglaDiagnosticoViewSet,
     NotificacionViewSet,
+    SeleccionarRutinaView,
     RutinaClienteViewSet,
-    SeleccionarRutinaView
+    
 )
 
 from . import views
@@ -42,7 +43,7 @@ router.register(r'turnos', TurnoViewSet, basename='turno')
 router.register(r'notificaciones', NotificacionViewSet, basename='notificaciones')
 router.register(r'servicios-quimicos', ServiciosQuimicosViewSet, basename='servicios-quimicos')
 router.register(r'rutinas', RutinaViewSet, basename='rutina')
-router.register(r'pasorutina', PasoRutinaViewSet, basename='pasorutina')
+#router.register(r'pasorutina', PasoRutinaViewSet, basename='pasorutina')
 router.register(r'reglas-diagnostico', ReglaDiagnosticoViewSet, basename='reglas-diagnostico')
 router.register(r'rutinas-cliente', RutinaClienteViewSet, basename='rutina-cliente')
 router.register(r'admin/usuarios', views.AdminUsuarioViewSet, basename='admin-usuarios')

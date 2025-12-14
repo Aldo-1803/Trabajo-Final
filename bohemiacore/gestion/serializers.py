@@ -1,18 +1,16 @@
 from rest_framework import serializers
 from .models import (
     TipoCabello, GrosorCabello, PorosidadCabello, 
-    CueroCabelludo, EstadoGeneral
+    CueroCabelludo, EstadoGeneral, Equipamiento, Producto,
+    ReglaDiagnostico, Notificacion, #PasoRutina,
+    Rutina, AgendaCuidados, RutinaCliente, #PasoRutinaCliente,
+    Servicio, CategoriaServicio, Turno
+
 )
 
-from .models import PasoRutina, Rutina, AgendaCuidados, RutinaCliente, PasoRutinaCliente
 from usuarios.models import Usuario, Cliente
-from .models import Servicio, CategoriaServicio, Turno
 import os
 from django.core.exceptions import ValidationError 
-from .models import Notificacion
-from .models import ReglaDiagnostico
-from .models import Producto
-from .models import Equipamiento
 
 # 1. EL SERIALIZER BASE (El "Molde")
 # Define los campos que TODOS los catálogos compartirán
@@ -125,50 +123,59 @@ class TurnoCreateSerializer(serializers.ModelSerializer):
         read_only_fields = ['cliente', 'estado']
      
 
+"""
 class PasoRutinaSerializer(serializers.ModelSerializer):
     class Meta:
         model = PasoRutina
         fields = ['id', 'orden', 'titulo', 'descripcion', 'frecuencia', 'plantilla']
 
+"""
+
 class RutinaSerializer(serializers.ModelSerializer):
-    pasos = PasoRutinaSerializer(many=True, read_only=True)
+    # pasos = PasoRutinaSerializer(many=True, read_only=True)
     creada_por_nombre = serializers.CharField(source='creada_por.get_full_name', read_only=True)
     estado_display = serializers.CharField(source='get_estado_display', read_only=True)
-    puede_asignarse = serializers.SerializerMethodField()
+    usuarios_usando = serializers.SerializerMethodField()
     
     class Meta:
         model = Rutina
         fields = [
-            'id', 'nombre', 'objetivo', 'descripcion', 'version', 
+            'id', 'nombre', 'objetivo', 'descripcion', 'version', 'archivo',
             'estado', 'estado_display', 'creada_por', 'creada_por_nombre',
-            'fecha_creacion', 'fecha_obsoleta', 'pasos', 'puede_asignarse'
+            'fecha_creacion', 'fecha_obsoleta', 'usuarios_usando'
         ]
-        read_only_fields = ['id', 'fecha_creacion', 'fecha_obsoleta', 'creada_por', 'creada_por_nombre', 'estado_display']
+        read_only_fields = ['id', 'fecha_creacion', 'fecha_obsoleta', 'creada_por', 'creada_por_nombre', 'estado_display', 'usuarios_usando']
     
-    def get_puede_asignarse(self, obj):
-        """Retorna True si la rutina puede asignarse a nuevos clientes."""
-        return obj.puede_asignarse()
+    def get_usuarios_usando(self, obj):
+        """Retorna la cantidad de usuarios que tienen esta rutina asignada."""
+        return obj.copias_cliente.count()
     
     def create(self, validated_data):
         """Auto-asigna creada_por al usuario autenticado durante la creación."""
         validated_data['creada_por'] = self.context['request'].user
+        print(f"✅ Creando rutina con validated_data: {validated_data}")
+        print(f"✅ Archivo en validated_data: {validated_data.get('archivo')}")
         return super().create(validated_data)
 
 
+"""
 class PasoRutinaClienteSerializer(serializers.ModelSerializer):
     class Meta:
         model = PasoRutinaCliente
         fields = '__all__'
-
+"""
 
 class RutinaClienteSerializer(serializers.ModelSerializer):
-    pasos = PasoRutinaClienteSerializer(many=True, read_only=True)
+    # pasos = PasoRutinaClienteSerializer(many=True, read_only=True)
     estado_display = serializers.CharField(source='get_estado_display', read_only=True)
+    rutina_original = serializers.IntegerField(source='rutina_original.id', read_only=True)
 
     class Meta:
         model = RutinaCliente
-        fields = ['id', 'nombre', 'objetivo', 'descripcion', 'pasos', 'estado', 'estado_display', 'fecha_asignacion', 'version_asignada', 'descargar_notificacion']
-        read_only_fields = ['id', 'nombre', 'objetivo', 'descripcion', 'pasos', 'estado', 'estado_display', 'fecha_asignacion', 'version_asignada', 'descargar_notificacion']
+        fields = ['id', 'nombre', 'objetivo', 'descripcion', #'pasos',
+                   'archivo', 'estado', 'estado_display', 'fecha_asignacion', 'version_asignada', 'descargar_notificacion', 'rutina_original']
+        read_only_fields = ['id', 'nombre', 'objetivo', 'descripcion', #'pasos',
+                             'estado', 'estado_display', 'fecha_asignacion', 'version_asignada', 'descargar_notificacion', 'rutina_original']
 
 
 class RutinaClienteCreateSerializer(serializers.Serializer):

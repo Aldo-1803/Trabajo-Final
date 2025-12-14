@@ -175,16 +175,16 @@ const GestionarServicios = () => {
         }
     };
 
-    if (loading) return <div className="p-8 text-center">Cargando configuración...</div>;
-    if (error) return <div className="p-8 text-center text-red-600">Error: {error}</div>;
+    if (loading) return <div className="p-8 text-center" style={{ color: '#8B8682' }}>Cargando configuración...</div>;
+    if (error) return <div className="p-8 text-center" style={{ color: '#C73E3E' }}>Error: {error}</div>;
 
     return (
-        <div className="p-8 bg-gray-50 min-h-screen">
+        <div className="p-8 min-h-screen" style={{ backgroundColor: '#F5EBE0' }}>
             <div className="max-w-6xl mx-auto">
                 <div className="flex justify-between items-center mb-8">
                     <div>
-                        <h1 className="text-3xl font-bold text-gray-800">Gestión de Servicios</h1>
-                        <p className="text-gray-500">Define precios, rutinas automáticas e impacto en el cabello.</p>
+                        <h1 className="text-3xl font-bold" style={{ color: '#817773' }}>Gestión de Servicios</h1>
+                        <p style={{ color: '#8B8682' }}>Define precios, rutinas automáticas e impacto en el cabello.</p>
                     </div>
                     <div className="flex gap-2">
                         <button 
@@ -192,11 +192,14 @@ const GestionarServicios = () => {
                                 resetForm();
                                 setShowNewForm(true);
                             }}
-                            className="bg-green-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-green-700"
+                            className="text-white px-4 py-2 rounded-lg font-bold transition"
+                            style={{ backgroundColor: '#AB9A91' }}
+                            onMouseEnter={(e) => e.target.style.backgroundColor = '#817773'}
+                            onMouseLeave={(e) => e.target.style.backgroundColor = '#AB9A91'}
                         >
                             + Nuevo Servicio
                         </button>
-                        <button onClick={() => navigate('/admin-dashboard')} className="text-gray-500 hover:underline">
+                        <button onClick={() => navigate('/admin-dashboard')} className="font-bold transition" style={{ color: '#817773' }} onMouseEnter={(e) => e.target.style.color = '#AB9A91'} onMouseLeave={(e) => e.target.style.color = '#817773'}>
                             ← Volver
                         </button>
                     </div>
@@ -204,31 +207,33 @@ const GestionarServicios = () => {
 
                 {/* FORMULARIO DE CREAR/EDITAR */}
                 {(showNewForm || editingId) && (
-                    <div className="bg-white p-6 rounded-xl shadow-lg mb-8 border border-blue-300">
-                        <h3 className="text-xl font-bold mb-4 text-gray-800">
-                            {editingId ? 'Editar Servicio' : 'Crear Nuevo Servicio'}
+                    <div className="p-6 rounded-xl shadow-lg mb-8 border" style={{ backgroundColor: 'white', borderColor: '#D5D1CC' }}>
+                        <h3 className="text-xl font-bold mb-4" style={{ color: '#817773', borderBottom: '2px solid #E3D5CA', paddingBottom: '0.5rem' }}>
+                            {editingId ? '✏️ Editar Servicio' : '➕ Crear Nuevo Servicio'}
                         </h3>
                         <form onSubmit={handleSave} className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             {/* Nombre */}
                             <div>
-                                <label className="block text-sm font-bold text-gray-700 mb-1">Nombre *</label>
+                                <label className="block text-sm font-bold mb-1" style={{ color: '#817773' }}>Nombre *</label>
                                 <input 
                                     type="text" 
                                     required
                                     value={formData.nombre}
                                     onChange={e => setFormData({...formData, nombre: e.target.value})}
-                                    className="w-full p-2 border rounded-lg"
+                                    className="w-full p-2 border rounded-lg focus:ring-2 outline-none"
+                                    style={{ borderColor: '#D5D1CC', '--tw-ring-color': '#AB9A91' }}
                                     placeholder="Ej: Corte de cabello"
                                 />
                             </div>
 
                             {/* Categoría */}
                             <div>
-                                <label className="block text-sm font-bold text-gray-700 mb-1">Categoría</label>
+                                <label className="block text-sm font-bold mb-1" style={{ color: '#817773' }}>Categoría</label>
                                 <select 
                                     value={formData.categoria}
                                     onChange={e => setFormData({...formData, categoria: e.target.value})}
                                     className="w-full p-2 border rounded-lg"
+                                    style={{ borderColor: '#D5D1CC', backgroundColor: '#F5EBE0', color: '#817773' }}
                                 >
                                     <option value="">-- Seleccionar --</option>
                                     {categorias.map(c => (
@@ -239,48 +244,52 @@ const GestionarServicios = () => {
 
                             {/* Precio */}
                             <div>
-                                <label className="block text-sm font-bold text-gray-700 mb-1">Precio Base *</label>
+                                <label className="block text-sm font-bold mb-1" style={{ color: '#817773' }}>Precio Base *</label>
                                 <input 
                                     type="number" 
                                     step="0.01"
                                     required
                                     value={formData.precio_base}
                                     onChange={e => setFormData({...formData, precio_base: e.target.value})}
-                                    className="w-full p-2 border rounded-lg"
+                                    className="w-full p-2 border rounded-lg focus:ring-2 outline-none"
+                                    style={{ borderColor: '#D5D1CC', '--tw-ring-color': '#AB9A91' }}
                                     placeholder="0.00"
                                 />
                             </div>
 
                             {/* Duración */}
                             <div>
-                                <label className="block text-sm font-bold text-gray-700 mb-1">Duración (minutos)</label>
+                                <label className="block text-sm font-bold mb-1" style={{ color: '#817773' }}>Duración (minutos)</label>
                                 <input 
                                     type="number" 
                                     value={formData.duracion_estimada}
                                     onChange={e => setFormData({...formData, duracion_estimada: e.target.value})}
-                                    className="w-full p-2 border rounded-lg"
+                                    className="w-full p-2 border rounded-lg focus:ring-2 outline-none"
+                                    style={{ borderColor: '#D5D1CC', '--tw-ring-color': '#AB9A91' }}
                                     placeholder="60"
                                 />
                             </div>
 
                             {/* Descripción */}
                             <div className="md:col-span-2">
-                                <label className="block text-sm font-bold text-gray-700 mb-1">Descripción</label>
+                                <label className="block text-sm font-bold mb-1" style={{ color: '#817773' }}>Descripción</label>
                                 <textarea 
                                     value={formData.descripcion}
                                     onChange={e => setFormData({...formData, descripcion: e.target.value})}
-                                    className="w-full p-2 border rounded-lg h-20"
+                                    className="w-full p-2 border rounded-lg h-20 focus:ring-2 outline-none"
+                                    style={{ borderColor: '#D5D1CC', '--tw-ring-color': '#AB9A91' }}
                                     placeholder="Describe el servicio..."
                                 />
                             </div>
 
                             {/* Rutina Automática */}
                             <div>
-                                <label className="block text-sm font-bold text-gray-700 mb-1">Rutina Automática</label>
+                                <label className="block text-sm font-bold mb-1" style={{ color: '#817773' }}>Rutina Automática</label>
                                 <select 
                                     value={formData.rutina_recomendada}
                                     onChange={e => setFormData({...formData, rutina_recomendada: e.target.value})}
                                     className="w-full p-2 border rounded-lg"
+                                    style={{ borderColor: '#D5D1CC', backgroundColor: '#F5EBE0', color: '#817773' }}
                                 >
                                     <option value="">-- Sin Rutina --</option>
                                     {rutinas.map(r => (
@@ -291,11 +300,12 @@ const GestionarServicios = () => {
 
                             {/* Impacto Porosidad */}
                             <div>
-                                <label className="block text-sm font-bold text-gray-700 mb-1">Impacto Porosidad</label>
+                                <label className="block text-sm font-bold mb-1" style={{ color: '#817773' }}>Impacto Porosidad</label>
                                 <select 
                                     value={formData.impacto_porosidad}
                                     onChange={e => setFormData({...formData, impacto_porosidad: e.target.value})}
                                     className="w-full p-2 border rounded-lg"
+                                    style={{ borderColor: '#D5D1CC', backgroundColor: '#F5EBE0', color: '#817773' }}
                                 >
                                     <option value="">-- Sin Cambio --</option>
                                     {porosidades.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
@@ -304,11 +314,12 @@ const GestionarServicios = () => {
 
                             {/* Impacto Estado */}
                             <div>
-                                <label className="block text-sm font-bold text-gray-700 mb-1">Impacto Estado</label>
+                                <label className="block text-sm font-bold mb-1" style={{ color: '#817773' }}>Impacto Estado</label>
                                 <select 
                                     value={formData.impacto_estado}
                                     onChange={e => setFormData({...formData, impacto_estado: e.target.value})}
                                     className="w-full p-2 border rounded-lg"
+                                    style={{ borderColor: '#D5D1CC', backgroundColor: '#F5EBE0', color: '#817773' }}
                                 >
                                     <option value="">-- Sin Cambio --</option>
                                     {estados.map(e => <option key={e.id} value={e.id}>{e.nombre}</option>)}
@@ -324,15 +335,15 @@ const GestionarServicios = () => {
                                     className="w-4 h-4"
                                     id="activo"
                                 />
-                                <label htmlFor="activo" className="text-sm font-bold text-gray-700">Servicio Activo</label>
+                                <label htmlFor="activo" className="text-sm font-bold" style={{ color: '#817773' }}>Servicio Activo</label>
                             </div>
 
                             {/* Botones */}
                             <div className="md:col-span-2 flex gap-2">
-                                <button type="submit" className="flex-1 bg-blue-600 text-white py-2 rounded-lg font-bold hover:bg-blue-700">
+                                <button type="submit" className="flex-1 text-white py-2 rounded-lg font-bold transition" style={{ backgroundColor: '#817773' }} onMouseEnter={(e) => e.target.style.backgroundColor = '#5A5451'} onMouseLeave={(e) => e.target.style.backgroundColor = '#817773'}>
                                     {editingId ? 'Actualizar' : 'Crear'}
                                 </button>
-                                <button type="button" onClick={resetForm} className="flex-1 bg-gray-400 text-white py-2 rounded-lg font-bold hover:bg-gray-500">
+                                <button type="button" onClick={resetForm} className="flex-1 py-2 rounded-lg font-bold transition" style={{ backgroundColor: '#E3D5CA', color: '#817773' }} onMouseEnter={(e) => e.target.style.backgroundColor = '#D5BDAF'} onMouseLeave={(e) => e.target.style.backgroundColor = '#E3D5CA'}>
                                     Cancelar
                                 </button>
                             </div>
@@ -343,34 +354,30 @@ const GestionarServicios = () => {
                 {/* LISTA DE SERVICIOS */}
                 <div className="grid gap-6">
                     {servicios.length === 0 ? (
-                        <div className="bg-white p-8 rounded-xl shadow text-center text-gray-500">
+                        <div className="p-8 rounded-xl shadow text-center" style={{ backgroundColor: 'white', color: '#8B8682' }}>
                             No hay servicios registrados. ¡Crea el primero!
                         </div>
                     ) : (
                         servicios.map(servicio => (
-                            <div key={servicio.id} className={`bg-white p-6 rounded-xl shadow-md border-l-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 ${
-                                servicio.activo ? 'border-green-500' : 'border-red-500 opacity-75'
-                            }`}>
+                            <div key={servicio.id} className="p-6 rounded-xl shadow-md border-l-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 hover:shadow-lg transition-shadow" style={{ backgroundColor: 'white', borderColor: '#D5BDAF', opacity: servicio.activo ? 1 : 0.7 }}>
                                 
                                 {/* INFO BÁSICA */}
                                 <div className="flex-1">
                                     <div className="flex items-center gap-3 mb-2">
-                                        <h3 className="text-xl font-bold text-gray-800">{servicio.nombre}</h3>
-                                        <span className={`text-xs px-2 py-1 rounded font-bold ${
-                                            servicio.activo ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                                        }`}>
+                                        <h3 className="text-xl font-bold" style={{ color: '#817773' }}>{servicio.nombre}</h3>
+                                        <span className="text-xs px-2 py-1 rounded font-bold" style={{ backgroundColor: servicio.activo ? '#E8F5E8' : '#FFE8E8', color: servicio.activo ? '#2E7D2E' : '#C73E3E' }}>
                                             {servicio.activo ? 'Activo' : 'Inactivo'}
                                         </span>
                                     </div>
                                     {servicio.categoria_nombre && (
-                                        <span className="inline-block bg-pink-100 text-pink-700 text-xs px-2 py-1 rounded font-bold mb-2">
+                                        <span className="inline-block text-xs px-2 py-1 rounded font-bold mb-2" style={{ backgroundColor: '#E3D5CA', color: '#817773' }}>
                                             {servicio.categoria_nombre}
                                         </span>
                                     )}
                                     {servicio.descripcion && (
-                                        <p className="text-gray-600 text-sm mb-2">{servicio.descripcion}</p>
+                                        <p className="text-sm mb-2" style={{ color: '#5A5451' }}>{servicio.descripcion}</p>
                                     )}
-                                    <div className="flex gap-4 text-sm font-semibold text-gray-700">
+                                    <div className="flex gap-4 text-sm font-semibold" style={{ color: '#8B8682' }}>
                                         <span>Precio: ${servicio.precio_base}</span>
                                         {servicio.duracion_estimada && <span>Duración: {servicio.duracion_estimada} min</span>}
                                     </div>
@@ -380,23 +387,28 @@ const GestionarServicios = () => {
                                 <div className="flex gap-2 w-full md:w-auto">
                                     <button 
                                         onClick={() => handleEdit(servicio)}
-                                        className="flex-1 md:flex-none bg-blue-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-blue-700 text-sm"
+                                        className="flex-1 md:flex-none px-4 py-2 rounded-lg font-bold text-sm transition"
+                                        style={{ backgroundColor: '#E3D5CA', color: '#817773' }}
+                                        onMouseEnter={(e) => e.target.style.backgroundColor = '#D5BDAF'}
+                                        onMouseLeave={(e) => e.target.style.backgroundColor = '#E3D5CA'}
                                     >
                                         Editar
                                     </button>
                                     <button 
                                         onClick={() => toggleActive(servicio)}
-                                        className={`flex-1 md:flex-none px-4 py-2 rounded-lg font-bold text-sm ${
-                                            servicio.activo 
-                                                ? 'bg-yellow-500 text-white hover:bg-yellow-600' 
-                                                : 'bg-green-600 text-white hover:bg-green-700'
-                                        }`}
+                                        className="flex-1 md:flex-none px-4 py-2 rounded-lg font-bold text-sm text-white transition"
+                                        style={{ backgroundColor: servicio.activo ? '#AB9A91' : '#2E7D2E' }}
+                                        onMouseEnter={(e) => e.target.style.backgroundColor = servicio.activo ? '#817773' : '#1E5C1E'}
+                                        onMouseLeave={(e) => e.target.style.backgroundColor = servicio.activo ? '#AB9A91' : '#2E7D2E'}
                                     >
                                         {servicio.activo ? 'Desactivar' : 'Activar'}
                                     </button>
                                     <button 
                                         onClick={() => handleDelete(servicio.id)}
-                                        className="flex-1 md:flex-none bg-red-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-red-700 text-sm"
+                                        className="flex-1 md:flex-none px-4 py-2 rounded-lg font-bold text-sm text-white transition"
+                                        style={{ backgroundColor: '#AB9A91' }}
+                                        onMouseEnter={(e) => e.target.style.backgroundColor = '#817773'}
+                                        onMouseLeave={(e) => e.target.style.backgroundColor = '#AB9A91'}
                                     >
                                         Eliminar
                                     </button>

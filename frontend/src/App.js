@@ -1,8 +1,9 @@
 import React from 'react';
 // ¡Aquí ya no se importa BrowserRouter!
-import { Routes, Route, Navigate } from 'react-router-dom'; 
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom'; 
 
 // Todas las importaciones de componentes van aquí
+import Header from './components/Header';
 import Registro from './components/Registro';
 import Login from './components/Login';
 import RecuperarContrasena from './components/RecuperarContrasena';
@@ -25,39 +26,50 @@ import GestionProductos from './components/admin/GestionProductos';
 import GestionUsuarios from './components/admin/GestionUsuarios';
 import GestionClientes from './components/admin/GestionClientes';
 import GestionEquipamiento from './components/admin/GestionEquipamiento';
+import CatalogoServicios from './components/CatalogoServicios';
+import DetalleServicio from './components/DetalleServicio';
 
 const App = () => {
+    const location = useLocation();
+    const noHeaderRoutes = ['/login', '/registro', '/recuperar-contrasena'];
+    const showHeader = !noHeaderRoutes.includes(location.pathname);
+
     return (
-        <Routes>
-            <Route path="/registro" element={<Registro />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/recuperar-contrasena" element={<RecuperarContrasena />} />
-            
-            {/* Rutas protegidas */}
-            <Route path="/perfil" element={<ProtectedRoute> <Perfil /> </ProtectedRoute>} />
-            <Route path="/editar-perfil" element={<ProtectedRoute> <EditarPerfil /> </ProtectedRoute>}/>
-            <Route path="/admin/nuevo-turno" element={<NuevoTurno />} />
-            <Route path="/admin/turnos" element={<ProtectedRoute><GestionTurnos /></ProtectedRoute>} />
-            <Route path="/reservar" element={<ProtectedRoute><ReservarCliente /></ProtectedRoute>} />
+        <>
+            {showHeader && <Header />}
+            <Routes>
+                <Route path="/registro" element={<Registro />} />
+                <Route path="/login" element={<Login />} />
+                <Route path="/recuperar-contrasena" element={<RecuperarContrasena />} />
+                
+                {/* Rutas protegidas */}
+                <Route path="/perfil" element={<ProtectedRoute> <Perfil /> </ProtectedRoute>} />
+                <Route path="/editar-perfil" element={<ProtectedRoute> <EditarPerfil /> </ProtectedRoute>}/>
+                <Route path="/admin/nuevo-turno" element={<NuevoTurno />} />
+                <Route path="/admin/turnos" element={<ProtectedRoute><GestionTurnos /></ProtectedRoute>} />
+                <Route path="/reservar" element={<ProtectedRoute><ReservarCliente /></ProtectedRoute>} />
 
-            <Route path="/mi-agenda" element={<ProtectedRoute><MiAgenda /></ProtectedRoute>} />
-            <Route path="/mis-turnos" element={<ProtectedRoute><MisTurnos /></ProtectedRoute>}/>
-            <Route path="/admin-dashboard" element={<ProtectedRoute><DashboardAdmin /></ProtectedRoute>}/>
-            <Route path="/admin/gestionar-rutinas" element={<ProtectedRoute><GestionarRutinas /></ProtectedRoute>}/>
-            <Route path="/catalogo-rutinas" element={<ProtectedRoute><CatalogoRutinas /></ProtectedRoute>}/>
-            <Route path="/mis-rutinas" element={<ProtectedRoute><MisRutinas /></ProtectedRoute>}/>
-            <Route path="/admin/servicios" element={<ProtectedRoute><GestionarServicios /></ProtectedRoute>} />
-            <Route path="/admin/reglas" element={<ProtectedRoute><GestionarReglas /></ProtectedRoute>} />
-            <Route path="/admin/rutina/:id" element={<ProtectedRoute><DetalleRutina /></ProtectedRoute>} />
-            <Route path="/rutina/:id" element={<ProtectedRoute><DetalleRutina /></ProtectedRoute>} />
-            <Route path="/admin/productos" element={<ProtectedRoute><GestionProductos /></ProtectedRoute>} />
-            <Route path="/admin/usuarios" element={<ProtectedRoute><GestionUsuarios /></ProtectedRoute>} />
-            <Route path="/admin/clientes" element={<ProtectedRoute><GestionClientes /></ProtectedRoute>} />
-            <Route path="/admin/equipamiento" element={<ProtectedRoute><GestionEquipamiento /></ProtectedRoute>} />
+                <Route path="/mi-agenda" element={<ProtectedRoute><MiAgenda /></ProtectedRoute>} />
+                <Route path="/mis-turnos" element={<ProtectedRoute><MisTurnos /></ProtectedRoute>}/>
+                <Route path="/admin-dashboard" element={<ProtectedRoute><DashboardAdmin /></ProtectedRoute>}/>
+                <Route path="/admin/gestionar-rutinas" element={<ProtectedRoute><GestionarRutinas /></ProtectedRoute>}/>
+                <Route path="/catalogo-rutinas" element={<ProtectedRoute><CatalogoRutinas /></ProtectedRoute>}/>
+                <Route path="/mis-rutinas" element={<ProtectedRoute><MisRutinas /></ProtectedRoute>}/>
+                <Route path="/admin/servicios" element={<ProtectedRoute><GestionarServicios /></ProtectedRoute>} />
+                <Route path="/admin/reglas" element={<ProtectedRoute><GestionarReglas /></ProtectedRoute>} />
+                <Route path="/admin/rutina/:id" element={<ProtectedRoute><DetalleRutina /></ProtectedRoute>} />
+                <Route path="/rutina/:id" element={<ProtectedRoute><DetalleRutina /></ProtectedRoute>} />
+                <Route path="/admin/productos" element={<ProtectedRoute><GestionProductos /></ProtectedRoute>} />
+                <Route path="/admin/usuarios" element={<ProtectedRoute><GestionUsuarios /></ProtectedRoute>} />
+                <Route path="/admin/clientes" element={<ProtectedRoute><GestionClientes /></ProtectedRoute>} />
+                <Route path="/admin/equipamiento" element={<ProtectedRoute><GestionEquipamiento /></ProtectedRoute>} />
+                <Route path="/catalogo-servicios" element={<ProtectedRoute><CatalogoServicios /></ProtectedRoute>}/>
+                <Route path="/servicio/:servicioId" element={<ProtectedRoute><DetalleServicio /></ProtectedRoute>}/>
 
-            {/* Ruta por defecto */}
-            <Route path="/" element={<Navigate to="/login" />} />
-        </Routes>
+                {/* Ruta por defecto */}
+                <Route path="/" element={<Navigate to="/login" />} />
+            </Routes>
+        </>
     );
 };
 

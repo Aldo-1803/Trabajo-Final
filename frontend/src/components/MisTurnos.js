@@ -238,16 +238,16 @@ const MisTurnos = () => {
         setNuevaHora('');
     };
 
-    if (loading) return <div className="text-center mt-10">Cargando turnos...</div>;
+    if (loading) return <div className="text-center mt-10" style={{ color: '#8B8682' }}>Cargando turnos...</div>;
 
     return (
-        <div className="min-h-screen bg-gray-50 p-6">
+        <div className="min-h-screen p-6" style={{ backgroundColor: '#F5EBE0' }}>
             <div className="max-w-4xl mx-auto">
-                <button onClick={() => navigate('/perfil')} className="mb-4 text-blue-600 hover:underline">← Volver al Perfil</button>
-                <h1 className="text-3xl font-bold text-gray-800 mb-6">Mis Turnos</h1>
+                <button onClick={() => navigate('/perfil')} className="mb-4 font-bold transition" style={{ color: '#817773' }} onMouseEnter={(e) => e.target.style.color = '#AB9A91'} onMouseLeave={(e) => e.target.style.color = '#817773'}>← Volver al Perfil</button>
+                <h1 className="text-3xl font-bold mb-6" style={{ color: '#817773' }}>Mis Turnos</h1>
 
                 {turnos.length === 0 ? (
-                    <p className="text-gray-500">No tienes turnos activos.</p>
+                    <p style={{ color: '#8B8682' }}>No tienes turnos activos.</p>
                 ) : (
                     <div className="space-y-4">
                         {turnos.map((turno) => {
@@ -257,33 +257,36 @@ const MisTurnos = () => {
                             
                             // 2. Definimos estilos condicionales (Grisado si vencido)
                             const cardStyle = vencido && !estadoFinal
-                                ? "bg-gray-100 border-l-4 border-gray-400 opacity-75" 
-                                : "bg-white border-l-4 border-pink-500 shadow-md";
+                                ? { backgroundColor: '#E8E8E8', borderColor: '#ABA89E', opacity: 0.75 } 
+                                : { backgroundColor: 'white', borderColor: '#D5BDAF' };
 
                             return (
-                                <div key={turno.id} className={`p-6 rounded-lg ${cardStyle} relative transition-all`}>
+                                <div key={turno.id} className="p-6 rounded-lg border-l-4 shadow-md relative transition-all hover:shadow-lg" style={cardStyle}>
                                     <div className="flex flex-col md:flex-row justify-between items-start gap-4">
                                         
                                         {/* INFO DEL TURNO */}
                                         <div className="flex-1">
-                                            <h3 className={`text-xl font-bold ${vencido ? 'text-gray-500' : 'text-gray-800'}`}>
+                                            <h3 className="text-xl font-bold" style={{ color: vencido ? '#8B8682' : '#817773' }}>
                                                 {turno.servicio_nombre || "Servicio Capilar"}
                                             </h3>
-                                            <p className="text-gray-600 text-lg">📅 {turno.fecha} - 🕒 {turno.hora_inicio}</p>
+                                            <p className="text-lg" style={{ color: '#8B8682' }}>📅 {turno.fecha} - 🕒 {turno.hora_inicio}</p>
                                             
                                             <div className="mt-2 flex items-center gap-2">
                                                 {/* Badge de Estado */}
-                                                <span className={`px-2 py-1 rounded text-sm font-bold ${
-                                                    turno.estado === 'confirmado' ? 'bg-green-100 text-green-800' :
-                                                    turno.estado === 'cancelado' ? 'bg-red-100 text-red-800' :
-                                                    'bg-yellow-100 text-yellow-800'
-                                                }`}>
+                                                <span className="px-2 py-1 rounded text-sm font-bold" style={{ 
+                                                    backgroundColor: turno.estado === 'confirmado' ? '#E8F5E8' :
+                                                                    turno.estado === 'cancelado' ? '#FFE8E8' :
+                                                                    '#F5F1E8',
+                                                    color: turno.estado === 'confirmado' ? '#2E7D2E' :
+                                                           turno.estado === 'cancelado' ? '#C73E3E' :
+                                                           '#8B7500'
+                                                }}>
                                                     {turno.estado.toUpperCase()}
                                                 </span>
 
                                                 {/* Badge de VENCIDO (Solo si pasó fecha y no está en estado final) */}
                                                 {vencido && !estadoFinal && (
-                                                    <span className="px-2 py-1 rounded text-sm font-bold bg-gray-300 text-gray-700">
+                                                    <span className="px-2 py-1 rounded text-sm font-bold" style={{ backgroundColor: '#ABA89E', color: 'white' }}>
                                                         VENCIDO / PENDIENTE CIERRE
                                                     </span>
                                                 )}
@@ -297,7 +300,10 @@ const MisTurnos = () => {
                                             {!vencido && ['solicitado', 'esperando_sena', 'confirmado'].includes(turno.estado) && (
                                                 <button 
                                                     onClick={() => abrirGestion(turno)}
-                                                    className="bg-gray-100 text-gray-700 hover:bg-gray-200 px-4 py-2 rounded-lg text-sm font-bold border border-gray-300 w-full md:w-auto shadow-sm"
+                                                    className="px-4 py-2 rounded-lg text-sm font-bold w-full md:w-auto shadow-sm transition"
+                                                    style={{ backgroundColor: '#E3D5CA', color: '#817773', borderColor: '#D5BDAF', border: '1px solid #D5BDAF' }}
+                                                    onMouseEnter={(e) => e.target.style.backgroundColor = '#D5BDAF'}
+                                                    onMouseLeave={(e) => e.target.style.backgroundColor = '#E3D5CA'}
                                                 >
                                                     Gestionar / Cancelar
                                                 </button>
@@ -305,23 +311,24 @@ const MisTurnos = () => {
 
                                             {/* MENSAJE SI ESTÁ VENCIDO */}
                                             {vencido && !estadoFinal && (
-                                                <p className="text-xs text-gray-500 italic text-right max-w-[200px]">
+                                                <p className="text-xs italic text-right max-w-[200px]" style={{ color: '#8B8682' }}>
                                                     Este turno ya pasó. Si asististe, pronto se marcará como realizado.
                                                 </p>
                                             )}
 
                                             {/* LOGICA DE COMPROBANTE (Solo si NO vencido) */}
                                             {!vencido && turno.estado === 'esperando_sena' && (
-                                                <div className="w-full bg-pink-50 p-3 rounded border border-pink-200">
-                                                    <p className="text-xs text-pink-700 font-bold mb-2">Subir Comprobante:</p>
+                                                <div className="w-full p-3 rounded border" style={{ backgroundColor: '#E3D5CA', borderColor: '#D5BDAF' }}>
+                                                    <p className="text-xs font-bold mb-2" style={{ color: '#817773' }}>Subir Comprobante:</p>
                                                     <input 
                                                         type="file" 
                                                         accept="image/*,.pdf"
                                                         onChange={(e) => handleFileChange(e, turno.id)} 
-                                                        className="block w-full text-xs text-slate-500 file:mr-2 file:py-1 file:px-2 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-pink-100 file:text-pink-700 hover:file:bg-pink-200"
+                                                        className="block w-full text-xs"
+                                                        style={{ color: '#8B8682' }}
                                                     />
                                                     {turnoIdSubida === turno.id && archivo && (
-                                                        <button onClick={() => subirComprobante(turno.id)} className="mt-2 w-full bg-pink-600 text-white text-xs font-bold py-1 rounded">
+                                                        <button onClick={() => subirComprobante(turno.id)} className="mt-2 w-full text-white text-xs font-bold py-1 rounded transition" style={{ backgroundColor: '#AB9A91' }} onMouseEnter={(e) => e.target.style.backgroundColor = '#817773'} onMouseLeave={(e) => e.target.style.backgroundColor = '#AB9A91'}>
                                                             ENVIAR
                                                         </button>
                                                     )}
@@ -339,17 +346,17 @@ const MisTurnos = () => {
             {/* MODAL (Sin cambios significativos, se mantiene igual) */}
             {modalAbierto && datosPolitica && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-                    <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 animate-fade-in-up">
+                    <div className="rounded-xl shadow-2xl max-w-md w-full p-6 animate-fade-in-up" style={{ backgroundColor: 'white' }}>
                         <div className="flex justify-between items-center mb-4">
-                            <h2 className="text-xl font-bold text-gray-800">Gestionar Turno</h2>
-                            <button onClick={cerrarModal} className="text-gray-400 hover:text-gray-600">✕</button>
+                            <h2 className="text-xl font-bold" style={{ color: '#817773' }}>Gestionar Turno</h2>
+                            <button onClick={cerrarModal} className="transition" style={{ color: '#8B8682' }} onMouseEnter={(e) => e.target.style.color = '#5A5451'} onMouseLeave={(e) => e.target.style.color = '#8B8682'}>✕</button>
                         </div>
 
-                        <div className={`p-4 rounded-lg mb-6 border-l-4 ${
-                            datosPolitica.tipo_alerta === 'info' 
-                                ? 'bg-blue-50 border-blue-500 text-blue-800' 
-                                : 'bg-orange-50 border-orange-500 text-orange-800'
-                        }`}>
+                        <div className="p-4 rounded-lg mb-6 border-l-4" style={{ 
+                            backgroundColor: datosPolitica.tipo_alerta === 'info' ? '#E8F0F5' : '#F5F1E8',
+                            borderColor: datosPolitica.tipo_alerta === 'info' ? '#AB9A91' : '#D5BDAF',
+                            color: datosPolitica.tipo_alerta === 'info' ? '#0D47A1' : '#8B7500'
+                        }}>
                             <p className="font-medium">{datosPolitica.mensaje}</p>
                             <p className="text-xs mt-1 opacity-80">
                                 Cambios realizados: {datosPolitica.cambios_realizados}/{datosPolitica.limite_cambios}
@@ -358,14 +365,15 @@ const MisTurnos = () => {
 
                         {datosPolitica.puede_reprogramar && (
                             <div className="mb-6">
-                                <h3 className="font-bold text-gray-700 mb-4">Reprogramar Turno</h3>
+                                <h3 className="font-bold mb-4" style={{ color: '#817773' }}>Reprogramar Turno</h3>
                                 
                                 {/* Selector de Fecha */}
                                 <div className="mb-4">
-                                    <label className="block text-sm font-semibold text-gray-600 mb-2">Selecciona Nueva Fecha</label>
+                                    <label className="block text-sm font-semibold mb-2" style={{ color: '#817773' }}>Selecciona Nueva Fecha</label>
                                     <input 
                                         type="date" 
-                                        className="w-full border border-gray-300 p-3 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                                        className="w-full p-3 rounded focus:ring-2 outline-none border"
+                                        style={{ borderColor: '#D5D1CC', '--tw-ring-color': '#AB9A91' }}
                                         value={nuevaFecha} 
                                         onChange={handleFechaChange}
                                         min={getMinDate()}
@@ -375,13 +383,14 @@ const MisTurnos = () => {
                                 {/* Selector de Hora (Dinámico) */}
                                 {nuevaFecha && (
                                     <div className="mb-4">
-                                        <label className="block text-sm font-semibold text-gray-600 mb-2">
+                                        <label className="block text-sm font-semibold mb-2" style={{ color: '#817773' }}>
                                             Selecciona Nueva Hora
-                                            {cargandoHoras && <span className="text-blue-600 ml-2">Cargando...</span>}
+                                            {cargandoHoras && <span className="ml-2" style={{ color: '#AB9A91' }}>Cargando...</span>}
                                         </label>
                                         {horasDisponibles.length > 0 ? (
                                             <select 
-                                                className="w-full border border-gray-300 p-3 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                                                className="w-full p-3 rounded focus:ring-2 outline-none border"
+                                                style={{ borderColor: '#D5D1CC', '--tw-ring-color': '#AB9A91', color: '#817773', backgroundColor: '#F5EBE0' }}
                                                 value={nuevaHora}
                                                 onChange={(e) => setNuevaHora(e.target.value)}
                                             >
@@ -393,7 +402,7 @@ const MisTurnos = () => {
                                                 ))}
                                             </select>
                                         ) : (
-                                            <p className="text-red-600 text-sm">No hay horarios disponibles para esta fecha</p>
+                                            <p style={{ color: '#C73E3E' }} className="text-sm">No hay horarios disponibles para esta fecha</p>
                                         )}
                                     </div>
                                 )}
@@ -402,18 +411,21 @@ const MisTurnos = () => {
                                 <button 
                                     onClick={() => ejecutarAccion('REPROGRAMAR')} 
                                     disabled={!nuevaFecha || !nuevaHora}
-                                    className="w-full bg-blue-600 text-white font-bold py-3 rounded hover:bg-blue-700 transition disabled:bg-gray-400 disabled:cursor-not-allowed"
+                                    className="w-full text-white font-bold py-3 rounded transition disabled:opacity-50 disabled:cursor-not-allowed"
+                                    style={{ backgroundColor: '#817773' }}
+                                    onMouseEnter={(e) => !(!nuevaFecha || !nuevaHora) && (e.target.style.backgroundColor = '#5A5451')}
+                                    onMouseLeave={(e) => !(!nuevaFecha || !nuevaHora) && (e.target.style.backgroundColor = '#817773')}
                                 >
                                     Confirmar Nueva Fecha
                                 </button>
                             </div>
                         )}
 
-                        <hr className="my-4 border-gray-200" />
+                        <hr className="my-4" style={{ borderColor: '#D5D1CC' }} />
 
                         <div>
-                            <h3 className="font-bold text-gray-700 mb-2">Cancelar Definitivamente</h3>
-                            <button onClick={() => ejecutarAccion('CANCELAR')} className="w-full bg-white border-2 border-red-500 text-red-600 font-bold py-2 rounded hover:bg-red-50 transition">
+                            <h3 className="font-bold mb-2" style={{ color: '#817773' }}>Cancelar Definitivamente</h3>
+                            <button onClick={() => ejecutarAccion('CANCELAR')} className="w-full border-2 font-bold py-2 rounded transition" style={{ borderColor: '#C73E3E', color: '#C73E3E', backgroundColor: 'white' }} onMouseEnter={(e) => e.target.style.backgroundColor = '#FFE8E8'} onMouseLeave={(e) => e.target.style.backgroundColor = 'white'}>
                                 Cancelar Turno
                             </button>
                         </div>

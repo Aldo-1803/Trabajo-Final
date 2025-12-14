@@ -30,6 +30,7 @@ const GestionarReglas = () => {
         accion_resultado: ''
     });
 
+    // eslint-disable-next-line no-unused-vars
     const navigate = useNavigate();
 
     useEffect(() => {

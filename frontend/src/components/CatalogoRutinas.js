@@ -5,6 +5,7 @@ import jsPDF from 'jspdf';
 
 const CatalogoRutinas = () => {
   const [rutinas, setRutinas] = useState([]);
+  const [misRutinas, setMisRutinas] = useState([]); // Rutinas ya asignadas
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [asignando, setAsignando] = useState(false);
@@ -13,6 +14,7 @@ const CatalogoRutinas = () => {
 
   useEffect(() => {
     fetchRutinas();
+    fetchMisRutinas(); // Cargar las rutinas que ya tiene el cliente
   }, []);
 
   const fetchRutinas = async () => {
@@ -48,8 +50,39 @@ const CatalogoRutinas = () => {
     }
   };
 
+  const fetchMisRutinas = async () => {
+    const token = localStorage.getItem('access_token');
+    const headers = { Authorization: `Bearer ${token}` };
+
+    try {
+        const response = await axios.get('http://localhost:8000/api/gestion/rutinas-cliente/', { headers });
+        
+        let data = [];
+        if (Array.isArray(response.data)) {
+            data = response.data;
+        } else if (response.data && Array.isArray(response.data.results)) {
+            data = response.data.results;
+        }
+
+        console.log("📚 Mis rutinas:", data);
+        setMisRutinas(data);
+    } catch (err) {
+        console.error("❌ Error al cargar mis rutinas:", err);
+        // Si hay error, simplemente continuamos sin las rutinas del cliente
+    }
+  };
+
   const handleSeleccionarRutina = async (e, rutinaId) => {
     e.stopPropagation(); // Evitar que el clic dispare la navegación al detalle
+    
+    // Verificar si ya tiene la rutina asignada comparando con rutina_original
+    const yaAsignada = misRutinas.some(r => r.rutina_original === rutinaId);
+    if (yaAsignada) {
+      setError('❌ Esta rutina ya está en "Mis Rutinas". No puedes asignarla nuevamente.');
+      setTimeout(() => setError(''), 4000);
+      return;
+    }
+
     try {
       setAsignando(true);
       const token = localStorage.getItem('access_token');
@@ -62,12 +95,17 @@ const CatalogoRutinas = () => {
       );
 
       console.log("✅ Respuesta al agregar rutina:", response.data);
-      setSuccessMessage('¡Rutina asignada exitosamente!');
+      setSuccessMessage('✅ ¡Rutina asignada exitosamente!');
       setTimeout(() => setSuccessMessage(''), 3000);
       fetchRutinas();
+      fetchMisRutinas(); // Actualizar lista de mis rutinas
     } catch (err) {
       console.error('Error al asignar rutina:', err);
-      setError(err.response?.data?.error || 'Error al asignar la rutina');
+      if (err.response?.status === 400) {
+        setError('⚠️ Esta rutina ya la tienes asignada.');
+      } else {
+        setError(err.response?.data?.error || 'Error al asignar la rutina');
+      }
     } finally {
       setAsignando(false);
     }
@@ -93,91 +131,109 @@ const CatalogoRutinas = () => {
     doc.save(`${rutina.nombre}.pdf`);
   };
 
-  if (loading) return <div className="text-center py-20 text-gray-500 font-bold">Cargando rutinas...</div>;
+  if (loading) return <div className="text-center py-20 font-bold" style={{ color: '#8B8682', backgroundColor: '#F5EBE0', minHeight: '100vh' }}>Cargando rutinas...</div>;
 
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
+    <div className="min-h-screen p-8" style={{ backgroundColor: '#F5EBE0' }}>
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="mb-10 text-center">
-          <h1 className="text-4xl font-bold text-gray-800 mb-2">Catálogo de Rutinas</h1>
-          <p className="text-gray-500">Explora nuestras rutinas diseñadas por expertos.</p>
+          <h1 className="text-4xl font-bold mb-2" style={{ color: '#817773' }}>Catálogo de Rutinas</h1>
+          <p style={{ color: '#8B8682' }}>Explora nuestras rutinas diseñadas por expertos.</p>
         </div>
 
         {/* Mensajes */}
         {error && (
-          <div className="mb-6 p-4 bg-red-100 border-l-4 border-red-500 text-red-700 rounded shadow-sm">
+          <div className="mb-6 p-4 rounded shadow-sm border-l-4" style={{ backgroundColor: '#FFE8E8', borderColor: '#C73E3E', color: '#C73E3E' }}>
             {error}
           </div>
         )}
         
         {successMessage && (
-          <div className="mb-6 p-4 bg-green-100 border-l-4 border-green-500 text-green-700 rounded shadow-sm">
+          <div className="mb-6 p-4 rounded shadow-sm border-l-4" style={{ backgroundColor: '#E8F5E8', borderColor: '#2E7D2E', color: '#2E7D2E' }}>
             {successMessage}
           </div>
         )}
 
         {/* Grid de Rutinas (Simplificado) */}
         {!Array.isArray(rutinas) || rutinas.length === 0 ? (
-          <div className="text-center py-12 bg-white rounded-xl shadow-sm">
-            <p className="text-gray-400 text-lg">No hay rutinas disponibles en este momento.</p>
+          <div className="text-center py-12 rounded-xl shadow-sm" style={{ backgroundColor: 'white' }}>
+            <p style={{ color: '#8B8682' }} className="text-lg">No hay rutinas disponibles en este momento.</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
             {rutinas.map((rutina) => (
               <div
                 key={rutina.id}
-                onClick={() => navigate(`/rutina/${rutina.id}`)} // Navegar al detalle al hacer clic en la tarjeta
-                className="bg-white rounded-xl shadow-md hover:shadow-xl transition-all duration-300 overflow-hidden border border-gray-100 cursor-pointer group flex flex-col h-full"
+                onClick={() => navigate(`/rutina/${rutina.id}`)}
+                className="rounded-xl shadow-md hover:shadow-xl transition-all duration-300 overflow-hidden border cursor-pointer group flex flex-col h-full"
+                style={{ backgroundColor: 'white', borderColor: '#E3D5CA' }}
               >
                 {/* Cabecera Colorida */}
-                <div className="h-2 bg-gradient-to-r from-pink-500 to-rose-400"></div>
+                <div style={{ background: 'linear-gradient(135deg, #D5BDAF 0%, #AB9A91 100%)', height: '8px' }}></div>
                 
                 <div className="p-6 flex-1 flex flex-col">
                   {/* Título y Objetivo */}
                   <div className="mb-4">
-                    <h2 className="text-xl font-bold text-gray-800 group-hover:text-pink-600 transition-colors">
+                    <h2 className="text-xl font-bold transition-colors" style={{ color: '#817773' }}>
                         {rutina.nombre}
                     </h2>
-                    <p className="text-sm text-gray-500 mt-2 font-medium italic">
+                    <p className="text-sm mt-2 font-medium italic" style={{ color: '#8B8682' }}>
                         {rutina.objetivo}
                     </p>
                   </div>
 
                   {/* Descripción Corta (Truncada) */}
-                  <p className="text-gray-600 text-sm mb-6 line-clamp-2 flex-1">
+                  <p className="text-sm mb-6 line-clamp-2 flex-1" style={{ color: '#5A5451' }}>
                     {rutina.descripcion}
                   </p>
 
                   {/* Footer de la Tarjeta */}
                   <div className="mt-auto">
-                      <div className="flex justify-between items-center mb-4 text-xs text-gray-400 font-semibold uppercase tracking-wide">
+                      <div className="flex justify-between items-center mb-4 text-xs font-semibold uppercase tracking-wide" style={{ color: '#ABA89E' }}>
                           <span>v{rutina.version || 1}</span>
                           <span>{rutina.pasos ? `${rutina.pasos.length} Pasos` : 'Sin pasos'}</span>
                       </div>
 
                       {/* Botones de Acción */}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleSeleccionarRutina(e, rutina.id);
-                        }}
-                        className="w-full py-2 bg-gray-100 hover:bg-pink-50 text-gray-600 hover:text-pink-600 rounded-lg font-bold text-sm transition-colors mb-2"
-                      >
-                        Agregar a Mis Rutinas
-                      </button>
+                      {misRutinas.some(r => r.rutina_original === rutina.id) ? (
+                        <button
+                          disabled
+                          className="w-full py-2 rounded-lg font-bold text-sm cursor-not-allowed opacity-75 mb-2"
+                          style={{ backgroundColor: '#E8F5E8', color: '#2E7D2E' }}
+                        >
+                          ✓ Ya está en Mis Rutinas
+                        </button>
+                      ) : (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSeleccionarRutina(e, rutina.id);
+                          }}
+                          disabled={asignando}
+                          className="w-full py-2 rounded-lg font-bold text-sm transition-colors mb-2 disabled:opacity-50"
+                          style={{ backgroundColor: '#E3D5CA', color: '#817773' }}
+                          onMouseEnter={(e) => e.target.style.backgroundColor = '#D5BDAF'}
+                          onMouseLeave={(e) => e.target.style.backgroundColor = '#E3D5CA'}
+                        >
+                          {asignando ? 'Guardando...' : 'Agregar a Mis Rutinas'}
+                        </button>
+                      )}
 
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
                           handleDescargarRutina(rutina);
                         }}
-                        className="w-full py-2 bg-gray-100 hover:bg-blue-50 text-gray-600 hover:text-blue-600 rounded-lg font-bold text-sm transition-colors"
+                        className="w-full py-2 rounded-lg font-bold text-sm transition-colors"
+                        style={{ backgroundColor: '#E3D5CA', color: '#817773' }}
+                        onMouseEnter={(e) => e.target.style.backgroundColor = '#D5BDAF'}
+                        onMouseLeave={(e) => e.target.style.backgroundColor = '#E3D5CA'}
                       >
                         Descargar PDF
                       </button>
                       
-                      <div className="text-center text-pink-500 font-bold text-sm group-hover:underline">
+                      <div className="text-center font-bold text-sm group-hover:underline mt-2" style={{ color: '#AB9A91' }}>
                           Ver detalle completo →
                       </div>
                   </div>

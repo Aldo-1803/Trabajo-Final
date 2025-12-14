@@ -9,9 +9,9 @@ from .models import (
     Servicio,
     ReglaDiagnostico,
     Rutina,
-    PasoRutina,
+    #PasoRutina,
     RutinaCliente,
-    PasoRutinaCliente,
+    #PasoRutinaCliente,
     Notificacion
 )
 
@@ -90,14 +90,17 @@ class ReglaDiagnosticoAdmin(admin.ModelAdmin):
 # ============================================
 # ADMIN PARA RUTINAS Y PASOS
 # ============================================
+"""
 class PasoRutinaInline(admin.TabularInline):
-    """
+    ""
     Permite editar PasoRutina directamente desde el formulario de Rutina.
-    """
+    ""
     model = PasoRutina
     extra = 1  # Muestra 1 fila vacía al final para agregar nuevos pasos
     fields = ('orden', 'descripcion', 'frecuencia')
     ordering = ('orden',)
+
+"""
 
 
 @admin.register(Rutina)
@@ -109,7 +112,6 @@ class RutinaAdmin(admin.ModelAdmin):
     list_filter = ('estado', 'fecha_creacion')
     search_fields = ('nombre', 'objetivo')
     readonly_fields = ('fecha_creacion', 'fecha_obsoleta', 'version')
-    inlines = [PasoRutinaInline]
     filter_horizontal = ('clientes_asignados',)  # Interface visual mejor para M2M
     
     fieldsets = (
@@ -152,11 +154,12 @@ class RutinaAdmin(admin.ModelAdmin):
             obj.save()
 
 
+"""
 @admin.register(PasoRutina)
 class PasoRutinaAdmin(admin.ModelAdmin):
-    """
+    ""
     Admin para gestionar Pasos de Rutina individualmente (si es necesario).
-    """
+    ""
     list_display = ('plantilla', 'orden', 'descripcion', 'frecuencia')
     list_filter = ('plantilla', 'orden')
     search_fields = ('descripcion',)
@@ -167,6 +170,8 @@ class PasoRutinaAdmin(admin.ModelAdmin):
             'fields': ('plantilla', 'orden', 'descripcion', 'frecuencia')
         }),
     )
+
+"""
 
 
 @admin.register(Notificacion)
@@ -192,16 +197,17 @@ class NotificacionAdmin(admin.ModelAdmin):
 # ============================================
 # ADMIN PARA RUTINAS DEL CLIENTE
 # ============================================
+"""
 class PasoRutinaClienteInline(admin.TabularInline):
-    """
+    ""
     Permite visualizar los pasos de la rutina del cliente.
-    """
+    ""
     model = PasoRutinaCliente
     extra = 0  # No permite agregar nuevos pasos (son copias)
     fields = ('orden', 'descripcion', 'frecuencia', 'completado', 'fecha_completado')
     readonly_fields = ('orden', 'descripcion', 'frecuencia', 'completado', 'fecha_completado')
 
-
+"""
 @admin.register(RutinaCliente)
 class RutinaClienteAdmin(admin.ModelAdmin):
     """
@@ -212,7 +218,6 @@ class RutinaClienteAdmin(admin.ModelAdmin):
     search_fields = ('cliente__usuario__email', 'nombre')
     readonly_fields = ('cliente', 'rutina_original', 'nombre', 'objetivo', 'descripcion', 
                        'version_asignada', 'fecha_asignacion', 'fecha_ultima_notificacion')
-    inlines = [PasoRutinaClienteInline]
     
     fieldsets = (
         ("Información del Cliente", {
@@ -246,12 +251,12 @@ class RutinaClienteAdmin(admin.ModelAdmin):
         """No se pueden eliminar directamente las copias de clientes."""
         return False
 
-
+"""
 @admin.register(PasoRutinaCliente)
 class PasoRutinaClienteAdmin(admin.ModelAdmin):
-    """
+    ""
     Admin para visualizar los pasos de las rutinas del cliente.
-    """
+    ""
     list_display = ('rutina_cliente', 'orden', 'frecuencia', 'completado', 'fecha_completado')
     list_filter = ('completado', 'fecha_completado', 'rutina_cliente')
     search_fields = ('descripcion', 'rutina_cliente__cliente__usuario__email')
@@ -267,5 +272,6 @@ class PasoRutinaClienteAdmin(admin.ModelAdmin):
     )
     
     def has_add_permission(self, request):
-        """Los pasos se crean automáticamente con la rutina."""
+        ""Los pasos se crean automáticamente con la rutina.""
         return False
+"""

@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useParams, useNavigate } from 'react-router-dom';
-import jsPDF from 'jspdf';
 
 const DetalleRutina = () => {
     const { id } = useParams();
@@ -26,24 +25,13 @@ const DetalleRutina = () => {
         fetchRutina();
     }, [id]);
 
-    const handleDescargarRutina = (rutina) => {
-        const doc = new jsPDF();
-        doc.setFontSize(16);
-        doc.text(rutina.nombre, 10, 10);
-        doc.setFontSize(12);
-        doc.text(`Objetivo: ${rutina.objetivo}`, 10, 20);
-        doc.text(`Descripción: ${rutina.descripcion}`, 10, 30);
-
-        if (rutina.pasos && rutina.pasos.length > 0) {
-            doc.text('Pasos:', 10, 40);
-            rutina.pasos.forEach((paso, index) => {
-                doc.text(`${index + 1}. ${paso.descripcion}`, 10, 50 + index * 10);
-            });
-        } else {
-            doc.text('Sin pasos definidos.', 10, 40);
+    const handleDescargarRutina = () => {
+        if (!rutina.archivo) {
+            alert('Esta rutina no tiene archivo adjunto');
+            return;
         }
-
-        doc.save(`${rutina.nombre}.pdf`);
+        // Abre el archivo en una nueva pestaña o lo descarga
+        window.open(rutina.archivo, '_blank');
     };
 
     const handleAgregarRutina = async () => {
@@ -92,26 +80,25 @@ const DetalleRutina = () => {
                             {rutina.descripcion}
                         </p>
 
-                        <h3 className="text-xl font-bold text-gray-800 mb-6 border-b pb-2">Pasos de la Rutina</h3>
+                        <h3 className="text-xl font-bold text-gray-800 mb-6 border-b pb-2">📄 Archivo de la Rutina</h3>
                         
-                        <div className="space-y-6">
-                            {rutina.pasos.map((paso, index) => (
-                                <div key={index} className="flex gap-4">
-                                    <div className="flex-shrink-0">
-                                        <div className="w-10 h-10 rounded-full bg-pink-100 text-pink-600 flex items-center justify-center font-bold text-lg">
-                                            {index + 1}
-                                        </div>
-                                    </div>
-                                    <div className="bg-gray-50 p-4 rounded-lg flex-1 border border-gray-100">
-                                        <h4 className="font-bold text-gray-800 text-lg mb-1">{paso.titulo}</h4>
-                                        <p className="text-sm text-pink-500 font-bold uppercase mb-2 text-xs tracking-wider">
-                                            Frecuencia: {paso.frecuencia}
-                                        </p>
-                                        <p className="text-gray-600">{paso.descripcion}</p>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
+                        {rutina.archivo ? (
+                            <div className="bg-blue-50 p-6 rounded-lg border-2 border-blue-200">
+                                <p className="text-gray-700 mb-4">Tu rutina personalizada está en formato PDF o imagen:</p>
+                                <a 
+                                    href={rutina.archivo} 
+                                    target="_blank" 
+                                    rel="noopener noreferrer"
+                                    className="inline-block bg-blue-500 text-white px-6 py-3 rounded-full font-bold hover:bg-blue-600 transition"
+                                >
+                                    👁️ Ver Archivo
+                                </a>
+                            </div>
+                        ) : (
+                            <div className="bg-yellow-50 p-6 rounded-lg border-2 border-yellow-200">
+                                <p className="text-yellow-800">Esta rutina aún no tiene archivo adjunto</p>
+                            </div>
+                        )}
                     </div>
                     
                     <div className="bg-gray-50 p-6 text-center border-t border-gray-100">
@@ -122,10 +109,10 @@ const DetalleRutina = () => {
                             Agregar a Mis Rutinas
                         </button>
                         <button
-                            onClick={() => handleDescargarRutina(rutina)}
+                            onClick={() => handleDescargarRutina()}
                             className="bg-blue-500 text-white px-8 py-3 rounded-full font-bold hover:bg-blue-600 shadow-lg transform hover:-translate-y-1 transition-all"
                         >
-                            Descargar PDF
+                            👁️ Ver Archivo
                         </button>
                     </div>
                 </div>

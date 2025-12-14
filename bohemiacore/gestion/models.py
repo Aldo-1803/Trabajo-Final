@@ -377,137 +377,83 @@ class ListaEspera(models.Model):
 #----------------------------------------------------
 
 class Rutina(models.Model):
-    # Enums para el Estado (Best Practice en Django)
     ESTADO_CHOICES = [
         ('borrador', 'Borrador'),
         ('publicada', 'Publicada'),
         ('obsoleta', 'Obsoleta'),
     ]
 
-    # Atributos del Diagrama
     nombre = models.CharField(max_length=150)
     objetivo = models.CharField(max_length=255, help_text="Ej: Hidratación profunda")
-    descripcion = models.TextField()
+    
+    # --- NUEVO CAMPO PRINCIPAL ---
+    archivo = models.FileField(
+        upload_to='rutinas_pdfs/', 
+        verbose_name="Documento de Rutina (PDF/Img)",
+        help_text="Sube el diseño exportado de Canva o Word."
+    )
+    
+    # Mantenemos descripción como opcional por si quiere dejar notas internas
+    descripcion = models.TextField(blank=True, null=True, verbose_name="Notas internas")
+    
     version = models.PositiveIntegerField(default=1)
     estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='borrador')
     
-    # Relación con Usuario (creada_por)
     creada_por = models.ForeignKey(
         settings.AUTH_USER_MODEL, 
-        on_delete=models.PROTECT,  # Evita eliminar usuarios con rutinas
+        on_delete=models.PROTECT,
         related_name='rutinas_creadas'
     )
 
-    # Clientes asignados a esta rutina
     clientes_asignados = models.ManyToManyField(
         'usuarios.Cliente',
         related_name='rutinas_asignadas',
-        blank=True,
-        help_text="Clientes que tienen esta rutina asignada"
+        blank=True
     )
 
-    # Campos de auditoría y control
     fecha_creacion = models.DateTimeField(auto_now_add=True)
-    fecha_obsoleta = models.DateTimeField(
-        null=True, 
-        blank=True,
-        help_text="Fecha en que la rutina fue marcada como obsoleta"
-    )
+    fecha_obsoleta = models.DateTimeField(null=True, blank=True)
 
-    # Métodos del Diagrama
     def actualizar_version(self):
-        """Incrementa la versión de la rutina."""
         self.version += 1
         self.save()
 
     def publicar(self):
-        """Cambia el estado a publicada."""
         self.estado = 'publicada'
         self.save()
 
     def obsoletar(self):
-        """
-        Marca la rutina como obsoleta y notifica a todos los clientes asignados.
-        No se puede asignar a nuevos clientes.
-        """
         from django.utils import timezone
-        
         self.estado = 'obsoleta'
         self.fecha_obsoleta = timezone.now()
         self.save()
-        
-        # Notificar a todos los clientes asignados
-        self._notificar_clientes_obsoleta()
-
-    def _notificar_clientes_obsoleta(self):
-        """
-        Crea notificaciones para todos los clientes que tienen esta rutina asignada.
-        """
-        clientes = self.clientes_asignados.all()
-        
-        for cliente in clientes:
-            # Crear notificación para cada cliente
-            Notificacion.objects.create(
-                usuario=cliente.usuario,
-                tipo='alerta',
-                canal='app',
-                titulo=f'Rutina "{self.nombre}" Obsoleta',
-                mensaje=f'La rutina "{self.nombre}" ha sido marcada como obsoleta y ya no está disponible. '
-                        f'Contacta con Bohemia Hair para una nueva rutina de cuidado.',
-                estado='pendiente',
-                origen_entidad='Rutina',
-                origen_id=self.id
-            )
-
-    def puede_asignarse(self):
-        """Retorna True si la rutina puede asignarse a nuevos clientes."""
-        return self.estado == 'publicada'
+        # Aquí podrías notificar a clientes (lógica de notificación)
 
     def asignar_a_cliente(self, cliente):
         """
-        Crea una copia de esta rutina para el cliente especificado.
-        Retorna la RutinaCliente creada o existente.
+        Crea una copia de esta rutina para el cliente.
+        Ahora copia el archivo físico para mantener el histórico.
         """
-        if not self.puede_asignarse():
-            raise ValueError(f"La rutina '{self.nombre}' no puede asignarse en estado '{self.estado}'")
+        if self.estado != 'publicada':
+            raise ValueError(f"La rutina no está publicada.")
 
-        # Obtener o crear la copia para este cliente
-        rutina_cliente, creada = RutinaCliente.objects.get_or_create(
+        # Creamos la copia
+        rutina_cliente = RutinaCliente.objects.create(
             cliente=cliente,
             rutina_original=self,
-            defaults={
-                'nombre': self.nombre,
-                'objetivo': self.objetivo,
-                'descripcion': self.descripcion,
-                'version_asignada': self.version,
-                'estado': 'activa'
-            }
+            nombre=self.nombre,
+            objetivo=self.objetivo,
+            archivo=self.archivo, # <--- Copiamos la referencia al archivo
+            version_asignada=self.version,
+            estado='activa'
         )
-
-        # Si fue creada, copiar los pasos
-        if creada:
-            for paso_original in self.pasos.all():
-                PasoRutinaCliente.objects.create(
-                    rutina_cliente=rutina_cliente,
-                    orden=paso_original.orden,
-                    descripcion=paso_original.descripcion,
-                    frecuencia=paso_original.frecuencia
-                )
-
         return rutina_cliente
 
-    def notificar_actualizacion_a_copias(self):
-        """
-        Notifica a todos los clientes que tienen una copia de esta rutina
-        que hay una nueva versión disponible.
-        """
-        copias = self.copias_cliente.filter(estado='activa')
-        for copia in copias:
-            copia.marcar_desactualizada()
-
     def __str__(self):
-        return f"{self.nombre} (v{self.version}) [{self.get_estado_display()}]"
+        return f"{self.nombre} (v{self.version})"
 
+
+"""
 class PasoRutina(models.Model):
     # Nota: En tu diagrama se llama 'PasoPlantilla', aquí usamos PasoRutina para mantener coherencia con tu código anterior.
     # Si prefieres cambiar el nombre de la tabla, avísame.
@@ -529,7 +475,7 @@ class PasoRutina(models.Model):
 
     # Métodos del Diagrama
     def reordenar(self, nuevo_orden):
-        """Cambia el orden del paso."""
+        ""Cambia el orden del paso.""
         # Nota: Aquí iría lógica compleja para mover los otros pasos, 
         # pero para la tesis basta con actualizar este valor.
         self.orden = nuevo_orden
@@ -537,6 +483,10 @@ class PasoRutina(models.Model):
 
     def __str__(self):
         return f"{self.orden}. {self.descripcion[:30]}..."
+
+"""
+
+
 
 #----------------------------------------------------
 # 8. MODELOS DE REGLAS DE CUIDADO POST-SERVICIO
@@ -583,19 +533,13 @@ class AgendaCuidados(models.Model):
 # MODELOS DE RUTINA CLIENTE (COPIA PERSONALIZADA)
 # ============================================
 class RutinaCliente(models.Model):
-    """
-    Representa una COPIA de la rutina asignada al cliente.
-    Cuando se asigna una rutina, se crea una copia aquí.
-    Si la rutina original se modifica o se elimina, el cliente mantiene su versión.
-    """
     ESTADO_CHOICES = [
         ('activa', 'Activa'),
-        ('desactualizada', 'Desactualizada'),  # La original fue modificada
-        ('obsoleta_original', 'Original Obsoleta'),  # La original fue marcada como obsoleta
-        ('completada', 'Completada'),
+        ('desactualizada', 'Desactualizada'),
+        ('obsoleta_original', 'Original Obsoleta'),
+        ('archivada', 'Archivada'), # En vez de "completada"
     ]
 
-    # Relaciones
     cliente = models.ForeignKey(
         'usuarios.Cliente',
         on_delete=models.CASCADE,
@@ -604,136 +548,55 @@ class RutinaCliente(models.Model):
     rutina_original = models.ForeignKey(
         Rutina,
         on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='copias_cliente',
-        help_text="Referencia a la rutina original (puede ser NULL si fue eliminada)"
+        null=True, blank=True,
+        related_name='copias_cliente'
     )
 
-    # Datos copiados de la rutina original (snapshot)
     nombre = models.CharField(max_length=150)
     objetivo = models.CharField(max_length=255)
-    descripcion = models.TextField()
-    version_asignada = models.PositiveIntegerField(
-        help_text="La versión de la rutina original cuando se copió"
+    descripcion = models.TextField(blank=True, null=True, verbose_name="Notas")
+    
+    # --- LA COPIA DEL ARCHIVO ---
+    archivo = models.FileField(
+        upload_to='rutinas_clientes/', 
+        verbose_name="Archivo Asignado"
     )
 
-    # Estado y control
-    estado = models.CharField(
-        max_length=20,
-        choices=ESTADO_CHOICES,
-        default='activa'
-    )
+    version_asignada = models.PositiveIntegerField()
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='activa')
     fecha_asignacion = models.DateTimeField(auto_now_add=True)
-    descargar_notificacion = models.BooleanField(
-        default=False,
-        help_text="¿Se le notificó al cliente sobre descarga/actualización?"
-    )
-    fecha_ultima_notificacion = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text="Cuándo se le notificó de una actualización disponible"
-    )
+    
+    # Campos de notificación
+    descargar_notificacion = models.BooleanField(default=False)
+    fecha_ultima_notificacion = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ['-fecha_asignacion']
-        unique_together = ['cliente', 'rutina_original']  # Un cliente no puede tener 2 copias de la misma rutina
         verbose_name = "Rutina del Cliente"
         verbose_name_plural = "Rutinas del Cliente"
 
-    def activar(self):
-        """Marca la copia como activa."""
-        self.estado = 'activa'
-        self.descargar_notificacion = False
-        self.save()
-
-    def marcar_desactualizada(self):
-        """
-        Marca la copia como desactualizada cuando la original cambia.
-        Notifica al cliente de que hay una nueva versión disponible.
-        """
-        from django.utils import timezone
-        
-        self.estado = 'desactualizada'
-        self.descargar_notificacion = True
-        self.fecha_ultima_notificacion = timezone.now()
-        self.save()
-
-        # Notificar al cliente
-        Notificacion.objects.create(
-            usuario=self.cliente.usuario,
-            tipo='recordatorio',
-            canal='app',
-            titulo=f'Rutina "{self.nombre}" Actualizada',
-            mensaje=f'La rutina "{self.nombre}" tiene una nueva versión disponible. '
-                    f'¿Deseas actualizar a la versión {self.rutina_original.version}?',
-            estado='pendiente',
-            origen_entidad='RutinaCliente',
-            origen_id=self.id
-        )
-
-    def marcar_original_obsoleta(self):
-        """
-        Marca la copia como obsoleta cuando la original es marcada como obsoleta.
-        """
-        from django.utils import timezone
-        
-        self.estado = 'obsoleta_original'
-        self.fecha_ultima_notificacion = timezone.now()
-        self.save()
-
-        # Notificar al cliente
-        Notificacion.objects.create(
-            usuario=self.cliente.usuario,
-            tipo='alerta',
-            canal='app',
-            titulo=f'Rutina "{self.nombre}" Ya No Está Disponible',
-            mensaje=f'La rutina "{self.nombre}" ha sido descontinuada por Bohemia Hair. '
-                    f'Puedes seguir usándola, pero te recomendamos que solicites una nueva. '
-                    f'Contacta con nosotros.',
-            estado='pendiente',
-            origen_entidad='RutinaCliente',
-            origen_id=self.id
-        )
-
     def actualizar_desde_original(self):
-        """
-        Actualiza esta copia con los datos de la rutina original.
-        Elimina los pasos antiguos y copia los nuevos.
-        """
-        if not self.rutina_original:
-            return False
-
-        # Actualizar datos
-        self.nombre = self.rutina_original.nombre
-        self.objetivo = self.rutina_original.objetivo
-        self.descripcion = self.rutina_original.descripcion
-        self.version_asignada = self.rutina_original.version
-        self.activar()
-
-        # Eliminar pasos antiguos
-        self.pasos.all().delete()
-
-        # Copiar pasos nuevos
-        for paso_original in self.rutina_original.pasos.all():
-            PasoRutinaCliente.objects.create(
-                rutina_cliente=self,
-                orden=paso_original.orden,
-                descripcion=paso_original.descripcion,
-                frecuencia=paso_original.frecuencia
-            )
-
-        return True
+        """Actualiza la copia con el nuevo archivo de la original."""
+        if self.rutina_original:
+            self.nombre = self.rutina_original.nombre
+            self.objetivo = self.rutina_original.objetivo
+            self.archivo = self.rutina_original.archivo # Actualizamos archivo
+            self.version_asignada = self.rutina_original.version
+            self.estado = 'activa'
+            self.save()
+            return True
+        return False
 
     def __str__(self):
-        return f"{self.cliente.usuario.email} - {self.nombre} (v{self.version_asignada})"
+        return f"{self.cliente} - {self.nombre}"
 
 
+"""
 class PasoRutinaCliente(models.Model):
-    """
+    ""
     Representa un PASO de la copia de rutina del cliente.
     Es una copia del PasoRutina original.
-    """
+    ""
     rutina_cliente = models.ForeignKey(
         RutinaCliente,
         on_delete=models.CASCADE,
@@ -751,7 +614,7 @@ class PasoRutinaCliente(models.Model):
         verbose_name_plural = "Pasos de Rutina del Cliente"
 
     def marcar_completado(self):
-        """Marca el paso como completado."""
+        ""Marca el paso como completado.""
         from django.utils import timezone
         
         self.completado = True
@@ -760,6 +623,7 @@ class PasoRutinaCliente(models.Model):
 
     def __str__(self):
         return f"{self.orden}. {self.descripcion[:40]}... ({self.rutina_cliente.cliente.usuario.email})"
+"""
 
 # ----------------------------------------------------
 # 9. MODELO DE NOTIFICACIONES

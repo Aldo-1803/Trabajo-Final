@@ -85,9 +85,6 @@ const Perfil = () => {
     // ========================================================================
     return (
         <div style={{ backgroundColor: '#F5EBE0' }} className="min-h-screen">
-            {/* HEADER UNIFICADO */}
-            <HeaderUnificado usuario={usuario} navigate={navigate} logout={logout} />
-
             {/* CONTENIDO PRINCIPAL */}
             <div className="max-w-5xl mx-auto px-4 py-12">
                 {/* ALERTA DE ERROR */}
@@ -109,53 +106,6 @@ const Perfil = () => {
 // ============================================================================
 // COMPONENTES SECUNDARIOS
 // ============================================================================
-
-const HeaderUnificado = ({ usuario, navigate, logout }) => (
-    <div style={{ background: 'linear-gradient(135deg, #817773 0%, #AB9A91 100%)' }} className="text-white py-8 px-4">
-        <div className="max-w-5xl mx-auto">
-            {/* FILA SUPERIOR: Avatar + Info + Campana */}
-            <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-6 gap-6">
-                {/* AVATAR Y DATOS */}
-                <div className="flex items-center gap-4">
-                    <div className="w-16 h-16 rounded-full flex items-center justify-center text-3xl font-bold" style={{ backgroundColor: '#E3D5CA' }}>
-                        👤
-                    </div>
-                    <div>
-                        <h1 className="text-3xl font-bold">{usuario?.first_name || 'Usuario'}</h1>
-                        <p className="text-amber-50 text-sm">{usuario?.email}</p>
-                    </div>
-                </div>
-                
-                {/* CAMPANA - A LA DERECHA */}
-                <div className="bg-white text-gray-800 rounded-full p-2 shadow-lg transform hover:scale-110 transition-transform">
-                    <CampanaNotificaciones />
-                </div>
-            </div>
-
-            {/* FILA INFERIOR: Botones de navegación */}
-            <div className="flex flex-wrap gap-2">
-                <NavButton label="Editar" onClick={() => navigate('/editar-perfil')} />
-                <NavButton label="Reservar" onClick={() => navigate('/reservar')} />
-                <NavButton label="Turnos" onClick={() => navigate('/mis-turnos')} />
-                <NavButton label="Agenda" onClick={() => navigate('/mi-agenda')} />
-                <NavButton label="Mis Rutinas" onClick={() => navigate('/mis-rutinas')} />
-                <NavButton label="Catálogo de Rutinas" onClick={() => navigate('/catalogo-rutinas')} />
-                <NavButton label="Salir" onClick={logout} />
-            </div>
-        </div>
-    </div>
-);
-
-// Componentes no utilizados removidos para evitar errores de sintaxis
-
-const NavButton = ({ label, onClick }) => (
-    <button
-        onClick={onClick}
-        className="flex-1 md:flex-none text-sm font-bold py-2 px-3 rounded-lg bg-white bg-opacity-20 hover:bg-opacity-30 transition duration-300"
-    >
-        {label}
-    </button>
-);
 
 const ErrorAlert = ({ error }) => (
     <div className="mb-8 p-4 rounded-lg border-l-4" style={{ backgroundColor: '#FFE8E8', borderColor: '#C73E3E' }}>
@@ -245,6 +195,31 @@ const DiagnosticoCard = ({ diagnostico, navigate }) => (
                 </div>
             </div>
         )}
+
+        {/* --- BLOQUE DE SERVICIOS DISPONIBLES --- */}
+        <div className="mt-6 p-6 rounded-xl border-2" style={{ borderColor: '#E3D5CA', backgroundColor: '#FAF7F5' }}>
+            <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+                <div>
+                    <p className="text-sm font-bold uppercase tracking-wider" style={{ color: '#E3D5CA' }}>
+                        ✨ Servicios Disponibles
+                    </p>
+                    <h3 className="text-xl font-bold" style={{ color: '#817773' }}>
+                        Explora nuestros tratamientos
+                    </h3>
+                    <p className="text-sm text-gray-500 mt-1">
+                        Descubre todos los servicios que ofrece nuestro salón.
+                    </p>
+                </div>
+                
+                <button
+                    onClick={() => navigate('/catalogo-servicios')}
+                    className="px-6 py-3 rounded-lg text-white font-bold shadow-md transform hover:scale-105 transition-all flex items-center gap-2"
+                    style={{ background: 'linear-gradient(135deg, #D5BDAF 0%, #AB9A91 100%)' }}
+                >
+                    <span></span> Ver catálogo
+                </button>
+            </div>
+        </div>
     </div>
 );
 
