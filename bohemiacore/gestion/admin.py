@@ -1,18 +1,9 @@
 from django.contrib import admin
 from .models import (
-    TipoCabello, 
-    GrosorCabello, 
-    PorosidadCabello, 
-    CueroCabelludo, 
-    EstadoGeneral,
-    CategoriaServicio,
-    Servicio,
-    ReglaDiagnostico,
-    Rutina,
-    #PasoRutina,
-    RutinaCliente,
-    #PasoRutinaCliente,
-    Notificacion
+    TipoCabello, GrosorCabello, PorosidadCabello, CueroCabelludo, EstadoGeneral,
+    CategoriaServicio, Servicio, ReglaDiagnostico, Rutina, RutinaCliente,
+    Notificacion, Configuracion, Personal, HorarioLaboral, BloqueoAgenda, DiasSemana,
+    #PasoRutinaCliente, #PasoRutina,
 )
 
 # ----------------------------------------------------
@@ -275,3 +266,99 @@ class PasoRutinaClienteAdmin(admin.ModelAdmin):
         ""Los pasos se crean automáticamente con la rutina.""
         return False
 """
+
+@admin.register(Configuracion)
+class ConfiguracionAdmin(admin.ModelAdmin):
+    """
+    Controla que solo exista una configuración en el sistema.
+    """
+    list_display = ('__str__', 'monto_sena', 'max_dias_anticipacion')
+    fieldsets = (
+        ('Reglas Generales', {
+            'fields': ('intervalo_turnos', 'max_dias_anticipacion')
+        }),
+        ('Política de Señas y Pagos', {
+            'fields': ('monto_sena', 'tiempo_limite_pago_sena'),
+            'description': 'Define cuánto deben pagar y cuánto tiempo tienen.'
+        }),
+        ('Cancelaciones y Reprogramaciones', {
+            'fields': ('max_reprogramaciones', 'horas_limite_cancelacion'),
+            'description': 'Reglas para evitar huecos en la agenda a último momento.'
+        }),
+    )
+
+    def has_add_permission(self, request):
+        # Si ya existe 1 configuración, no deja crear otra.
+        if Configuracion.objects.exists():
+            return False
+        return True
+
+    def has_delete_permission(self, request, obj=None):
+        # No permitir borrar la configuración base
+        return False
+    
+class HorarioLaboralInline(admin.TabularInline):
+    """
+    Permite editar los horarios DENTRO de la ficha del personal.
+    Se ve como una planilla Excel.
+    """
+    model = HorarioLaboral
+    extra = 0  # No muestra filas vacías extra innecesarias
+    ordering = ['dia_semana', 'hora_inicio']
+    fields = ['dia_semana', 'hora_inicio', 'hora_fin']
+    # Tip visual: Mostrar el nombre del día claramente
+
+@admin.register(Personal)
+class PersonalAdmin(admin.ModelAdmin):
+    list_display = ('nombre', 'apellido', 'rol', 'activo', 'skills_resumen')
+    list_filter = ('rol', 'activo')
+    search_fields = ('nombre', 'apellido', 'email')
+    
+    # Aquí incrustamos los horarios dentro del personal
+    inlines = [HorarioLaboralInline]
+
+    fieldsets = (
+        ('Datos Personales', {
+            'fields': ('usuario', 'nombre', 'apellido', 'email', 'telefono', 'color_calendario')
+        }),
+        ('Rol y Estado', {
+            'fields': ('rol', 'activo')
+        }),
+        ('Habilidades Técnicas', {
+            'fields': ('realiza_diagnostico', 'realiza_color', 'realiza_lavado'),
+            'description': 'Define qué tipos de turno puede atender esta persona.'
+        }),
+    )
+
+    def skills_resumen(self, obj):
+        skills = []
+        if obj.realiza_diagnostico: skills.append("Diagnóstico")
+        if obj.realiza_color: skills.append("Color")
+        if obj.realiza_lavado: skills.append("Lavado")
+        return ", ".join(skills)
+    skills_resumen.short_description = "Habilidades"
+
+@admin.register(HorarioLaboral)
+class HorarioLaboralAdmin(admin.ModelAdmin):
+    """
+    Por si se necesita ver todos los horarios juntos.
+    """
+    list_display = ('personal', 'get_dia', 'hora_inicio', 'hora_fin')
+    list_filter = ('personal', 'dia_semana')
+    ordering = ('personal', 'dia_semana', 'hora_inicio')
+
+    def get_dia(self, obj):
+        return obj.get_dia_semana_display()
+    get_dia.short_description = "Día"
+
+
+@admin.register(BloqueoAgenda)
+class BloqueoAgendaAdmin(admin.ModelAdmin):
+    list_display = ('get_afectado', 'motivo', 'fecha_inicio', 'fecha_fin', 'bloquea_todo_el_dia')
+    list_filter = ('bloquea_todo_el_dia', 'personal', 'fecha_inicio')
+    search_fields = ('motivo',)
+    date_hierarchy = 'fecha_inicio'
+
+    def get_afectado(self, obj):
+        return obj.personal if obj.personal else "⛔ TODO EL SALÓN"
+    get_afectado.short_description = "Afectado"

@@ -22,49 +22,20 @@ import datetime as datetime_module
 
 
 from .models import (
-    TipoCabello,
-    GrosorCabello,
-    PorosidadCabello,    
-    CueroCabelludo,
-    EstadoGeneral,
-    CategoriaServicio,
-    Servicio,
-    Turno,
-    Configuracion,
-    ListaEspera,
-    Producto,
-    Equipamiento,
-    Rutina,
-    Notificacion,
-    AgendaCuidados,
-    Producto,
-    ReglaDiagnostico,
-    RutinaCliente,
+    TipoCabello, GrosorCabello, PorosidadCabello, CueroCabelludo, EstadoGeneral, CategoriaServicio, Servicio, Turno,
+    Configuracion, ListaEspera, Producto, Equipamiento, Rutina, Notificacion, AgendaCuidados, Producto, ReglaDiagnostico,
+    RutinaCliente, HorarioLaboral, BloqueoAgenda, Personal,
     #PasoRutinaCliente
     #PasoRutina
 )
 from usuarios.models import Usuario
 
 from .serializers import (
-    TipoCabelloSerializer,
-    GrosorCabelloSerializer,
-    PorosidadCabelloSerializer,
-    CueroCabelludoSerializer,
-    EstadoGeneralSerializer,
-    CategoriaServicioSerializer,
-    ServicioSerializer,
-    TurnoCreateSerializer,
-    TurnoSerializer,
-    RutinaSerializer,
-    RutinaClienteSerializer,
-    RutinaClienteCreateSerializer,
-    #PasoRutinaSerializer,
-    ReglaDiagnosticoSerializer,
-    NotificacionSerializer,
-    ProductoSerializer,
-    EquipamientoSerializer,
-    UsuarioAdminSerializer,
-    AgendaCuidadosSerializer,
+    TipoCabelloSerializer, GrosorCabelloSerializer, PorosidadCabelloSerializer, CueroCabelludoSerializer, EstadoGeneralSerializer,
+    CategoriaServicioSerializer, ServicioSerializer, TurnoCreateSerializer, TurnoSerializer, RutinaSerializer, RutinaClienteSerializer,
+    RutinaClienteCreateSerializer, ReglaDiagnosticoSerializer, NotificacionSerializer, ProductoSerializer, EquipamientoSerializer,
+    UsuarioAdminSerializer, AgendaCuidadosSerializer, HorarioLaboralSerializer, BloqueoAgendaSerializer
+      #PasoRutinaSerializer,
 )
 
 class CatalogoBaseListView(generics.ListAPIView):
@@ -1235,3 +1206,103 @@ class EquipamientoViewSet(viewsets.ModelViewSet):
         
         equipo.delete() # Aquí sí es baja física según el requisito D
         return Response(status=status.HTTP_204_NO_CONTENT)
+    
+
+    
+@api_view(['GET'])
+@permission_classes([IsAuthenticated]) # Idealmente IsAdminUser si es solo para Yanina
+def obtener_agenda_general(request):
+    """
+    Devuelve la configuración base y los bloqueos futuros.
+    """
+    # 1. Obtenemos los horarios base (La Regla)
+    # Filtramos por Yanina (colorista) que es la dueña de la agenda principal
+    horarios = HorarioLaboral.objects.filter(personal__rol='colorista')
+    
+    # 2. Obtenemos bloqueos desde hoy en adelante (La Excepción)
+    hoy = timezone.now()
+    bloqueos = BloqueoAgenda.objects.filter(fecha_fin__gte=hoy)
+
+    return Response({
+        'horarios_base': HorarioLaboralSerializer(horarios, many=True).data,
+        'bloqueos': BloqueoAgendaSerializer(bloqueos, many=True).data
+    })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def crear_bloqueo(request):
+    try:
+        # 1. Identificamos a Yanina (Colorista)
+        personal = Personal.objects.filter(rol='colorista', activo=True).first()
+        if not personal:
+            return Response({"error": "No existe personal colorista activo"}, status=400)
+
+        data = request.data
+        
+        # Convertimos los strings ISO que vienen del React a objetos Datetime
+        # Formato esperado: "2025-12-07T09:00:00"
+        bloqueo_inicio = parse_datetime(data.get('fecha_inicio'))
+        bloqueo_fin = parse_datetime(data.get('fecha_fin'))
+
+        if not bloqueo_inicio or not bloqueo_fin:
+            return Response({"error": "Fechas inválidas"}, status=400)
+
+        # ------------------------------------------------------------------
+        # VALIDACIÓN DE CONFLICTOS (Excepción C.U. Paso 5)
+        # ------------------------------------------------------------------
+        
+        # A. Filtramos primero por FECHA para no traer toda la base de datos
+        # Traemos turnos que ocurran en los días involucrados en el bloqueo
+        turnos_candidatos = Turno.objects.filter(
+            fecha__range=[bloqueo_inicio.date(), bloqueo_fin.date()],
+            estado__in=[Turno.Estado.SOLICITADO, Turno.Estado.ESPERANDO_SENA, Turno.Estado.CONFIRMADO],
+            personal=personal # Opcional: si el bloqueo es personal
+        )
+
+        conflictos = []
+
+        # B. Validación fina de HORARIOS (Memoria)
+        # Como Turno tiene fecha y hora separadas, las combinamos para comparar
+        for turno in turnos_candidatos:
+            # Crear datetime del inicio del turno
+            turno_inicio_dt = datetime.combine(turno.fecha, turno.hora_inicio)
+            # Crear datetime del fin del turno
+            turno_fin_dt = datetime.combine(turno.fecha, turno.hora_fin_calculada)
+            
+            # Hacemos los datetimes "aware" (con zona horaria) si Django lo usa
+            if timezone.is_aware(bloqueo_inicio):
+                turno_inicio_dt = timezone.make_aware(turno_inicio_dt)
+                turno_fin_dt = timezone.make_aware(turno_fin_dt)
+
+            # C. Fórmula de Solapamiento de Rangos:
+            # (StartA < EndB) and (EndA > StartB)
+            if (turno_inicio_dt < bloqueo_fin) and (turno_fin_dt > bloqueo_inicio):
+                conflictos.append({
+                    "cliente": f"{turno.cliente.nombre} {turno.cliente.apellido}",
+                    "fecha": turno.fecha.strftime('%d/%m'),
+                    "hora": f"{turno.hora_inicio.strftime('%H:%M')} - {turno.hora_fin_calculada.strftime('%H:%M')}",
+                    "servicio": turno.servicio.nombre
+                })
+
+        # D. Si encontramos conflictos, BLOQUEAMOS el guardado
+        if conflictos:
+            return Response({
+                "error": "CONFLICTO_AGENDA",
+                "mensaje": "No se puede bloquear porque existen turnos activos en ese horario.",
+                "instruccion": "Debes reprogramar o cancelar los siguientes turnos manualmente:",
+                "turnos_afectados": conflictos
+            }, status=409) # 409 Conflict
+
+        # ------------------------------------------------------------------
+        # Si pasa la validación, GUARDAMOS
+        # ------------------------------------------------------------------
+        serializer = BloqueoAgendaSerializer(data=data)
+        if serializer.is_valid():
+            serializer.save(personal=personal)
+            return Response(serializer.data, status=201)
+        
+        return Response(serializer.errors, status=400)
+
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)

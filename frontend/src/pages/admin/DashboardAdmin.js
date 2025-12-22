@@ -187,6 +187,20 @@ const DashboardAdmin = () => {
                                 <p className="text-xs" style={{ color: '#8B8682' }}>Reglas para asignar rutinas</p>
                             </div>
                         </button>
+
+                        <button 
+                            onClick={() => navigate('/admin/agenda')}
+                            className="w-full p-4 rounded-lg shadow hover:shadow-md flex items-center gap-4 transition-all"
+                            style={{ backgroundColor: 'white' }}
+                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F5EBE0'}
+                            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'white'}
+                        >
+                            <span className="p-2 rounded-lg" style={{ backgroundColor: '#E3D5CA', color: '#817773' }}>📅</span>
+                            <div className="text-left">
+                                <h4 className="font-bold" style={{ color: '#817773' }}>Gestión de Agenda</h4>
+                                <p className="text-xs" style={{ color: '#8B8682' }}>Horarios y disponibilidad</p>
+                            </div>
+                        </button>
                     </div>
 
                     {/* COLUMNA DERECHA: PRÓXIMOS TURNOS CON CALENDARIO */}

@@ -1,27 +1,14 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
-    DisponibilidadTurnosView, 
-    MiAgendaCuidadosView, 
-    AdminDashboardStatsView,
+    DisponibilidadTurnosView, MiAgendaCuidadosView, AdminDashboardStatsView, TipoCabelloViewSet, GrosorCabelloViewSet,
+    PorosidadCabelloViewSet, CueroCabelludoViewSet, EstadoGeneralViewSet, CategoriaServicioViewSet, ServicioViewSet,
+    ServiciosQuimicosViewSet, TurnoViewSet, RutinaViewSet, ReglaDiagnosticoViewSet, NotificacionViewSet, SeleccionarRutinaView,
+    RutinaClienteViewSet,
     #ListaEsperaCreateView,
     # ViewSets
-    TipoCabelloViewSet,
-    GrosorCabelloViewSet,
-    PorosidadCabelloViewSet,
-    CueroCabelludoViewSet,
-    EstadoGeneralViewSet,
-    CategoriaServicioViewSet,
-    ServicioViewSet,
-    ServiciosQuimicosViewSet,
-    TurnoViewSet,
-    RutinaViewSet,
     #PasoRutinaViewSet,
-    ReglaDiagnosticoViewSet,
-    NotificacionViewSet,
-    SeleccionarRutinaView,
-    RutinaClienteViewSet,
-    
+
 )
 
 from . import views
@@ -60,4 +47,6 @@ urlpatterns = [
     path('admin-dashboard/stats/', AdminDashboardStatsView.as_view(), name='admin-stats'),
     path('prueba-rutina/', views.SeleccionarRutinaView.as_view(), name='prueba-rutina'),
     #path('lista-espera/', ListaEsperaCreateView.as_view(), name='unirse-lista-espera'),
+    path('agenda/general/', views.obtener_agenda_general, name='agenda-general'),
+    path('agenda/bloquear/', views.crear_bloqueo, name='agenda-bloquear'),
 ]

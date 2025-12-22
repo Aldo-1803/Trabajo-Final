@@ -209,18 +209,21 @@ class Servicio(CatalogoBase):
 class Configuracion(models.Model):
     """
     PATRÓN SINGLETON: Guarda las reglas globales del negocio.
+    Cumple con OBJ-10, IRQ-15 (Políticas de Seña) y RF-05.
     """
-    intervalo_turnos = models.IntegerField(default=30, help_text="Minutos de cada bloque en la grilla visual")
+    # Grid y Tiempo
+    intervalo_turnos = models.IntegerField(default=30, help_text="Minutos de cada bloque visual en la agenda")
     max_dias_anticipacion = models.IntegerField(default=60, help_text="Cuanto tiempo antes se puede reservar")
     
-    # Política de Señas
-    monto_sena = models.DecimalField(max_digits=10, decimal_places=2, default=5000.00)
-    tiempo_limite_pago_sena = models.IntegerField(default=24, help_text="Horas para pagar antes de cancelar")
-    #Límite de reprogramaciones
-    max_reprogramaciones = models.IntegerField(default=2, help_text="Cuántas veces se puede cambiar el turno sin perder la seña")
+    # Política de Señas (IRQ-15)
+    monto_sena = models.DecimalField(max_digits=10, decimal_places=2, default=5000.00, verbose_name="Monto de Seña")
+    tiempo_limite_pago_sena = models.IntegerField(default=24, help_text="Horas para pagar la seña antes de cancelar automático")
+    
+    # Reglas de Cancelación y Reprogramación (RF-05)
+    max_reprogramaciones = models.IntegerField(default=2, help_text="Máximo de cambios permitidos por cliente")
     horas_limite_cancelacion = models.IntegerField(
         default=48, 
-        help_text="Horas antes del turno en las que se bloquea la cancelación automática por parte del cliente."
+        help_text="Horas antes del turno donde YA NO se puede cancelar y recuperar la seña."
     )
 
     class Meta:
@@ -228,21 +231,19 @@ class Configuracion(models.Model):
         verbose_name_plural = "Configuración"
 
     def save(self, *args, **kwargs):
-        # Esto fuerza a que siempre sea el ID=1. Si intentas crear otro, sobrescribe el existente.
+        # Fuerza ID=1 siempre
         self.pk = 1
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return "Configuración General (No borrar)"
-
+        return "Configuración General de Bohemia Hair"
 
 #----------------------------------------------------
 # 5. MODELOS DE AGENDA
 #----------------------------------------------------
 class DiasSemana(models.IntegerChoices):
     """
-    ENUM para evitar una tabla extra en la BD.
-    Es más rápido y fácil de usar en el código.
+    ENUM para días. Más eficiente y seguro.
     """
     LUNES = 0, 'Lunes'
     MARTES = 1, 'Martes'
@@ -253,28 +254,104 @@ class DiasSemana(models.IntegerChoices):
     DOMINGO = 6, 'Domingo'
 
 #----------------------------------------------------
+# 5. MODELO DE PERSONAL
+#----------------------------------------------------
+class Personal(models.Model):
+    ROL_CHOICES = [
+        ('colorista', 'Colorista / Principal'), # Yanina
+        ('asistente', 'Asistente / Lavado'),    # Empleadas
+        ('administrador', 'Administrador'),
+    ]
+
+    usuario = models.OneToOneField(
+        settings.AUTH_USER_MODEL, 
+        on_delete=models.SET_NULL, 
+        null=True, blank=True,
+        related_name='perfil_profesional',
+        help_text="Vincular solo si esta persona necesita loguearse al sistema"
+    )
+    
+    nombre = models.CharField(max_length=100)
+    apellido = models.CharField(max_length=100)
+    rol = models.CharField(max_length=20, choices=ROL_CHOICES)
+    telefono = models.CharField(max_length=20, blank=True, null=True)
+    email = models.EmailField(blank=True, null=True)
+    
+    # Skills (Para saber a quién asignar tareas automáticas)
+    realiza_diagnostico = models.BooleanField(default=False)
+    realiza_lavado = models.BooleanField(default=True)
+    realiza_color = models.BooleanField(default=False)
+    
+    activo = models.BooleanField(default=True)
+    color_calendario = models.CharField(max_length=7, default="#E11D48", help_text="Color Hex para identificarlo en la agenda")
+
+    class Meta:
+        verbose_name = "Personal / Staff"
+        verbose_name_plural = "Personal"
+
+    def __str__(self):
+        return f"{self.nombre} ({self.get_rol_display()})"
+
+
+#----------------------------------------------------
 # 6. MODELOS DE TURNOS Y RUTINAS   
 #----------------------------------------------------
 class HorarioLaboral(models.Model):
     """
-    Define la 'plantilla' de disponibilidad de Yani.
-    Ej: Lunes de 10:00 a 16:00.
+    Define la disponibilidad recurrente semanal POR EMPLEADO.
+    Usamos tu enum DiasSemana.
     """
-    dia = models.IntegerField(choices=DiasSemana.choices, unique=True)
+    personal = models.ForeignKey(Personal, on_delete=models.CASCADE, related_name='horarios', null=True, blank=True)
+    
+    # Aquí usamos tu clase DiasSemana
+    dia_semana = models.IntegerField(choices=DiasSemana.choices, default=0)  
+    
     hora_inicio = models.TimeField()
     hora_fin = models.TimeField()
-    activo = models.BooleanField(default=True)
-    cambios_realizados = models.PositiveIntegerField(default=0, help_text="Contador de reprogramaciones hechas por el cliente")
 
     class Meta:
-        ordering = ['dia']
+        ordering = ['dia_semana', 'hora_inicio']
         verbose_name = "Horario Laboral"
         verbose_name_plural = "Horarios Laborales"
+        # Constraint opcional: Evitar duplicados exactos, pero permitir turnos cortados (mañana/tarde)
+        # unique_together = ['personal', 'dia_semana', 'hora_inicio'] 
 
     def __str__(self):
-        return f"{self.get_dia_display()}: {self.hora_inicio} - {self.hora_fin}"
+        return f"{self.personal.nombre} - {self.get_dia_semana_display()} {self.hora_inicio}-{self.hora_fin}"
+    
+class BloqueoAgenda(models.Model):
+    """
+    Días libres, vacaciones, feriados o médico.
+    Sobreescribe la regla de HorarioLaboral.
+    """
+    personal = models.ForeignKey(
+        Personal, 
+        on_delete=models.CASCADE, 
+        null=True, blank=True, 
+        related_name='bloqueos',
+        help_text="Si se deja vacío, aplica a TODO el salón (ej. Feriado Nacional)"
+    )
+    
+    fecha_inicio = models.DateTimeField()
+    fecha_fin = models.DateTimeField()
+    motivo = models.CharField(max_length=200)
+    bloquea_todo_el_dia = models.BooleanField(default=False)
 
+    class Meta:
+        verbose_name = "Bloqueo / Excepción de Agenda"
+        verbose_name_plural = "Bloqueos de Agenda"
 
+    def clean(self):
+        if self.fecha_fin < self.fecha_inicio:
+            raise ValidationError("La fecha de fin no puede ser anterior a la de inicio.")
+
+    def __str__(self):
+        persona = self.personal.nombre if self.personal else "TODO EL SALÓN"
+        return f"Bloqueo: {persona} - {self.motivo}"
+    
+#----------------------------------------------------
+# 7. MODELOS DE TURNOS
+#----------------------------------------------------
 class Turno(models.Model):
     class Estado(models.TextChoices):
         # --- FLUJO NORMAL ---
@@ -373,7 +450,7 @@ class ListaEspera(models.Model):
         return f"Espera: {self.cliente} ({self.fecha_deseada_inicio} al {self.fecha_deseada_fin})"
     
 #----------------------------------------------------
-# 7. MODELOS DE RUTINAS
+# 8. MODELOS DE RUTINAS
 #----------------------------------------------------
 
 class Rutina(models.Model):
@@ -489,7 +566,7 @@ class PasoRutina(models.Model):
 
 
 #----------------------------------------------------
-# 8. MODELOS DE REGLAS DE CUIDADO POST-SERVICIO
+# 9. MODELOS DE REGLAS DE CUIDADO POST-SERVICIO
 # ----------------------------------------------------    
 class ReglaCuidado(models.Model):
     """
@@ -530,7 +607,7 @@ class AgendaCuidados(models.Model):
 
 
 # ============================================
-# MODELOS DE RUTINA CLIENTE (COPIA PERSONALIZADA)
+# 10.MODELOS DE RUTINA CLIENTE (COPIA PERSONALIZADA)
 # ============================================
 class RutinaCliente(models.Model):
     ESTADO_CHOICES = [
@@ -626,7 +703,7 @@ class PasoRutinaCliente(models.Model):
 """
 
 # ----------------------------------------------------
-# 9. MODELO DE NOTIFICACIONES
+# 11. MODELO DE NOTIFICACIONES
 # ----------------------------------------------------
 class Notificacion(models.Model):
     # Enums para restringir valores y evitar errores de tipeo
@@ -699,9 +776,16 @@ class Equipamiento(models.Model):
         ('NO_DISPONIBLE', 'No Disponible / Roto'),
     ]
 
+    TIPOS = [
+        ('TECNICA', 'Silla Técnica/Trabajo'),
+        ('REPOSO', 'Silla/Zona de Reposo'),
+        ('LAVACABEZAS', 'Lavacabezas'),
+    ]
+
     codigo = models.CharField(max_length=50, unique=True) # Validación: Código único
     nombre = models.CharField(max_length=100)
     estado = models.CharField(max_length=20, choices=ESTADOS, default='DISPONIBLE')
+    tipo = models.CharField(max_length=20, choices=TIPOS, default='TECNICA')
     fecha_adquisicion = models.DateField(auto_now_add=True)
     ultimo_mantenimiento = models.DateField(null=True, blank=True)
 

@@ -1,10 +1,10 @@
 from rest_framework import serializers
 from .models import (
-    TipoCabello, GrosorCabello, PorosidadCabello, 
-    CueroCabelludo, EstadoGeneral, Equipamiento, Producto,
-    ReglaDiagnostico, Notificacion, #PasoRutina,
-    Rutina, AgendaCuidados, RutinaCliente, #PasoRutinaCliente,
-    Servicio, CategoriaServicio, Turno
+    TipoCabello, GrosorCabello, PorosidadCabello, CueroCabelludo,
+    EstadoGeneral, Equipamiento, Producto, ReglaDiagnostico,
+    Notificacion, Rutina, AgendaCuidados, RutinaCliente, Servicio,
+    CategoriaServicio, Turno, HorarioLaboral, BloqueoAgenda, Personal,
+    #PasoRutina, #PasoRutinaCliente,
 
 )
 
@@ -121,7 +121,6 @@ class TurnoCreateSerializer(serializers.ModelSerializer):
         fields = ['servicio', 'fecha', 'hora_inicio', 'cliente', 'estado']
         # ALERTA: Esto es la Solución Definitiva
         read_only_fields = ['cliente', 'estado']
-     
 
 """
 class PasoRutinaSerializer(serializers.ModelSerializer):
@@ -130,7 +129,6 @@ class PasoRutinaSerializer(serializers.ModelSerializer):
         fields = ['id', 'orden', 'titulo', 'descripcion', 'frecuencia', 'plantilla']
 
 """
-
 class RutinaSerializer(serializers.ModelSerializer):
     # pasos = PasoRutinaSerializer(many=True, read_only=True)
     creada_por_nombre = serializers.CharField(source='creada_por.get_full_name', read_only=True)
@@ -288,3 +286,16 @@ class EquipamientoSerializer(serializers.ModelSerializer):
     class Meta:
         model = Equipamiento
         fields = '__all__'
+
+
+class HorarioLaboralSerializer(serializers.ModelSerializer):
+    dia_nombre = serializers.CharField(source='get_dia_semana_display', read_only=True)
+    
+    class Meta:
+        model = HorarioLaboral
+        fields = ['id', 'dia_semana', 'dia_nombre', 'hora_inicio', 'hora_fin']
+
+class BloqueoAgendaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BloqueoAgenda
+        fields = ['id', 'fecha_inicio', 'fecha_fin', 'motivo', 'bloquea_todo_el_dia']

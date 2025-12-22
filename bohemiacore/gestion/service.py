@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta, time, date
-from .models import Turno, HorarioLaboral, Configuracion
+from .models import Turno, HorarioLaboral, Configuracion, Equipamiento
 
 class DisponibilidadService:
     @staticmethod
@@ -51,3 +51,31 @@ class DisponibilidadService:
                 bloques_libres.append(bloque)
 
         return bloques_libres
+    
+
+def validar_recursos_dinamicos(fecha, hora_inicio, duracion_total):
+        hora_fin = (datetime.combine(fecha, hora_inicio) + timedelta(minutes=duracion_total)).time()
+        
+        # 1. Validar Sillas Técnicas (Escalabilidad de Equipamiento)
+        # Contamos cuántas sillas técnicas están ocupadas en ese rango
+        sillas_ocupadas = Turno.objects.filter(
+            fecha=fecha,
+            estado__in=['pendiente', 'confirmado'],
+            hora_inicio__lt=hora_fin, 
+            hora_fin__gt=hora_inicio
+        ).count()
+        
+        total_sillas = Equipamiento.objects.filter(tipo='TECNICA', estado='DISPONIBLE').count() # 
+        
+        if sillas_ocupadas >= total_sillas:
+            return False
+            
+        # 2. Validar Concurrencia de Yani (Regla de los 55 min)
+        # Yani no puede iniciar dos procesos de diseño al mismo tiempo
+        solapamiento_yani = Turno.objects.filter(
+            fecha=fecha,
+            hora_inicio=hora_inicio, # Nadie más puede empezar en este exacto slot 
+            estado__in=['pendiente', 'confirmado']
+        ).exists()
+        
+        return not solapamiento_yani
