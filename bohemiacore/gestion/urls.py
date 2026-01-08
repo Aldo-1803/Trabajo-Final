@@ -4,7 +4,7 @@ from .views import (
     DisponibilidadTurnosView, MiAgendaCuidadosView, AdminDashboardStatsView, TipoCabelloViewSet, GrosorCabelloViewSet,
     PorosidadCabelloViewSet, CueroCabelludoViewSet, EstadoGeneralViewSet, CategoriaServicioViewSet, ServicioViewSet,
     ServiciosQuimicosViewSet, TurnoViewSet, RutinaViewSet, ReglaDiagnosticoViewSet, NotificacionViewSet, SeleccionarRutinaView,
-    RutinaClienteViewSet,
+    RutinaClienteViewSet, TipoEquipamientoViewSet,
     #ListaEsperaCreateView,
     # ViewSets
     #PasoRutinaViewSet,
@@ -26,6 +26,7 @@ router.register(r'categorias-servicio', CategoriaServicioViewSet, basename='cate
 
 # Resto de rutas (estas ya estaban bien o son nuevas)
 router.register(r'servicios', ServicioViewSet, basename='servicio')
+router.register(r'horariolaboral', views.HorarioLaboralViewSet, basename='horariolaboral')
 router.register(r'turnos', TurnoViewSet, basename='turno')
 router.register(r'notificaciones', NotificacionViewSet, basename='notificaciones')
 router.register(r'servicios-quimicos', ServiciosQuimicosViewSet, basename='servicios-quimicos')
@@ -35,6 +36,8 @@ router.register(r'reglas-diagnostico', ReglaDiagnosticoViewSet, basename='reglas
 router.register(r'rutinas-cliente', RutinaClienteViewSet, basename='rutina-cliente')
 router.register(r'admin/usuarios', views.AdminUsuarioViewSet, basename='admin-usuarios')
 router.register(r'productos', views.ProductoViewSet, basename='productos')
+router.register(r'personal', views.PersonalViewSet, basename='personal')
+router.register(r'tipo-equipamiento', TipoEquipamientoViewSet, basename='tipo-equipamiento')
 router.register(r'equipamiento', views.EquipamientoViewSet, basename='equipamiento')
 
 # Las URLs se generan automáticamente

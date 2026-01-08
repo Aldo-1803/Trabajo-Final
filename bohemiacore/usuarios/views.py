@@ -92,8 +92,10 @@ class LoginView(APIView):
                     'refresh': str(refresh),
                 }, status=status.HTTP_200_OK)
             else:
+                print(f"[LOGIN] Contraseña incorrecta para {email}")
                 return Response({'detail': 'Credenciales inválidas.'}, status=status.HTTP_401_UNAUTHORIZED)
         except Usuario.DoesNotExist:
+            print(f"[LOGIN] Usuario no encontrado: {email}")
             return Response({'detail': 'Credenciales inválidas.'}, status=status.HTTP_401_UNAUTHORIZED)
 
 class PerfilView(APIView):
