@@ -2,7 +2,8 @@ from django.contrib import admin
 from .models import (
     TipoCabello, GrosorCabello, PorosidadCabello, CueroCabelludo, EstadoGeneral,
     CategoriaServicio, Servicio, ReglaDiagnostico, Rutina, RutinaCliente,
-    Notificacion, Configuracion, Personal, HorarioLaboral, BloqueoAgenda, DiasSemana,
+    Notificacion, Configuracion, Personal, HorarioLaboral, BloqueoAgenda, DiasSemana, Equipamiento,
+    TipoEquipamiento
     #PasoRutinaCliente, #PasoRutina,
 )
 
@@ -362,3 +363,18 @@ class BloqueoAgendaAdmin(admin.ModelAdmin):
     def get_afectado(self, obj):
         return obj.personal if obj.personal else "⛔ TODO EL SALÓN"
     get_afectado.short_description = "Afectado"
+
+
+@admin.register(TipoEquipamiento)
+class TipoEquipamientoAdmin(admin.ModelAdmin):
+    list_display = ('nombre', 'descripcion')
+    search_fields = ('nombre',)
+    ordering = ('nombre',)
+
+
+@admin.register(Equipamiento)
+class EquipamientoAdmin(admin.ModelAdmin):
+    list_display = ('codigo', 'nombre', 'tipo', 'estado', 'ubicacion', 'is_active')
+    list_filter = ('tipo', 'estado', 'is_active')
+    search_fields = ('codigo', 'nombre')
+    ordering = ('codigo',)
