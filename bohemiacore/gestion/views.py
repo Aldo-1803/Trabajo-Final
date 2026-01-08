@@ -1,42 +1,36 @@
 from rest_framework import viewsets, status, serializers
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny, IsAdminUser
+from rest_framework.decorators import api_view, permission_classes, action
+from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 from rest_framework.exceptions import ValidationError
 from rest_framework import generics
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.decorators import action
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from datetime import datetime, date, time
-from .service import DisponibilidadService 
+from datetime import datetime, date, timedelta
 from django.db.models import Q
 from django.utils import timezone
-
-import rest_framework.permissions as permissions
+from django.utils.dateparse import parse_datetime
 import datetime as datetime_module
 
-
 from .models import (
-    TipoCabello, GrosorCabello, PorosidadCabello, CueroCabelludo, EstadoGeneral, CategoriaServicio, Servicio, Turno,
+    TipoCabello, GrosorCabello, PorosidadCabello, CueroCabelludo, EstadoGeneral, CategoriaServicio, Servicio, Turno, DetalleTurno,
     Configuracion, ListaEspera, Producto, Equipamiento, Rutina, Notificacion, AgendaCuidados, Producto, ReglaDiagnostico,
-    RutinaCliente, HorarioLaboral, BloqueoAgenda, Personal,
+    RutinaCliente, HorarioLaboral, BloqueoAgenda, Personal, TipoEquipamiento,
     #PasoRutinaCliente
     #PasoRutina
 )
-from usuarios.models import Usuario
 
 from .serializers import (
     TipoCabelloSerializer, GrosorCabelloSerializer, PorosidadCabelloSerializer, CueroCabelludoSerializer, EstadoGeneralSerializer,
-    CategoriaServicioSerializer, ServicioSerializer, TurnoCreateSerializer, TurnoSerializer, RutinaSerializer, RutinaClienteSerializer,
+    CategoriaServicioSerializer, ServicioSerializer, TurnoSerializer, RutinaSerializer, RutinaClienteSerializer,
     RutinaClienteCreateSerializer, ReglaDiagnosticoSerializer, NotificacionSerializer, ProductoSerializer, EquipamientoSerializer,
-    UsuarioAdminSerializer, AgendaCuidadosSerializer, HorarioLaboralSerializer, BloqueoAgendaSerializer
-      #PasoRutinaSerializer,
+    UsuarioAdminSerializer, AgendaCuidadosSerializer, HorarioLaboralSerializer, BloqueoAgendaSerializer, PersonalSerializer,
+    TipoEquipamientoSerializer,
+    #PasoRutinaSerializer,
 )
+
+from .services import DisponibilidadService 
+from usuarios.models import Usuario
 
 class CatalogoBaseListView(generics.ListAPIView):
     permission_classes = [AllowAny]
@@ -61,29 +55,29 @@ class CueroCabelludoView(CatalogoBaseListView):
 class EstadoGeneralView(CatalogoBaseListView):
     queryset = EstadoGeneral.objects.all()
     serializer_class = EstadoGeneralSerializer
-class TipoCabelloViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = TipoCabello.objects.filter(activo=True)
+class TipoCabelloViewSet(viewsets.ModelViewSet):
+    queryset = TipoCabello.objects.all()
     serializer_class = TipoCabelloSerializer
     permission_classes = [AllowAny]
-class GrosorCabelloViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = GrosorCabello.objects.filter(activo=True)
+class GrosorCabelloViewSet(viewsets.ModelViewSet):
+    queryset = GrosorCabello.objects.all()
     serializer_class = GrosorCabelloSerializer
     permission_classes = [AllowAny]
-class PorosidadCabelloViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = PorosidadCabello.objects.filter(activo=True)
+class PorosidadCabelloViewSet(viewsets.ModelViewSet):
+    queryset = PorosidadCabello.objects.all()
     serializer_class = PorosidadCabelloSerializer
     permission_classes = [AllowAny]
-class CueroCabelludoViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = CueroCabelludo.objects.filter(activo=True)
+class CueroCabelludoViewSet(viewsets.ModelViewSet):
+    queryset = CueroCabelludo.objects.all()
     serializer_class = CueroCabelludoSerializer
     permission_classes = [AllowAny]
-class EstadoGeneralViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = EstadoGeneral.objects.filter(activo=True)
+class EstadoGeneralViewSet(viewsets.ModelViewSet):
+    queryset = EstadoGeneral.objects.all()
     serializer_class = EstadoGeneralSerializer
     permission_classes = [AllowAny]
 
-class CategoriaServicioViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = CategoriaServicio.objects.filter(activo=True)
+class CategoriaServicioViewSet(viewsets.ModelViewSet):
+    queryset = CategoriaServicio.objects.all()
     serializer_class = CategoriaServicioSerializer
     permission_classes = [AllowAny]
 
@@ -106,7 +100,7 @@ class ServiciosQuimicosViewSet(viewsets.ReadOnlyModelViewSet):
     """
     
     serializer_class = ServicioSerializer
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [AllowAny]
 
     def get_queryset(self):
         # 1. Definimos las categorías relevantes:
@@ -121,6 +115,16 @@ class ServiciosQuimicosViewSet(viewsets.ReadOnlyModelViewSet):
         return Servicio.objects.filter(
             categoria__nombre__in=categorias_relevantes
         ).order_by('nombre')
+
+
+class PersonalViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestionar el personal / staff del salón (CRUD completo).
+    """
+    queryset = Personal.objects.all()
+    serializer_class = PersonalSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = None
     
 
 class DisponibilidadTurnosView(APIView):
@@ -133,12 +137,18 @@ class DisponibilidadTurnosView(APIView):
     permission_classes = [AllowAny] 
 
     def get(self, request):
+        import logging
+        logger = logging.getLogger(__name__)
+        
         # 1. Recibir parámetros del Frontend
         fecha_str = request.query_params.get('fecha') # Esperamos 'YYYY-MM-DD'
         servicio_id = request.query_params.get('servicio_id')
+        
+        logger.info(f"DisponibilidadTurnosView: Recibida solicitud - fecha={fecha_str}, servicio_id={servicio_id}")
 
         # 2. Validaciones de Entrada
         if not fecha_str or not servicio_id:
+            logger.error(f"Parámetros incompletos: fecha_str={fecha_str}, servicio_id={servicio_id}")
             return Response(
                 {"error": "Faltan parámetros obligatorios: 'fecha' y 'servicio_id'."}, 
                 status=status.HTTP_400_BAD_REQUEST
@@ -146,35 +156,46 @@ class DisponibilidadTurnosView(APIView):
 
         try:
             fecha_consulta = datetime.strptime(fecha_str, '%Y-%m-%d').date()
+            logger.info(f"Fecha parseada correctamente: {fecha_consulta}")
             
             # Validación básica de negocio: No viajar al pasado
             if fecha_consulta < date.today():
+                 logger.warning(f"Intento de consultar fecha pasada: {fecha_consulta}")
                  return Response(
                      {"error": "No se pueden agendar turnos en el pasado."}, 
                      status=status.HTTP_400_BAD_REQUEST
                  )
                  
             servicio = Servicio.objects.get(id=servicio_id)
+            logger.info(f"Servicio encontrado: {servicio.nombre}, duración: {servicio.duracion_estimada}")
             
-        except ValueError:
+        except ValueError as ve:
+            logger.error(f"Error de formato de fecha: {ve}")
             return Response({"error": "Formato de fecha inválido. Use AAAA-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
         except Servicio.DoesNotExist:
+            logger.error(f"Servicio no encontrado con ID: {servicio_id}")
             return Response({"error": "El servicio especificado no existe."}, status=status.HTTP_404_NOT_FOUND)
 
         # 3. Invocar al "Cerebro" (Tu Service)
         try:
             # Si el servicio no tiene duración, asumimos 60 min por defecto para evitar crash
             duracion = servicio.duracion_estimada or 60
+            logger.info(f"Calculando bloques disponibles para {fecha_consulta} con duración {duracion} min")
             
             bloques_libres = DisponibilidadService.obtener_bloques_disponibles(
                 fecha_consulta=fecha_consulta,
-                duracion_servicio_minutos=duracion
+                servicio=servicio
             )
+            
+            logger.info(f"Bloques libres encontrados: {len(bloques_libres)}")
+            
         except Exception as e:
             # Capturamos errores inesperados del algoritmo
+            logger.error(f"Error al calcular disponibilidad: {str(e)}", exc_info=True)
             return Response({"error": f"Error interno de agenda: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         # 4. Responder JSON al Frontend
+        logger.info(f"Respuesta exitosa: {len(bloques_libres)} horarios disponibles")
         return Response({
             "fecha": fecha_str,
             "servicio_solicitado": servicio.nombre,
@@ -216,14 +237,11 @@ class ServicioViewSet(viewsets.ModelViewSet):
 
 # --- 3. VIEWSET DE TURNOS (CRUD) ---
 class TurnoViewSet(viewsets.ModelViewSet):
-    queryset = Turno.objects.all().order_by('fecha', 'hora_inicio')
+    # Usamos prefetch_related para optimizar la consulta de la tabla intermedia
+    queryset = Turno.objects.all().prefetch_related('detalles__servicio')
+    serializer_class = TurnoSerializer
     pagination_class = None 
 
-    def get_serializer_class(self):
-        if self.action == 'create':
-            return TurnoCreateSerializer
-        return TurnoSerializer
-    
     def get_queryset(self):
         queryset = super().get_queryset()
         # Filtro para que el cliente solo vea sus propios turnos (Seguridad)
@@ -236,16 +254,9 @@ class TurnoViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
-        # ... (Tu código de creación se mantiene igual) ...
-        user = self.request.user
-        if not user.is_staff and not hasattr(user, 'cliente'):
-            from rest_framework.exceptions import ValidationError
-            raise ValidationError({"error": "Usuario sin perfil de cliente."})
-
-        if user.is_staff:
-            serializer.save()
-        else:
-            serializer.save(cliente=user.cliente, estado='solicitado')
+        # Aquí puedes agregar lógica extra antes de guardar, 
+        # como enviar un email de "Turno Solicitado"
+        serializer.save()
 
     # =====================================================================
     # AQUÍ ESTÁ EL PROCESO AUTOMATIZADO #2 (Integrado como Acción)
@@ -389,7 +400,9 @@ class TurnoViewSet(viewsets.ModelViewSet):
             # 1. Guardar datos del hueco (Snapshot)
             fecha_hueco = turno.fecha
             hora_hueco = turno.hora_inicio
-            servicio_hueco = turno.servicio
+            # Obtener servicios asociados desde detalles
+            detalles_turno = turno.detalles.all()
+            servicios_hueco = [d.servicio for d in detalles_turno]
             cliente_que_cancela = turno.cliente
             
             # 2. Ejecutar la cancelación
@@ -409,16 +422,18 @@ class TurnoViewSet(viewsets.ModelViewSet):
             )
             
             # GRUPO 2: Adelanto de Turnos (Gente con turno futuro)
+            # Buscamos turnos con al menos uno de los servicios liberados
             futuros_q = Turno.objects.filter(
                 estado=Turno.Estado.CONFIRMADO,
-                servicio=servicio_hueco, # Mismo servicio
-                fecha__gt=fecha_hueco    # Fecha futura
-            ).exclude(cliente=cliente_que_cancela) # No avisar al que canceló
+                detalles__servicio__in=servicios_hueco,
+                fecha__gt=fecha_hueco
+            ).exclude(cliente=cliente_que_cancela).distinct()
             
             # --- Ejecución de Notificaciones ---
             
             # Procesar Grupo 1 (Lista de Espera)
             for cand in espera_q:
+                servicios_str = ', '.join([s.nombre for s in servicios_hueco])
                 print(f"[LISTA ESPERA] Notificando a {cand.cliente.usuario.first_name} sobre hueco el {fecha_hueco}")
                 
                 # Crear notificación con datos_extra
@@ -427,13 +442,13 @@ class TurnoViewSet(viewsets.ModelViewSet):
                     tipo='ADELANTO',  
                     canal='app',
                     titulo="¡Disponibilidad de Turno!",
-                    mensaje=f"Se liberó un espacio para {servicio_hueco.nombre} el {fecha_hueco} a las {hora_hueco.strftime('%H:%M')}. ¿Te gustaría reservarlo?",
+                    mensaje=f"Se liberó un espacio para {servicios_str} el {fecha_hueco} a las {hora_hueco.strftime('%H:%M')}. ¿Te gustaría reservarlo?",
                     origen_entidad='Turno',
                     origen_id=turno.id,
                     datos_extra={
                         "fecha_oferta": str(fecha_hueco),
                         "hora_oferta": str(hora_hueco),
-                        "servicio_id": servicio_hueco.id,
+                        "servicio_ids": [s.id for s in servicios_hueco],
                         "turno_cancelado_id": turno.id
                     }
                 )
@@ -444,6 +459,7 @@ class TurnoViewSet(viewsets.ModelViewSet):
 
             # Procesar Grupo 2 (Adelanto de Turnos)
             for turno_futuro in futuros_q:
+                servicios_str = ', '.join([s.nombre for s in servicios_hueco])
                 print(f"[ADELANTO] Ofreciendo a {turno_futuro.cliente.usuario.first_name} (Turno del {turno_futuro.fecha}) adelantar al {fecha_hueco}")
                 
                 # Crear notificación con datos_extra
@@ -452,14 +468,14 @@ class TurnoViewSet(viewsets.ModelViewSet):
                     tipo='ADELANTO',
                     canal='app',
                     titulo="¡Oportunidad de Adelantar Turno!",
-                    mensaje=f"Se liberó un espacio para {servicio_hueco.nombre} el {fecha_hueco} a las {hora_hueco.strftime('%H:%M')}. ¿Te gustaría adelantar tu turno del {turno_futuro.fecha}?",
+                    mensaje=f"Se liberó un espacio para {servicios_str} el {fecha_hueco} a las {hora_hueco.strftime('%H:%M')}. ¿Te gustaría adelantar tu turno del {turno_futuro.fecha}?",
                     origen_entidad='Turno',
                     origen_id=turno_futuro.id,
                     datos_extra={
                         "fecha_oferta": str(fecha_hueco),
                         "hora_oferta": str(hora_hueco),
                         "turno_actual_id": turno_futuro.id,
-                        "servicio_id": servicio_hueco.id
+                        "servicio_ids": [s.id for s in servicios_hueco]
                     }
                 )
                 
@@ -481,7 +497,7 @@ class MiAgendaCuidadosView(generics.ListAPIView):
     Devuelve la lista de cuidados/restricciones futuras para el cliente logueado.
     """
     serializer_class = AgendaCuidadosSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         # Filtramos por el cliente logueado y ordenamos por fecha
@@ -584,7 +600,7 @@ class AdminDashboardStatsView(APIView):
     """
     Devuelve estadísticas rápidas para la Pantalla Home del Administrador.
     """
-    permission_classes = [permissions.IsAdminUser] # Solo para Staff/Yani
+    permission_classes = [IsAdminUser] # Solo para Staff/Yani
 
     def get(self, request):
         today = timezone.now().date()
@@ -598,15 +614,19 @@ class AdminDashboardStatsView(APIView):
         proximos_turnos = Turno.objects.filter(
             fecha__gte=today, 
             estado__in=['confirmado', 'esperando_sena']
-        ).order_by('fecha', 'hora_inicio')[:5]
+        ).prefetch_related('detalles__servicio', 'cliente__usuario').order_by('fecha', 'hora_inicio')[:5]
         
         # Serializamos manualmente para no crear otro serializer solo para esto
         lista_proximos = []
         for t in proximos_turnos:
+            # Obtener nombres de servicios desde detalles
+            servicios = [d.servicio.nombre for d in t.detalles.all()]
+            servicios_str = ', '.join(servicios) if servicios else 'Sin servicios'
+            
             lista_proximos.append({
                 'id': t.id,
                 'cliente': f"{t.cliente.usuario.first_name} {t.cliente.usuario.last_name}",
-                'servicio': t.servicio.nombre,
+                'servicios': servicios_str,
                 'hora': t.hora_inicio.strftime("%H:%M"),
                 'fecha': t.fecha,
                 'estado': t.estado
@@ -655,7 +675,7 @@ class RutinaViewSet(viewsets.ModelViewSet):
         if self.action in ['list', 'retrieve', 'seleccionar']:
             permission_classes = [IsAuthenticated]
         else:
-            permission_classes = [permissions.IsAdminUser]
+            permission_classes = [IsAdminUser]
         return [permission() for permission in permission_classes]
     
     def destroy(self, request, *args, **kwargs):
@@ -711,7 +731,7 @@ class RutinaViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_204_NO_CONTENT
             )
     
-    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAdminUser])
+    @action(detail=True, methods=['post'], permission_classes=[IsAdminUser])
     def publicar(self, request, pk=None):
         """
         Endpoint para PUBLICAR una rutina (cambiar estado a 'publicada').
@@ -723,7 +743,7 @@ class RutinaViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(rutina)
         return Response(serializer.data, status=status.HTTP_200_OK)
     
-    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAdminUser])
+    @action(detail=True, methods=['post'], permission_classes=[IsAdminUser])
     def obsoletar(self, request, pk=None):
         """
         Endpoint para MARCAR COMO OBSOLETA una rutina.
@@ -737,7 +757,7 @@ class RutinaViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(rutina)
         return Response(serializer.data, status=status.HTTP_200_OK)
     
-    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAdminUser])
+    @action(detail=True, methods=['post'], permission_classes=[IsAdminUser])
     def notificar_actualizacion(self, request, pk=None):
         """
         Endpoint para NOTIFICAR a los clientes sobre actualización.
@@ -753,7 +773,7 @@ class RutinaViewSet(viewsets.ModelViewSet):
             status=status.HTTP_200_OK
         )
     
-    @action(detail=True, methods=['get'], permission_classes=[permissions.IsAdminUser])
+    @action(detail=True, methods=['get'], permission_classes=[IsAdminUser])
     def usuarios_usando(self, request, pk=None):
         """
         Endpoint para obtener detalles de usuarios usando una rutina.
@@ -888,7 +908,7 @@ class RutinaClienteViewSet(viewsets.ReadOnlyModelViewSet):
         if self.action in ['list', 'retrieve', 'destroy']:
             permission_classes = [IsAuthenticated]
         else:
-            permission_classes = [permissions.IsAdminUser]
+            permission_classes = [IsAdminUser]
         return [permission() for permission in permission_classes]
     
     def create(self, request, *args, **kwargs):
@@ -1012,7 +1032,7 @@ class PasoRutinaViewSet(viewsets.ModelViewSet):
         if self.action in ['list', 'retrieve']:
             permission_classes = [IsAuthenticated]
         else:
-            permission_classes = [permissions.IsAdminUser]
+            permission_classes = [IsAdminUser]
         return [permission() for permission in permission_classes]
     
     def create(self, request, *args, **kwargs):
@@ -1057,7 +1077,7 @@ class ReglaDiagnosticoViewSet(viewsets.ModelViewSet):
     
     # Restricción de seguridad: Solo usuarios Administradores (Yani) pueden tocar esto.
     # Si quieres que cualquier usuario logueado acceda (para pruebas), usa IsAuthenticated.
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [IsAdminUser]
 
 class SeleccionarRutinaView(APIView):
     # 2. FORZAR AUTENTICACIÓN JWT (Esto arregla el conflicto con cookies/CSRF)
@@ -1177,38 +1197,139 @@ class ProductoViewSet(viewsets.ModelViewSet):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 # ----------------------------------------------------
-# D. CRUD EQUIPAMIENTO
+# D. CRUD TIPO EQUIPAMIENTO
+# ----------------------------------------------------
+class TipoEquipamientoViewSet(viewsets.ModelViewSet):
+    queryset = TipoEquipamiento.objects.all()
+    serializer_class = TipoEquipamientoSerializer
+
+
+# ----------------------------------------------------
+# E. CRUD EQUIPAMIENTO
 # ----------------------------------------------------
 class EquipamientoViewSet(viewsets.ModelViewSet):
-    queryset = Equipamiento.objects.all()
+    queryset = Equipamiento.objects.filter(is_active=True) # Solo mostramos los activos
     serializer_class = EquipamientoSerializer
+
+    def destroy(self, request, *args, **kwargs):
+        """Sobrescribimos el borrado para que sea una Baja Lógica"""
+        instance = self.get_object()
+        
+        # Validación de Negocio (Consistencia con UC):
+        # Aquí iría la lógica para verificar si hay turnos pendientes.
+        # Por ahora, simplemente desactivamos:
+        instance.is_active = False
+        instance.save()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=False, methods=['get'])
+    def opciones(self, request):
+        """Endpoint para que el Front arme los desplegables dinámicamente"""
+        return Response({
+            "tipos": [{"id": key, "label": value} for key, value in Equipamiento.TipoRecurso.choices],
+            "estados": [{"id": key, "label": value} for key, value in Equipamiento.EstadoRecurso.choices],
+        })
+
+class HorarioLaboralViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestionar HorarioLaboral y crear disponibilidad en masa.
+    """
+    queryset = HorarioLaboral.objects.all().order_by('dia_semana', 'hora_inicio')
+    serializer_class = HorarioLaboralSerializer
     permission_classes = [IsAdminUser]
     pagination_class = None
 
-    def perform_update(self, serializer):
-        # Validación al editar estado
-        nuevo_estado = serializer.validated_data.get('estado')
-        instancia = self.get_object()
+    @action(detail=False, methods=['post'])
+    def configurar_rango(self, request):
+        """
+        Recibe un patrón semanal y un rango de fechas para 
+        crear la disponibilidad en masa.
 
-        if nuevo_estado == 'NO_DISPONIBLE' or nuevo_estado == 'MANTENIMIENTO':
-            # Verificar si está asignado a turno futuro
-            # Esta lógica requiere que el Turno tenga FK a Equipamiento.
-            # Si no la tiene, es un control manual. 
-            pass 
-            
-        serializer.save()
+        Payload esperado:
+        {
+            "fecha_desde": "2025-12-01",
+            "fecha_hasta": "2025-12-31",
+            "patron": [
+                {"dia": 0, "hora_inicio": "10:00", "hora_fin": "14:00", "permite_diseno": true, "personal_id": 1},
+                ...
+            ]
+        }
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"configurar_rango: payload received -> {request.data}")
 
-    def destroy(self, request, *args, **kwargs):
-        equipo = self.get_object()
-        
-        # Validación: Asignado a turno en próximas 24hs
-        # (Lógica simulada según requisitos)
-        
-        equipo.delete() # Aquí sí es baja física según el requisito D
-        return Response(status=status.HTTP_204_NO_CONTENT)
-    
+        fecha_desde = request.data.get('fecha_desde')
+        fecha_hasta = request.data.get('fecha_hasta')
+        patron = request.data.get('patron')
 
-    
+        if not fecha_desde or not fecha_hasta or not patron:
+            return Response({"error": "Se requieren 'fecha_desde', 'fecha_hasta' y 'patron'."}, status=400)
+
+        from django.utils.dateparse import parse_date
+        try:
+            fd = parse_date(fecha_desde)
+            fh = parse_date(fecha_hasta)
+            if not fd or not fh:
+                raise ValueError("Fechas inválidas")
+            if fd > fh:
+                return Response({"error": "'fecha_desde' debe ser menor o igual a 'fecha_hasta'"}, status=400)
+        except Exception as e:
+            return Response({"error": str(e)}, status=400)
+
+        # Versión optimizada: acumulamos objetos y hacemos bulk_create dentro
+        # de una transacción atómica para performance y consistencia.
+        from datetime import timedelta, datetime as _dt
+        from django.db import transaction
+
+        objetos_a_crear = []
+        current = fd
+
+        try:
+            with transaction.atomic():
+                while current <= fh:
+                    weekday = current.weekday()
+                    # Filtrar el patrón para el día de la semana actual
+                    items_dia = [i for i in patron if int(i.get('dia')) == weekday]
+
+                    for item in items_dia:
+                        hi = _dt.strptime(item.get('hora_inicio'), '%H:%M').time()
+                        hf = _dt.strptime(item.get('hora_fin'), '%H:%M').time()
+
+                        # Validar si ya existe para evitar duplicados exactos
+                        existe = HorarioLaboral.objects.filter(
+                            dia_semana=weekday,
+                            hora_inicio=hi,
+                            hora_fin=hf,
+                            personal_id=item.get('personal_id')
+                        ).exists()
+
+                        if not existe:
+                            objetos_a_crear.append(HorarioLaboral(
+                                dia_semana=weekday,
+                                hora_inicio=hi,
+                                hora_fin=hf,
+                                personal_id=item.get('personal_id'),
+                                permite_diseno_color=item.get('permite_diseno', True),
+                                permite_complemento=item.get('permite_complemento', True),
+                                activo=item.get('activo', True)
+                            ))
+
+                    current += timedelta(days=1)
+
+                # Creación masiva en una sola consulta SQL
+                if objetos_a_crear:
+                    HorarioLaboral.objects.bulk_create(objetos_a_crear)
+
+            return Response({
+                "status": "success",
+                "mensaje": f"Se crearon {len(objetos_a_crear)} registros de horario."
+            }, status=status.HTTP_201_CREATED if objetos_a_crear else status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"error": f"Fallo en la carga masiva: {str(e)}"}, status=400)
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated]) # Idealmente IsAdminUser si es solo para Yanina
 def obtener_agenda_general(request):
@@ -1256,8 +1377,7 @@ def crear_bloqueo(request):
         # Traemos turnos que ocurran en los días involucrados en el bloqueo
         turnos_candidatos = Turno.objects.filter(
             fecha__range=[bloqueo_inicio.date(), bloqueo_fin.date()],
-            estado__in=[Turno.Estado.SOLICITADO, Turno.Estado.ESPERANDO_SENA, Turno.Estado.CONFIRMADO],
-            personal=personal # Opcional: si el bloqueo es personal
+            estado__in=[Turno.Estado.SOLICITADO, Turno.Estado.ESPERANDO_SENA, Turno.Estado.CONFIRMADO]
         )
 
         conflictos = []
@@ -1278,11 +1398,15 @@ def crear_bloqueo(request):
             # C. Fórmula de Solapamiento de Rangos:
             # (StartA < EndB) and (EndA > StartB)
             if (turno_inicio_dt < bloqueo_fin) and (turno_fin_dt > bloqueo_inicio):
+                # Obtener servicios desde detalles
+                servicios = [d.servicio.nombre for d in turno.detalles.all()]
+                servicios_str = ', '.join(servicios) if servicios else 'Sin servicios'
+                
                 conflictos.append({
                     "cliente": f"{turno.cliente.nombre} {turno.cliente.apellido}",
                     "fecha": turno.fecha.strftime('%d/%m'),
                     "hora": f"{turno.hora_inicio.strftime('%H:%M')} - {turno.hora_fin_calculada.strftime('%H:%M')}",
-                    "servicio": turno.servicio.nombre
+                    "servicios": servicios_str
                 })
 
         # D. Si encontramos conflictos, BLOQUEAMOS el guardado
