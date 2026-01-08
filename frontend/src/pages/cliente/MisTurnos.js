@@ -118,11 +118,9 @@ const MisTurnos = () => {
         try {
             const token = localStorage.getItem('access_token');
             const url = `http://127.0.0.1:8000/api/gestion/disponibilidad/?fecha=${fecha}&servicio_id=${servicioId}`;
-            console.log('Consultando disponibilidad:', url); // Debug
             const response = await axios.get(url, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
-            console.log('Respuesta disponibilidad:', response.data); // Debug
             setHorasDisponibles(response.data.horarios_disponibles || []);
         } catch (error) {
             console.error('Error consultando disponibilidad:', error);
@@ -152,7 +150,6 @@ const MisTurnos = () => {
 
         // Si el año es menor al actual, NI SIQUIERA LLAMAMOS A LA API
         if (anio < anioActual) {
-            console.log("Año inválido detectado, esperando input completo...");
             return;
         }
 
@@ -164,8 +161,6 @@ const MisTurnos = () => {
         }
 
         // Si pasa los filtros, recién ahí molestamos al Backend
-        console.log(`Fecha válida detectada (${valorFecha}), consultando API...`);
-        
         // Asumiendo que turnoSeleccionado tiene el servicio_id
         if (turnoSeleccionado && turnoSeleccionado.servicio) {
              consultarDisponibilidad(valorFecha, turnoSeleccionado.servicio);

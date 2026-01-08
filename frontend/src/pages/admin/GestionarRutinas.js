@@ -94,7 +94,6 @@ const GestionarRutinas = () => {
             'Content-Type': 'multipart/form-data'
           }
         });
-        console.log('✅ Respuesta de creación:', response.data);
         alert('✅ Rutina creada exitosamente');
       }
       
@@ -150,7 +149,6 @@ const GestionarRutinas = () => {
           alert(`⚠️ AVISO DE INTEGRIDAD:\n${res.data.mensaje}`);
           
           if (res.data.notificados) {
-              console.log(res.data.notificados); // Para debug
           }
       }
 
@@ -167,13 +165,11 @@ const GestionarRutinas = () => {
     try {
       const token = localStorage.getItem('access_token');
       const url = `http://127.0.0.1:8000/api/gestion/rutinas/${rutinaId}/usuarios_usando/`;
-      console.log('Llamando a:', url);
       
       const response = await axios.get(url, {
         headers: { Authorization: `Bearer ${token}` }
       });
       
-      console.log('Respuesta:', response.data);
       setDetalles(response.data);
       setShowDetalles(rutinaId);
     } catch (err) {

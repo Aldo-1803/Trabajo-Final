@@ -23,13 +23,8 @@ const CatalogoRutinas = () => {
     const headers = { Authorization: `Bearer ${token}` };
 
     try {
-        console.log("🔄 Intentando obtener rutinas...");
-        
         // Intentamos primero con localhost (que es lo que usabas antes)
         const response = await axios.get('http://localhost:8000/api/gestion/rutinas/', { headers });
-        
-        console.log("✅ Respuesta del Servidor:", response.data);
-
         // Lógica robusta para detectar la lista
         let data = [];
         if (Array.isArray(response.data)) {
@@ -37,8 +32,6 @@ const CatalogoRutinas = () => {
         } else if (response.data && Array.isArray(response.data.results)) {
             data = response.data.results; // Caso Paginación
         }
-
-        console.log("📦 Rutinas procesadas:", data);
         setRutinas(data);
         setError('');
 
@@ -64,7 +57,6 @@ const CatalogoRutinas = () => {
             data = response.data.results;
         }
 
-        console.log("📚 Mis rutinas:", data);
         setMisRutinas(data);
     } catch (err) {
         console.error("❌ Error al cargar mis rutinas:", err);
@@ -93,8 +85,6 @@ const CatalogoRutinas = () => {
         { rutina_id: rutinaId },
         { headers: { Authorization: `Bearer ${token}` } }
       );
-
-      console.log("✅ Respuesta al agregar rutina:", response.data);
       setSuccessMessage('✅ ¡Rutina asignada exitosamente!');
       setTimeout(() => setSuccessMessage(''), 3000);
       fetchRutinas();

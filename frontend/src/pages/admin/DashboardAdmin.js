@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
-import CampanaNotificaciones from '../CampanaNotificaciones';
+// import CampanaNotificaciones from '../../components/CampanaNotificaciones';  // No usada
 import Calendario from './Calendario';
 
 const DashboardAdmin = () => {
@@ -133,6 +133,20 @@ const DashboardAdmin = () => {
                         </button>
 
                         <button 
+                            onClick={() => navigate('/admin/personal')}
+                            className="w-full p-4 rounded-lg shadow hover:shadow-md flex items-center gap-4 transition-all"
+                            style={{ backgroundColor: 'white' }}
+                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F5EBE0'}
+                            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'white'}
+                        >
+                            <span className="p-2 rounded-lg" style={{ backgroundColor: '#E3D5CA', color: '#817773' }}>💼</span>
+                            <div className="text-left">
+                                <h4 className="font-bold" style={{ color: '#817773' }}>Personal & Profesionales</h4>
+                                <p className="text-xs" style={{ color: '#8B8682' }}>Equipo, roles y habilidades</p>
+                            </div>
+                        </button>
+
+                        <button 
                             onClick={() => navigate('/admin/servicios')}
                             className="w-full p-4 rounded-lg shadow hover:shadow-md flex items-center gap-4 transition-all"
                             style={{ backgroundColor: 'white' }}
@@ -199,6 +213,20 @@ const DashboardAdmin = () => {
                             <div className="text-left">
                                 <h4 className="font-bold" style={{ color: '#817773' }}>Gestión de Agenda</h4>
                                 <p className="text-xs" style={{ color: '#8B8682' }}>Horarios y disponibilidad</p>
+                            </div>
+                        </button>
+
+                        <button 
+                            onClick={() => navigate('/admin/configuracion')}
+                            className="w-full p-4 rounded-lg shadow hover:shadow-md flex items-center gap-4 transition-all"
+                            style={{ backgroundColor: 'white' }}
+                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F5EBE0'}
+                            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'white'}
+                        >
+                            <span className="p-2 rounded-lg" style={{ backgroundColor: '#E3D5CA', color: '#817773' }}>⚙️</span>
+                            <div className="text-left">
+                                <h4 className="font-bold" style={{ color: '#817773' }}>Configuración del Sistema</h4>
+                                <p className="text-xs" style={{ color: '#8B8682' }}>Parámetros y catálogos</p>
                             </div>
                         </button>
                     </div>

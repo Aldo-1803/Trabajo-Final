@@ -85,10 +85,8 @@ const Login = () => {
 
                 // 4. REDIRECCIÓN INTELIGENTE
                 if (usuario.is_staff) {
-                    console.log("Acceso Administrativo Detectado");
                     navigate('/admin-dashboard');
                 } else {
-                    console.log("Acceso Cliente Detectado");
                     navigate('/perfil');
                 }
 

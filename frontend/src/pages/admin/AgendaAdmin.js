@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import ConfiguracionAgendaMasiva from './ConfiguracionAgendaMasiva.js';
 
 const AgendaAdmin = () => {
     // Estado del Calendario
@@ -13,6 +14,7 @@ const AgendaAdmin = () => {
 
     // Estado del Modal
     const [mostrarModal, setMostrarModal] = useState(false);
+    const [mostrarConfiguracion, setMostrarConfiguracion] = useState(false);
     const [fechaInicio, setFechaInicio] = useState('');
     const [fechaFin, setFechaFin] = useState('');
     const [motivo, setMotivo] = useState('');
@@ -74,14 +76,14 @@ const AgendaAdmin = () => {
             const token = localStorage.getItem('access_token');
             
             // Lógica para definir horas si es "Todo el día"
-            const hInicio = nuevoBloqueo.todoElDia ? '00:00' : nuevoBloqueo.horaInicio;
-            const hFin = nuevoBloqueo.todoElDia ? '23:59' : nuevoBloqueo.horaFin;
+            const hInicio = bloqueaTodoDia ? '00:00' : horaInicio;
+            const hFin = bloqueaTodoDia ? '23:59' : horaFin;
 
             const payload = {
-                fecha_inicio: `${nuevoBloqueo.fechaInicio}T${hInicio}:00`,
-                fecha_fin: `${nuevoBloqueo.fechaFin}T${hFin}:59`,
-                motivo: nuevoBloqueo.motivo,
-                bloquea_todo_el_dia: nuevoBloqueo.todoElDia
+                fecha_inicio: `${fechaInicio}T${hInicio}:00`,
+                fecha_fin: `${fechaFin}T${hFin}:59`,
+                motivo: motivo,
+                bloquea_todo_el_dia: bloqueaTodoDia
             };
 
             await axios.post('http://127.0.0.1:8000/api/gestion/agenda/bloquear/', payload, {
@@ -89,8 +91,8 @@ const AgendaAdmin = () => {
             });
             
             // ÉXITO (Paso 7 del C.U.)
-            alert("✅ Bloqueo creado exitosamente.");
-            setModalOpen(false);
+            alert("Bloqueo creado exitosamente.");
+            setMostrarModal(false);
             fetchAgendaData(); // Refrescar calendario
 
         } catch (error) {
@@ -99,7 +101,7 @@ const AgendaAdmin = () => {
                 const data = error.response.data;
                 
                 // Formateamos el mensaje de error para que sea legible
-                let mensaje = `⛔ ${data.mensaje}\n${data.instruccion}\n\n------- CONFLICTOS DETECTADOS -------\n`;
+                let mensaje = `${data.mensaje}\n${data.instruccion}\n\n------- CONFLICTOS DETECTADOS -------\n`;
                 
                 data.turnos_afectados.forEach(t => {
                     mensaje += `• ${t.fecha} a las ${t.hora} | ${t.cliente} (${t.servicio})\n`;
@@ -197,9 +199,36 @@ const AgendaAdmin = () => {
             <div className="max-w-6xl mx-auto">
                 {/* HEADER */}
                 <div className="mb-8">
-                    <h1 className="text-4xl font-bold mb-2" style={{ color: '#817773' }}>📅 Gestión de Agenda</h1>
+                    <h1 className="text-4xl font-bold mb-2" style={{ color: '#817773' }}>Gestión de Agenda</h1>
                     <p style={{ color: '#AB9A91' }}>Configura horarios laborales y bloqueos de disponibilidad</p>
                 </div>
+
+                {/* CONFIGURACIÓN MASIVA: integrado con backend */}
+                <div className="mb-6">
+                    <button
+                        onClick={() => setMostrarConfiguracion(prev => !prev)}
+                        className="px-4 py-2 rounded-lg font-bold transition"
+                        style={{ backgroundColor: '#D5BDAF', color: 'white' }}
+                    >
+                        {mostrarConfiguracion ? 'Ocultar configuración masiva' : 'Configurar horarios masivos'}
+                    </button>
+                </div>
+
+                {mostrarConfiguracion && (
+                    <div className="mb-6">
+                        <ConfiguracionAgendaMasiva fetchPersonal={async () => {
+                            try {
+                                const token = localStorage.getItem('access_token');
+                                const res = await axios.get('/api/gestion/personal/', { headers: { Authorization: `Bearer ${token}` } });
+                                // Normalizar datos: esperar {id, nombre} o {id, usuario}
+                                return res.data.map(p => ({ id: p.id, nombre: p.nombre || (p.usuario?.first_name ? `${p.usuario.first_name} ${p.usuario.last_name}` : p.email) }))
+                            } catch (e) {
+                                console.error('No se pudo cargar personal', e);
+                                return []
+                            }
+                        }} />
+                    </div>
+                )}
 
                 {/* ERROR ALERT */}
                 {error && (
@@ -257,7 +286,7 @@ const AgendaAdmin = () => {
 
                     {/* LEYENDA */}
                     <div className="mt-6 pt-6 border-t" style={{ borderColor: '#E3D5CA' }}>
-                        <p className="font-bold mb-3" style={{ color: '#817773' }}>📋 Leyenda:</p>
+                        <p className="font-bold mb-3" style={{ color: '#817773' }}>Leyenda:</p>
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <div className="flex items-center gap-2">
                                 <div className="w-6 h-6 rounded" style={{ backgroundColor: '#ffffff', border: '2px solid #6B9C7A' }}></div>

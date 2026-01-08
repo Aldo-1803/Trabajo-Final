@@ -53,8 +53,6 @@ const DetalleRutina = () => {
                 headers: {'Authorization': `Bearer ${token}`}
             }
         );
-
-        console.log("Éxito:", response.data);
         alert("¡Rutina agregada a tu perfil!");
 
     } catch (error) {

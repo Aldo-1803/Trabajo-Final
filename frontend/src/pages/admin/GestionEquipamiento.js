@@ -13,16 +13,22 @@ const GestionEquipamiento = () => {
         id: null,
         codigo: '',
         nombre: '',
-        estado: 'DISPONIBLE'
+        tipo: '',
+        estado: 'DISPONIBLE',
+        ubicacion: '',
+        observaciones: '',
+        fecha_adquisicion: new Date().toISOString().split('T')[0]
     });
+    const [tipos, setTipos] = useState([]);
 
     const navigate = useNavigate();
 
     // --- DICCIONARIO DE ESTADOS (Para visualización bonita) ---
     const ESTADOS = {
         'DISPONIBLE': { label: 'Disponible', color: 'bg-green-100 text-green-800' },
+        'EN_USO': { label: 'En Uso', color: 'bg-blue-100 text-blue-800' },
         'MANTENIMIENTO': { label: 'En Mantenimiento', color: 'bg-orange-100 text-orange-800' },
-        'NO_DISPONIBLE': { label: 'Fuera de Servicio', color: 'bg-red-100 text-red-800' },
+        'FUERA_SERVICIO': { label: 'Fuera de Servicio / Roto', color: 'bg-red-100 text-red-800' },
     };
 
     // --- CARGA DE DATOS ---
@@ -33,7 +39,9 @@ const GestionEquipamiento = () => {
             const res = await axios.get('http://127.0.0.1:8000/api/gestion/equipamiento/', {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
-            setEquipos(res.data);
+            // Maneja tanto arrays como objetos con estructura results
+            const datos = Array.isArray(res.data) ? res.data : res.data.results || [];
+            setEquipos(datos);
         } catch (error) {
             console.error("Error al cargar equipamiento:", error);
             if (error.response?.status === 403) navigate('/');
@@ -42,9 +50,24 @@ const GestionEquipamiento = () => {
         }
     };
 
+    // --- CARGA DE TIPOS DE EQUIPAMIENTO ---
+    const cargarTipos = async () => {
+        try {
+            const token = localStorage.getItem('access_token');
+            const res = await axios.get('http://127.0.0.1:8000/api/gestion/tipo-equipamiento/', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const datos = Array.isArray(res.data) ? res.data : res.data.results || [];
+            setTipos(datos);
+        } catch (error) {
+            console.error("Error al cargar tipos de equipamiento:", error);
+        }
+    };
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => {
         cargarEquipos();
+        cargarTipos();
     }, []);
 
     // --- MANEJADORES DEL FORMULARIO ---
@@ -58,7 +81,16 @@ const GestionEquipamiento = () => {
             setForm(equipo);
         } else {
             setModoEdicion(false);
-            setForm({ id: null, codigo: '', nombre: '', estado: 'DISPONIBLE' });
+            setForm({ 
+                id: null, 
+                codigo: '', 
+                nombre: '', 
+                tipo: '', 
+                estado: 'DISPONIBLE',
+                ubicacion: '',
+                observaciones: '',
+                fecha_adquisicion: new Date().toISOString().split('T')[0]
+            });
         }
         setModalAbierto(true);
     };
@@ -136,7 +168,9 @@ const GestionEquipamiento = () => {
                             <tr>
                                 <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase">Código</th>
                                 <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase">Nombre</th>
+                                <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase">Tipo</th>
                                 <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase">Estado</th>
+                                <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase">Ubicación</th>
                                 <th className="px-6 py-3 text-right text-xs font-bold text-gray-500 uppercase">Acciones</th>
                             </tr>
                         </thead>
@@ -149,10 +183,16 @@ const GestionEquipamiento = () => {
                                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                                         {eq.nombre}
                                     </td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                                        {eq.tipo_nombre || '-'}
+                                    </td>
                                     <td className="px-6 py-4 whitespace-nowrap">
                                         <span className={`px-2 py-1 text-xs font-bold rounded-full ${ESTADOS[eq.estado]?.color || 'bg-gray-100'}`}>
                                             {ESTADOS[eq.estado]?.label || eq.estado}
                                         </span>
+                                    </td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                                        {eq.ubicacion || '-'}
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                                         <button 
@@ -211,6 +251,58 @@ const GestionEquipamiento = () => {
                             </div>
 
                             <div>
+                                <label className="block text-sm font-medium text-gray-700">Tipo de Equipamiento</label>
+                                <select 
+                                    name="tipo" 
+                                    required
+                                    className="mt-1 block w-full border border-gray-300 rounded p-2 bg-white"
+                                    value={form.tipo}
+                                    onChange={handleChange}
+                                >
+                                    <option value="">-- Selecciona un tipo --</option>
+                                    {tipos.map((tipo) => (
+                                        <option key={tipo.id} value={tipo.id}>{tipo.nombre}</option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Ubicación</label>
+                                <input 
+                                    type="text" 
+                                    name="ubicacion" 
+                                    placeholder="Ej: Salón principal, estante derecho"
+                                    className="mt-1 block w-full border border-gray-300 rounded p-2"
+                                    value={form.ubicacion}
+                                    onChange={handleChange}
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Observaciones</label>
+                                <textarea 
+                                    name="observaciones" 
+                                    placeholder="Notas adicionales"
+                                    className="mt-1 block w-full border border-gray-300 rounded p-2"
+                                    rows="2"
+                                    value={form.observaciones}
+                                    onChange={handleChange}
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Fecha de Adquisición</label>
+                                <input 
+                                    type="date" 
+                                    name="fecha_adquisicion" 
+                                    required
+                                    className="mt-1 block w-full border border-gray-300 rounded p-2"
+                                    value={form.fecha_adquisicion}
+                                    onChange={handleChange}
+                                />
+                            </div>
+
+                            <div>
                                 <label className="block text-sm font-medium text-gray-700">Estado Actual</label>
                                 <select 
                                     name="estado" 
@@ -219,8 +311,9 @@ const GestionEquipamiento = () => {
                                     onChange={handleChange}
                                 >
                                     <option value="DISPONIBLE">🟢 Disponible</option>
+                                    <option value="EN_USO">🔵 En Uso</option>
                                     <option value="MANTENIMIENTO">🟠 En Mantenimiento</option>
-                                    <option value="NO_DISPONIBLE">🔴 Fuera de Servicio</option>
+                                    <option value="FUERA_SERVICIO">🔴 Fuera de Servicio / Roto</option>
                                 </select>
                             </div>
 

@@ -22,7 +22,6 @@ const Contacto = () => {
   const handleSubmit = (e) => {
     e.preventDefault();
     // TODO: Conectar con el backend para enviar el mensaje de contacto
-    console.log('Formulario enviado:', formData);
     setEnviado(true);
     setFormData({
       nombre: '',

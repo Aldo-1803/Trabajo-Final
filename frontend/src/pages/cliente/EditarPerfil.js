@@ -156,8 +156,7 @@ const EditarPerfil = () => {
             // Axios lo enviará como JSON automáticamente.
             const response = await axios.put('/api/usuarios/perfil/', formData);
 
-            console.log("Respuesta de actualización:", response.data);
-            setSuccessMessage('¡Perfil actualizado con éxito!');
+           setSuccessMessage('¡Perfil actualizado con éxito!');
             
             setTimeout(() => {
                 navigate('/perfil');

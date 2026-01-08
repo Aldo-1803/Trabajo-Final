@@ -44,11 +44,11 @@ const GestionarReglas = () => {
 
             const [reglasRes, tiposRes, grosRes, poroRes, cueroRes, estRes, rutRes] = await Promise.all([
                 axios.get('http://127.0.0.1:8000/api/gestion/reglas-diagnostico/', config),
-                axios.get('http://127.0.0.1:8000/api/gestion/tipo-cabello/', config),
-                axios.get('http://127.0.0.1:8000/api/gestion/grosor-cabello/', config),
-                axios.get('http://127.0.0.1:8000/api/gestion/porosidad-cabello/', config),
-                axios.get('http://127.0.0.1:8000/api/gestion/cuero-cabelludo/', config),
-                axios.get('http://127.0.0.1:8000/api/gestion/estado-general/', config),
+                axios.get('http://127.0.0.1:8000/api/gestion/tipos-cabello/', config),
+                axios.get('http://127.0.0.1:8000/api/gestion/grosores-cabello/', config),
+                axios.get('http://127.0.0.1:8000/api/gestion/porosidades-cabello/', config),
+                axios.get('http://127.0.0.1:8000/api/gestion/cueros-cabelludos/', config),
+                axios.get('http://127.0.0.1:8000/api/gestion/estados-generales/', config),
                 axios.get('http://127.0.0.1:8000/api/gestion/rutinas/', config)
             ]);
 
