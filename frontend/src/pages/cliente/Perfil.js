@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
-import CampanaNotificaciones from './CampanaNotificaciones';
+// import CampanaNotificaciones from '../../components/CampanaNotificaciones';  // No usada
 
 // ============================================================================
 // COMPONENTE PRINCIPAL
@@ -62,12 +62,12 @@ const Perfil = () => {
         }
     };
 
-    const logout = () => {
-        localStorage.removeItem('access_token');
-        localStorage.removeItem('refresh_token');
-        axios.defaults.headers.common['Authorization'] = null;
-        navigate('/login');
-    };
+    // const logout = () => {
+    //     localStorage.removeItem('access_token');
+    //     localStorage.removeItem('refresh_token');
+    //     axios.defaults.headers.common['Authorization'] = null;
+    //     navigate('/login');
+    // };
 
     // ========================================================================
     // RENDER - LOADING
@@ -212,7 +212,7 @@ const DiagnosticoCard = ({ diagnostico, navigate }) => (
                 </div>
                 
                 <button
-                    onClick={() => navigate('/catalogo-servicios')}
+                    onClick={() => navigate('/catalogo-rutinas')}
                     className="px-6 py-3 rounded-lg text-white font-bold shadow-md transform hover:scale-105 transition-all flex items-center gap-2"
                     style={{ background: 'linear-gradient(135deg, #D5BDAF 0%, #AB9A91 100%)' }}
                 >
@@ -275,7 +275,6 @@ axios.interceptors.response.use(
                     return Promise.reject(refreshError);
                 }
             } else {
-                console.log("No hay refresh token, redirigiendo a login");
                 window.location.href = '/login';
             }
         }
