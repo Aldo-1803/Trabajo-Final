@@ -31,8 +31,10 @@ export const ADMIN_ROUTES = {
   PRODUCTOS: '/admin/productos',
   USUARIOS: '/admin/usuarios',
   CLIENTES: '/admin/clientes',
+  PERSONAL: '/admin/personal',
   EQUIPAMIENTO: '/admin/equipamiento',
   AGENDA: '/admin/agenda',
+  CONFIGURACION: '/admin/configuracion',
 };
 
 // Rutas sin Header

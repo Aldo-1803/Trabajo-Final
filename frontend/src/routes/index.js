@@ -31,6 +31,8 @@ import GestionProductos from '../pages/admin/GestionProductos';
 import GestionUsuarios from '../pages/admin/GestionUsuarios';
 import GestionClientes from '../pages/admin/GestionClientes';
 import GestionEquipamiento from '../pages/admin/GestionEquipamiento';
+import GestionPersonal from '../pages/admin/GestionPersonal';
+import ConfiguracionAdmin from '../pages/admin/ConfiguracionAdmin';
 import AgendaAdmin from '../pages/admin/AgendaAdmin';
 
 // Imports - Components
@@ -72,8 +74,10 @@ export const AppRoutes = () => {
                 <Route path={ADMIN_ROUTES.PRODUCTOS} element={<ProtectedRoute><GestionProductos /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.USUARIOS} element={<ProtectedRoute><GestionUsuarios /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.CLIENTES} element={<ProtectedRoute><GestionClientes /></ProtectedRoute>} />
+                <Route path={ADMIN_ROUTES.PERSONAL} element={<ProtectedRoute><GestionPersonal /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.EQUIPAMIENTO} element={<ProtectedRoute><GestionEquipamiento /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.AGENDA} element={<ProtectedRoute><AgendaAdmin /></ProtectedRoute>} />
+                <Route path={ADMIN_ROUTES.CONFIGURACION} element={<ProtectedRoute><ConfiguracionAdmin /></ProtectedRoute>} />
 
                 {/* Default Route */}
                 <Route path="/" element={<Navigate to={AUTH_ROUTES.LOGIN} />} />

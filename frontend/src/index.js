@@ -69,7 +69,6 @@ axios.interceptors.response.use(
                 }
             } else {
                 // No hay refresh token, redirigir a login
-                console.log("No hay refresh token, redirigiendo a login");
                 window.location.href = '/login';
             }
         }

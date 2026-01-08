@@ -88,9 +88,7 @@ const CampanaNotificaciones = () => {
                     { headers: { 'Authorization': `Bearer ${token}` } }
                 );
             } catch (err) {
-                // Si no existe ese endpoint, usamos el PATCH directo al turno
-                console.log('Endpoint específico no disponible, usando PATCH directo...');
-                
+                // Si no existe ese endpoint, usamos el PATCH directo al turno            
                 if (turno_actual_id) {
                     await axios.patch(
                         `http://127.0.0.1:8000/api/gestion/turnos/${turno_actual_id}/`,
