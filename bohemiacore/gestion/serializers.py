@@ -3,20 +3,22 @@ from .models import (
     TipoCabello, GrosorCabello, PorosidadCabello, CueroCabelludo,
     EstadoGeneral, Equipamiento, Producto, ReglaDiagnostico,
     Notificacion, Rutina, AgendaCuidados, RutinaCliente, Servicio,
-    CategoriaServicio, Turno, HorarioLaboral, BloqueoAgenda, Personal,
+    CategoriaServicio, Turno, DetalleTurno, HorarioLaboral, BloqueoAgenda, Personal,
+    TipoEquipamiento,
     #PasoRutina, #PasoRutinaCliente,
-
 )
 
+from .services import DisponibilidadService
 from usuarios.models import Usuario, Cliente
 import os
 from django.core.exceptions import ValidationError 
+from datetime import datetime
 
 # 1. EL SERIALIZER BASE (El "Molde")
 # Define los campos que TODOS los catálogos compartirán
 class CatalogoBaseSerializer(serializers.ModelSerializer):
     class Meta:
-        fields = ['id', 'nombre', 'descripcion']
+        fields = ['id', 'nombre', 'descripcion', 'activo', 'puntaje_base']
         abstract = True 
 
 # 2. LOS SERIALIZERS ESPECÍFICOS (Heredan los campos)
@@ -41,9 +43,10 @@ class EstadoGeneralSerializer(CatalogoBaseSerializer):
     class Meta(CatalogoBaseSerializer.Meta):
         model = EstadoGeneral
 
-class CategoriaServicioSerializer(CatalogoBaseSerializer):
-    class Meta(CatalogoBaseSerializer.Meta):
+class CategoriaServicioSerializer(serializers.ModelSerializer):
+    class Meta:
         model = CategoriaServicio
+        fields = ['id', 'nombre', 'descripcion', 'activo']
 
 # 3. SERIALIZERS ADICIONALES PARA OTROS MODELOS
 class ServicioSerializer(serializers.ModelSerializer):
@@ -61,54 +64,35 @@ class ServicioSerializer(serializers.ModelSerializer):
             'activo'
         ]
    
-class TurnoSerializer(serializers.ModelSerializer):
-    cliente_nombre = serializers.CharField(source='cliente.usuario.get_full_name', read_only=True)
+class DetalleTurnoSerializer(serializers.ModelSerializer):
     servicio_nombre = serializers.CharField(source='servicio.nombre', read_only=True)
-    estado_display = serializers.CharField(source='get_estado_display', read_only=True)
+    
+    class Meta:
+        model = DetalleTurno
+        fields = ['id', 'servicio', 'servicio_nombre', 'precio_historico', 'duracion_minutos']
+        read_only_fields = ['id', 'servicio_nombre']
 
-    cliente = serializers.PrimaryKeyRelatedField(
-        queryset=Cliente.objects.all(),
-        required=False,
-        allow_null=True
-    )
-    profesional = serializers.PrimaryKeyRelatedField(
-        queryset=Usuario.objects.filter(is_staff=True), #
-        required=False,
-        allow_null=True
-    )
+
+class TurnoSerializer(serializers.ModelSerializer):
+    # Nested serializer para los detalles/servicios del turno
+    detalles = DetalleTurnoSerializer(many=True)
+
     class Meta:
         model = Turno
         fields = [
-            'id', 'cliente', 'cliente_nombre', 
-            'servicio', 'servicio_nombre', 
-            'profesional', 
-            'fecha', 'hora_inicio', 'hora_fin_calculada', 
-            'estado', 'estado_display', 'comprobante_pago', 'fecha_creacion'
+            'id', 'cliente', 'profesional', 'equipamiento', 
+            'fecha', 'hora_inicio', 'estado', 'detalles'
         ]
-        read_only_fields = ['id', 'hora_fin_calculada', 'fecha_creacion', 'cliente_nombre', 'servicio_nombre', 'estado_display']
-        extra_kwargs = {
-            'estado': {'required': False},
-        }
 
-    def validate_comprobante_pago(self, value):
-        """
-        Validación Técnica del Comprobante (Item 4 Cátedra)
-        """
-        if not value:
-            return value
-
-        # 1. Validar Tamaño (Máximo 5MB)
-        limit_mb = 5
-        if value.size > limit_mb * 1024 * 1024:
-            raise serializers.ValidationError(f"El archivo es muy grande. Máximo permitido: {limit_mb}MB.")
-
-        # 2. Validar Extensión (Solo imágenes o PDF)
-        ext = os.path.splitext(value.name)[1].lower()
-        valid_extensions = ['.jpg', '.jpeg', '.png', '.pdf']
-        if ext not in valid_extensions:
-            raise serializers.ValidationError("Formato no soportado. Suba una imagen (JPG, PNG) o PDF.")
-
-        return value
+    def create(self, validated_data):
+        # 1. Sacamos los detalles del paquete de datos
+        detalles_data = validated_data.pop('detalles', [])
+        # 2. Creamos el Turno principal
+        turno = Turno.objects.create(**validated_data)
+        # 3. Creamos cada detalle en la tabla intermedia
+        for detalle in detalles_data:
+            DetalleTurno.objects.create(turno=turno, **detalle)
+        return turno
 
 class TurnoCreateSerializer(serializers.ModelSerializer):
     """
@@ -207,6 +191,33 @@ class RutinaClienteCreateSerializer(serializers.Serializer):
         
         return rutina.asignar_a_cliente(cliente)
 
+
+class PersonalSerializer(serializers.ModelSerializer):
+    usuario_email = serializers.CharField(source='usuario.email', read_only=True)
+    horarios = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Personal
+        fields = [
+            'id', 'nombre', 'apellido', 'rol', 'email', 'telefono', 
+            'activo', 'color_calendario', 'usuario',
+            'realiza_diagnostico', 'realiza_lavado', 'realiza_color',
+            'usuario_email', 'horarios'
+        ]
+
+    def get_horarios(self, obj):
+        """Obtiene los horarios laborales asociados"""
+        horarios = obj.horarios.all()
+        return [
+            {
+                'id': h.id,
+                'dia_semana': h.get_dia_semana_display(),
+                'hora_inicio': str(h.hora_inicio),
+                'hora_fin': str(h.hora_fin)
+            }
+            for h in horarios
+        ]
+
 class AgendaCuidadosSerializer(serializers.ModelSerializer):
     class Meta:
         model = AgendaCuidados
@@ -282,20 +293,88 @@ class ProductoSerializer(serializers.ModelSerializer):
         return value
 
 # --- D. SERIALIZER EQUIPAMIENTO ---
+
+class TipoEquipamientoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TipoEquipamiento
+        fields = ['id', 'nombre', 'descripcion']
+
+
 class EquipamientoSerializer(serializers.ModelSerializer):
+    # Ajuste 1: Para lectura, queremos ver el nombre del tipo, no solo el ID.
+    tipo_nombre = serializers.ReadOnlyField(source='tipo.nombre')
+    
+    # Ajuste 2: El estado sigue siendo un choice, así que mantenemos su display.
+    estado_display = serializers.CharField(source='get_estado_display', read_only=True)
+
     class Meta:
         model = Equipamiento
-        fields = '__all__'
+        fields = [
+            'id', 'codigo', 'nombre', 
+            'tipo', 'tipo_nombre',  # Relación con la tabla maestra
+            'estado', 'estado_display', 
+            'ubicacion', 'observaciones', 
+            'is_active', 'ultimo_mantenimiento'
+        ]
+        read_only_fields = ['is_active']
 
+    def validate_codigo(self, value):
+        return value.upper()
 
 class HorarioLaboralSerializer(serializers.ModelSerializer):
     dia_nombre = serializers.CharField(source='get_dia_semana_display', read_only=True)
     
     class Meta:
         model = HorarioLaboral
-        fields = ['id', 'dia_semana', 'dia_nombre', 'hora_inicio', 'hora_fin']
+        fields = [
+            'id', 'personal', 'dia_semana', 'dia_nombre', 
+            'hora_inicio', 'hora_fin', 
+            'permite_diseno_color', 'permite_complemento', 'activo'
+        ]
 
 class BloqueoAgendaSerializer(serializers.ModelSerializer):
     class Meta:
         model = BloqueoAgenda
-        fields = ['id', 'fecha_inicio', 'fecha_fin', 'motivo', 'bloquea_todo_el_dia']
+        fields = '__all__'
+
+    def validate(self, data):
+        inicio_bloqueo = data.get('fecha_inicio')
+        fin_bloqueo = data.get('fecha_fin')
+        personal = data.get('personal') # Puede ser None si es para todo el salón 
+
+        # 1. Validación básica de fechas 
+        if fin_bloqueo <= inicio_bloqueo:
+            raise serializers.ValidationError("La fecha de fin debe ser posterior a la de inicio.")
+
+        # 2. Búsqueda de Conflictos (Optimización SQL) 
+        # Filtramos turnos activos en el rango de fechas involucradas
+        turnos_en_rango = Turno.objects.filter(
+            fecha__range=[inicio_bloqueo.date(), fin_bloqueo.date()],
+            estado__in=['pendiente', 'confirmado']
+        )
+
+        if personal:
+            turnos_en_rango = turnos_en_rango.filter(personal=personal)
+
+        conflictos = []
+        for turno in turnos_en_rango:
+            # Combinamos fecha y hora para la comparación precisa
+            t_inicio = datetime.combine(turno.fecha, turno.hora_inicio)
+            t_fin = datetime.combine(turno.fecha, turno.hora_fin_calculada)
+            
+            # Lógica de solapamiento: (StartA < EndB) y (EndA > StartB) 
+            if (t_inicio < fin_bloqueo.replace(tzinfo=None)) and (t_fin > inicio_bloqueo.replace(tzinfo=None)):
+                conflictos.append({
+                    "cliente": f"{turno.cliente.usuario.first_name} {turno.cliente.usuario.last_name}",
+                    "horario": f"{turno.hora_inicio} - {turno.hora_fin_calculada}",
+                    "servicio": turno.servicio.nombre
+                })
+
+        if conflictos:
+            raise serializers.ValidationError({
+                "error": "CONFLICTO_AGENDA",
+                "mensaje": "Existen turnos que se solapan con este bloqueo.",
+                "turnos_afectados": conflictos
+            })
+
+        return data
