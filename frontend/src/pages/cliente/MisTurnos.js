@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
+import { confirmarAccion, notify } from '../../utils/notificaciones';
 
 const MisTurnos = () => {
     // --- ESTADOS ---
@@ -11,27 +12,31 @@ const MisTurnos = () => {
     const [archivo, setArchivo] = useState(null);
     const [turnoIdSubida, setTurnoIdSubida] = useState(null);
     
-    // Estados para GESTIÓN INTELIGENTE (Modal)
+    // --- ESTADOS PARA REPROGRAMACIÓN ---
     const [modalAbierto, setModalAbierto] = useState(false);
     const [turnoSeleccionado, setTurnoSeleccionado] = useState(null);
     const [datosPolitica, setDatosPolitica] = useState(null);
-    const [nuevaFecha, setNuevaFecha] = useState('');
-    const [nuevaHora, setNuevaHora] = useState('');
-    const [horasDisponibles, setHorasDisponibles] = useState([]);
-    const [cargandoHoras, setCargandoHoras] = useState(false);
+    const [disponibilidadReprogramacion, setDisponibilidadReprogramacion] = useState([]);
+    const [fechaSeleccionada, setFechaSeleccionada] = useState(null);
+    const [horariosDelDia, setHorariosDelDia] = useState([]);
+    const [horarioSeleccionado, setHorarioSeleccionado] = useState(null);
+    const [cargandoDisponibilidad, setCargandoDisponibilidad] = useState(false);
 
     const navigate = useNavigate();
 
     // --- CARGA INICIAL ---
     const fetchTurnos = async () => {
         try {
+            setLoading(true);
             const token = localStorage.getItem('access_token');
             const response = await axios.get('http://127.0.0.1:8000/api/gestion/turnos/', {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             setTurnos(response.data); 
+            console.log('Turnos cargados:', response.data);
         } catch (err) {
-            console.error(err);
+            console.error('Error cargando turnos:', err);
+            notify.error('Error al cargar tus turnos');
         } finally {
             setLoading(false);
         }
@@ -63,11 +68,11 @@ const MisTurnos = () => {
         if (file) {
             const validTypes = ['image/jpeg', 'image/png', 'application/pdf'];
             if (!validTypes.includes(file.type)) {
-                alert("Formato incorrecto. Solo JPG, PNG o PDF.");
+                notify.error("Formato incorrecto. Solo JPG, PNG o PDF.");
                 return;
             }
             if (file.size > 5 * 1024 * 1024) {
-                alert("Máximo permitido: 5MB.");
+                notify.error("Máximo permitido: 5MB.");
                 return;
             }
             setArchivo(file);
@@ -76,7 +81,10 @@ const MisTurnos = () => {
     };
 
     const subirComprobante = async (turnoId) => {
-        if (!archivo) return alert("Selecciona un archivo");
+        if (!archivo) {
+            notify.error("Selecciona un archivo");
+            return;
+        }
         const formData = new FormData();
         formData.append('comprobante_pago', archivo);
 
@@ -88,89 +96,18 @@ const MisTurnos = () => {
                     'Content-Type': 'multipart/form-data'
                 }
             });
-            alert("¡Comprobante subido con éxito!");
+            notify.success("¡Comprobante subido con éxito!");
             setArchivo(null);
             setTurnoIdSubida(null);
             fetchTurnos(); 
         } catch (error) {
             console.error("Error subida:", error);
-            alert("Error al subir comprobante.");
+            notify.error("Error al subir comprobante.");
         }
     };
 
     // ========================================================================
-    // FUNCIÓN: CONSULTAR DISPONIBILIDAD POR FECHA Y SERVICIO
-    // ========================================================================
-    const consultarDisponibilidad = async (fecha, servicioId) => {
-        if (!fecha || !servicioId) {
-            setHorasDisponibles([]);
-            return;
-        }
-
-        // Validar formato de fecha (debe ser YYYY-MM-DD)
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
-            console.error('Formato de fecha inválido:', fecha);
-            setHorasDisponibles([]);
-            return;
-        }
-
-        setCargandoHoras(true);
-        try {
-            const token = localStorage.getItem('access_token');
-            const url = `http://127.0.0.1:8000/api/gestion/disponibilidad/?fecha=${fecha}&servicio_id=${servicioId}`;
-            const response = await axios.get(url, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            setHorasDisponibles(response.data.horarios_disponibles || []);
-        } catch (error) {
-            console.error('Error consultando disponibilidad:', error);
-            setHorasDisponibles([]);
-        } finally {
-            setCargandoHoras(false);
-        }
-    };
-
-    // Obtener fecha mínima (hoy)
-    const getMinDate = () => {
-        const today = new Date();
-        return today.toISOString().split('T')[0]; // Formato YYYY-MM-DD
-    };
-
-    // Cuando cambie la fecha, consultar horas disponibles
-    const handleFechaChange = (e) => {
-        const valorFecha = e.target.value;
-        setNuevaFecha(valorFecha); // Actualizamos el estado visual siempre
-
-        // 1. VALIDACIÓN: ¿La fecha tiene una longitud lógica? (YYYY-MM-DD son 10 chars)
-        if (!valorFecha || valorFecha.length < 10) return;
-
-        // 2. VALIDACIÓN: Evitar años absurdos (Ej: 0002, 0202)
-        const anio = parseInt(valorFecha.split('-')[0]);
-        const anioActual = new Date().getFullYear();
-
-        // Si el año es menor al actual, NI SIQUIERA LLAMAMOS A LA API
-        if (anio < anioActual) {
-            return;
-        }
-
-        // 3. VALIDACIÓN: No permitir fechas pasadas
-        if (esTurnoPasado(valorFecha, '23:59')) { // Usamos tu helper existente
-             // Opcional: Podrías limpiar los horarios aquí
-             setHorasDisponibles([]); 
-             return;
-        }
-
-        // Si pasa los filtros, recién ahí molestamos al Backend
-        // Asumiendo que turnoSeleccionado tiene el servicio_id
-        if (turnoSeleccionado && turnoSeleccionado.servicio) {
-             consultarDisponibilidad(valorFecha, turnoSeleccionado.servicio);
-        } else {
-             console.error("No hay servicio asociado al turno seleccionado");
-        }
-    };
-
-    // ========================================================================
-    // LÓGICA 2: GESTIÓN INTELIGENTE
+    // LÓGICA 2: GESTIÓN INTELIGENTE - Abrir Modal y Cargar Disponibilidad
     // ========================================================================
     const abrirGestion = async (turno) => {
         try {
@@ -182,46 +119,127 @@ const MisTurnos = () => {
             );
             setDatosPolitica(res.data);
             setTurnoSeleccionado(turno);
+            
             // Limpiar estados del modal
-            setNuevaFecha('');
-            setNuevaHora('');
-            setHorasDisponibles([]);
+            setFechaSeleccionada(null);
+            setHorarioSeleccionado(null);
+            setHorariosDelDia([]);
+            setDisponibilidadReprogramacion([]);
+            
+            // Cargar disponibilidad para reprogramación si puede reprogramar
+            if (res.data.puede_reprogramar && turno.detalles && turno.detalles.length > 0) {
+                const servicioId = turno.detalles[0].servicio;
+                await cargarDisponibilidadReprogramacion(servicioId);
+            }
+            
             setModalAbierto(true);
         } catch (error) {
             // Manejo especial para bloqueo de 48hs (Error 400)
             if (error.response && error.response.status === 400 && error.response.data.mensaje_bloqueo) {
-                alert(`${error.response.data.mensaje_bloqueo}\nContacto: ${error.response.data.contacto}`);
+                notify.error(`${error.response.data.mensaje_bloqueo}\nContacto: ${error.response.data.contacto}`);
             } else {
-                alert("Error al consultar opciones del turno.");
+                notify.error("Error al consultar opciones del turno.");
             }
+        }
+    };
+
+    // Cargar disponibilidad para reprogramación
+    const cargarDisponibilidadReprogramacion = async (servicioId) => {
+        setCargandoDisponibilidad(true);
+        try {
+            const token = localStorage.getItem('access_token');
+            const url = `http://127.0.0.1:8000/api/gestion/turnos/consultar_disponibilidad/?servicio_id=${servicioId}`;
+            const res = await axios.get(url, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            setDisponibilidadReprogramacion(res.data.disponibilidad || []);
+        } catch (error) {
+            console.error('Error cargando disponibilidad:', error);
+            notify.error("Error al cargar disponibilidad para reprogramación");
+        } finally {
+            setCargandoDisponibilidad(false);
+        }
+    };
+
+    // Seleccionar fecha disponible
+    const seleccionarFechaDisponible = (fechaDisponible) => {
+        setFechaSeleccionada(fechaDisponible);
+        setHorarioSeleccionado(null);
+        
+        // Si solo hay un profesional, auto-seleccionar y mostrar sus horarios
+        if (fechaDisponible.profesionales && fechaDisponible.profesionales.length === 1) {
+            const prof = fechaDisponible.profesionales[0];
+            setHorariosDelDia(prof.slots || []);
+        } else {
+            // Múltiples profesionales, limpiar horarios hasta seleccionar uno
+            setHorariosDelDia([]);
         }
     };
 
     const ejecutarAccion = async (tipoAccion) => {
         try {
             const token = localStorage.getItem('access_token');
-            const payload = { accion: tipoAccion };
 
             if (tipoAccion === 'REPROGRAMAR') {
-                if (!nuevaFecha || !nuevaHora) return alert("Selecciona fecha y hora nueva.");
-                payload.nueva_fecha = nuevaFecha;
-                payload.nueva_hora = nuevaHora;
+                if (!fechaSeleccionada || !horarioSeleccionado) {
+                    notify.error("Selecciona fecha y hora nueva.");
+                    return;
+                }
+
+                console.log('Enviando reprogramación:', {
+                    turnoId: turnoSeleccionado.id,
+                    fecha: fechaSeleccionada.fecha,
+                    hora: horarioSeleccionado.hora
+                });
+
+                // Usar el nuevo endpoint específico: reprogramar_cliente
+                const res = await axios.post(
+                    `http://127.0.0.1:8000/api/gestion/turnos/${turnoSeleccionado.id}/reprogramar_cliente/`,
+                    { 
+                        fecha: fechaSeleccionada.fecha,
+                        hora_inicio: horarioSeleccionado.hora
+                    },
+                    { headers: { 'Authorization': `Bearer ${token}` } }
+                );
+
+                console.log('Respuesta reprogramación:', res.data);
+                notify.success(res.data.mensaje);
+                cerrarModal();
+                
+                // Pequeño delay para asegurar que los datos se propagaron
+                setTimeout(() => {
+                    fetchTurnos();
+                }, 500);
+                
             } else if (tipoAccion === 'CANCELAR') {
-                if (!window.confirm("¿Estás segura? Esta acción es irreversible.")) return;
+                // Mantener la lógica existente de gestionar para cancelación
+                const result = await confirmarAccion({
+                    title: "¿Cancelar turno?",
+                    text: "Esta acción es irreversible.",
+                    confirmButtonText: "Sí, cancelar"
+                });
+                if (!result.isConfirmed) return;
+
+                const res = await axios.post(
+                    `http://127.0.0.1:8000/api/gestion/turnos/${turnoSeleccionado.id}/gestionar/`,
+                    { accion: 'CANCELAR' },
+                    { headers: { 'Authorization': `Bearer ${token}` } }
+                );
+
+                notify.success(res.data.mensaje);
+                cerrarModal();
+                fetchTurnos();
             }
 
-            const res = await axios.post(
-                `http://127.0.0.1:8000/api/gestion/turnos/${turnoSeleccionado.id}/gestionar/`,
-                payload,
-                { headers: { 'Authorization': `Bearer ${token}` } }
-            );
-
-            alert(res.data.mensaje);
-            cerrarModal();
-            fetchTurnos();
-
         } catch (error) {
-            alert(error.response?.data?.error || "Error al procesar la solicitud");
+            console.error("Error completo:", error);
+            console.error("Response data:", error.response?.data);
+            const mensaje = error.response?.data?.error || 
+                           error.response?.data?.mensaje ||
+                           error.response?.data?.detail ||
+                           error.message ||
+                           "Error al procesar la solicitud";
+            notify.error(mensaje);
         }
     };
 
@@ -229,8 +247,10 @@ const MisTurnos = () => {
         setModalAbierto(false);
         setTurnoSeleccionado(null);
         setDatosPolitica(null);
-        setNuevaFecha('');
-        setNuevaHora('');
+        setFechaSeleccionada(null);
+        setHorarioSeleccionado(null);
+        setHorariosDelDia([]);
+        setDisponibilidadReprogramacion([]);
     };
 
     if (loading) return <div className="text-center mt-10" style={{ color: '#8B8682' }}>Cargando turnos...</div>;
@@ -362,57 +382,108 @@ const MisTurnos = () => {
                             <div className="mb-6">
                                 <h3 className="font-bold mb-4" style={{ color: '#817773' }}>Reprogramar Turno</h3>
                                 
-                                {/* Selector de Fecha */}
-                                <div className="mb-4">
-                                    <label className="block text-sm font-semibold mb-2" style={{ color: '#817773' }}>Selecciona Nueva Fecha</label>
-                                    <input 
-                                        type="date" 
-                                        className="w-full p-3 rounded focus:ring-2 outline-none border"
-                                        style={{ borderColor: '#D5D1CC', '--tw-ring-color': '#AB9A91' }}
-                                        value={nuevaFecha} 
-                                        onChange={handleFechaChange}
-                                        min={getMinDate()}
-                                    />
-                                </div>
-
-                                {/* Selector de Hora (Dinámico) */}
-                                {nuevaFecha && (
-                                    <div className="mb-4">
-                                        <label className="block text-sm font-semibold mb-2" style={{ color: '#817773' }}>
-                                            Selecciona Nueva Hora
-                                            {cargandoHoras && <span className="ml-2" style={{ color: '#AB9A91' }}>Cargando...</span>}
-                                        </label>
-                                        {horasDisponibles.length > 0 ? (
-                                            <select 
-                                                className="w-full p-3 rounded focus:ring-2 outline-none border"
-                                                style={{ borderColor: '#D5D1CC', '--tw-ring-color': '#AB9A91', color: '#817773', backgroundColor: '#F5EBE0' }}
-                                                value={nuevaHora}
-                                                onChange={(e) => setNuevaHora(e.target.value)}
-                                            >
-                                                <option value="">-- Selecciona una hora --</option>
-                                                {horasDisponibles.map((hora, idx) => (
-                                                    <option key={idx} value={hora}>
-                                                        {hora}
-                                                    </option>
+                                {cargandoDisponibilidad ? (
+                                    <p style={{ color: '#8B8682' }} className="text-center py-4">Cargando disponibilidad...</p>
+                                ) : disponibilidadReprogramacion.length === 0 ? (
+                                    <p style={{ color: '#C73E3E' }} className="text-sm text-center py-4">No hay disponibilidad para reprogramar en este momento</p>
+                                ) : (
+                                    <>
+                                        {/* SELECTOR DE FECHAS */}
+                                        <div className="mb-4">
+                                            <label className="block text-sm font-semibold mb-3" style={{ color: '#817773' }}>
+                                                Selecciona Nueva Fecha
+                                            </label>
+                                            <div className="grid grid-cols-2 gap-2 max-h-64 overflow-y-auto">
+                                                {disponibilidadReprogramacion.map((dia, idx) => (
+                                                    <button
+                                                        key={idx}
+                                                        onClick={() => seleccionarFechaDisponible(dia)}
+                                                        className="p-3 rounded border-2 text-left transition"
+                                                        style={{
+                                                            borderColor: fechaSeleccionada?.fecha === dia.fecha ? '#817773' : '#D5D1CC',
+                                                            backgroundColor: fechaSeleccionada?.fecha === dia.fecha ? '#E3D5CA' : '#F5EBE0',
+                                                            color: '#817773',
+                                                            fontWeight: fechaSeleccionada?.fecha === dia.fecha ? 'bold' : 'normal'
+                                                        }}
+                                                    >
+                                                        <div className="text-xs font-semibold">{dia.dia_semana}</div>
+                                                        <div className="text-sm">{dia.fecha}</div>
+                                                    </button>
                                                 ))}
-                                            </select>
-                                        ) : (
-                                            <p style={{ color: '#C73E3E' }} className="text-sm">No hay horarios disponibles para esta fecha</p>
-                                        )}
-                                    </div>
-                                )}
+                                            </div>
+                                        </div>
 
-                                {/* Botón Confirmar */}
-                                <button 
-                                    onClick={() => ejecutarAccion('REPROGRAMAR')} 
-                                    disabled={!nuevaFecha || !nuevaHora}
-                                    className="w-full text-white font-bold py-3 rounded transition disabled:opacity-50 disabled:cursor-not-allowed"
-                                    style={{ backgroundColor: '#817773' }}
-                                    onMouseEnter={(e) => !(!nuevaFecha || !nuevaHora) && (e.target.style.backgroundColor = '#5A5451')}
-                                    onMouseLeave={(e) => !(!nuevaFecha || !nuevaHora) && (e.target.style.backgroundColor = '#817773')}
-                                >
-                                    Confirmar Nueva Fecha
-                                </button>
+                                        {/* SELECTOR DE HORARIOS */}
+                                        {fechaSeleccionada && (
+                                            <div className="mb-4">
+                                                <label className="block text-sm font-semibold mb-3" style={{ color: '#817773' }}>
+                                                    Selecciona Nueva Hora
+                                                </label>
+                                                
+                                                {fechaSeleccionada.profesionales && fechaSeleccionada.profesionales.length > 1 ? (
+                                                    <>
+                                                        {/* MÚLTIPLES PROFESIONALES */}
+                                                        <div className="mb-3">
+                                                            <label className="block text-xs font-semibold mb-2" style={{ color: '#AB9A91' }}>
+                                                                Selecciona Profesional:
+                                                            </label>
+                                                            <div className="flex flex-wrap gap-2">
+                                                                {fechaSeleccionada.profesionales.map((prof, idx) => (
+                                                                    <button
+                                                                        key={idx}
+                                                                        onClick={() => setHorariosDelDia(prof.slots || [])}
+                                                                        className="px-3 py-1 rounded text-sm transition border"
+                                                                        style={{
+                                                                            borderColor: '#D5BDAF',
+                                                                            backgroundColor: horariosDelDia === prof.slots ? '#AB9A91' : '#F5EBE0',
+                                                                            color: horariosDelDia === prof.slots ? 'white' : '#817773'
+                                                                        }}
+                                                                    >
+                                                                        {prof.nombre}
+                                                                    </button>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    </>
+                                                ) : null}
+
+                                                {/* GRID DE HORARIOS */}
+                                                {horariosDelDia.length > 0 ? (
+                                                    <div className="grid grid-cols-4 gap-2">
+                                                        {horariosDelDia.map((slot, idx) => (
+                                                            <button
+                                                                key={idx}
+                                                                onClick={() => setHorarioSeleccionado(slot)}
+                                                                className="p-2 rounded border-2 text-sm font-semibold transition"
+                                                                style={{
+                                                                    borderColor: horarioSeleccionado?.hora === slot.hora ? '#817773' : '#D5D1CC',
+                                                                    backgroundColor: horarioSeleccionado?.hora === slot.hora ? '#817773' : '#F5EBE0',
+                                                                    color: horarioSeleccionado?.hora === slot.hora ? 'white' : '#817773'
+                                                                }}
+                                                            >
+                                                                {slot.hora}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                ) : (
+                                                    <p style={{ color: '#C73E3E' }} className="text-sm">Selecciona un profesional para ver sus horarios</p>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        {/* Botón Confirmar */}
+                                        <button 
+                                            onClick={() => ejecutarAccion('REPROGRAMAR')} 
+                                            disabled={!fechaSeleccionada || !horarioSeleccionado}
+                                            className="w-full text-white font-bold py-3 rounded transition disabled:opacity-50 disabled:cursor-not-allowed"
+                                            style={{ backgroundColor: '#817773' }}
+                                            onMouseEnter={(e) => !(!fechaSeleccionada || !horarioSeleccionado) && (e.target.style.backgroundColor = '#5A5451')}
+                                            onMouseLeave={(e) => !(!fechaSeleccionada || !horarioSeleccionado) && (e.target.style.backgroundColor = '#817773')}
+                                        >
+                                            Confirmar Nueva Fecha y Hora
+                                        </button>
+                                    </>
+                                )}
                             </div>
                         )}
 
