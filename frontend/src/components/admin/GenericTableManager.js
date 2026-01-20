@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 
 const GenericTableManager = ({ apiUrl, titulo, campos = [] }) => {
@@ -10,7 +10,7 @@ const GenericTableManager = ({ apiUrl, titulo, campos = [] }) => {
     const [mensaje, setMensaje] = useState('');
 
     // Cargar datos de la API
-    const cargarDatos = async () => {
+    const cargarDatos = useCallback(async () => {
         setLoading(true);
         try {
             const token = localStorage.getItem('access_token');
@@ -19,13 +19,14 @@ const GenericTableManager = ({ apiUrl, titulo, campos = [] }) => {
             });
             const datos = Array.isArray(res.data) ? res.data : res.data.results || [];
             setItems(datos);
+            console.log(`✅ Datos cargados para ${titulo}:`, datos);
         } catch (error) {
             console.error(`Error al cargar ${titulo}:`, error);
-            setMensaje(`❌ Error al cargar ${titulo}`);
+            setMensaje(`❌ Error al cargar ${titulo}: ${error.message}`);
         } finally {
             setLoading(false);
         }
-    };
+    }, [apiUrl, titulo]);
 
     useEffect(() => {
         cargarDatos();
