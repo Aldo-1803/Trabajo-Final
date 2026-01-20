@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { confirmarAccion, notify } from '../../utils/notificaciones';
 
 const MisRutinas = () => {
   const [rutinas, setRutinas] = useState([]);
@@ -68,9 +69,12 @@ const MisRutinas = () => {
   };
 
   const handleEliminarRutina = async (rutinaId, rutinaNombre) => {
-    if (!window.confirm(`¿Deseas dejar de usar la rutina "${rutinaNombre}"?`)) {
-      return;
-    }
+    const result = await confirmarAccion({
+      title: "¿Dejar de usar rutina?",
+      text: `Se eliminará "${rutinaNombre}" de tus rutinas`,
+      confirmButtonText: "Sí, eliminar"
+    });
+    if (!result.isConfirmed) return;
 
     try {
       const token = localStorage.getItem('access_token');
@@ -81,11 +85,10 @@ const MisRutinas = () => {
       );
 
       setRutinas(rutinas.filter(r => r.id !== rutinaId));
-      setSuccessMessage('¡Rutina eliminada de tus rutinas!');
-      setTimeout(() => setSuccessMessage(''), 3000);
+      notify.success('¡Rutina eliminada de tus rutinas!');
     } catch (err) {
       console.error('Error al eliminar rutina:', err);
-      setError('Error al eliminar la rutina');
+      notify.error('Error al eliminar la rutina');
     }
   };
 

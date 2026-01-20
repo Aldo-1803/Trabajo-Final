@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
+import { confirmarAccion, notify } from '../../utils/notificaciones';
 
 const GestionProductos = () => {
     // --- ESTADOS ---
@@ -31,7 +32,7 @@ const GestionProductos = () => {
             setProductos(res.data);
         } catch (error) {
             console.error("Error al cargar productos", error);
-            if (error.response?.status === 403) alert("No tienes permisos de administrador.");
+            if (error.response?.status === 403) notify.error("No tienes permisos de administrador.");
         } finally {
             setLoading(false);
         }
@@ -74,35 +75,40 @@ const GestionProductos = () => {
             if (modoEdicion) {
                 // EDITAR (PUT)
                 await axios.put(`http://127.0.0.1:8000/api/gestion/productos/${form.id}/`, form, { headers });
-                alert("Producto actualizado correctamente.");
+                notify.success("Producto actualizado correctamente.");
             } else {
                 // CREAR (POST)
                 await axios.post('http://127.0.0.1:8000/api/gestion/productos/', form, { headers });
-                alert("Producto creado exitosamente.");
+                notify.success("Producto creado exitosamente.");
             }
             cerrarModal();
             cargarProductos(); // Recargar tabla
         } catch (error) {
             // Mostramos errores de validación del backend (ej: precio negativo)
             const msg = error.response?.data?.precio || error.response?.data?.nombre || "Error al guardar.";
-            alert(`⚠️ Error: ${msg}`);
+            notify.error(`${msg}`);
         }
     };
 
     const eliminarProducto = async (id, nombre) => {
-        if (!window.confirm(`¿Estás segura de eliminar "${nombre}"?`)) return;
+        const result = await confirmarAccion({
+            title: "¿Eliminar producto?",
+            text: `Se eliminará "${nombre}"`,
+            confirmButtonText: "Sí, eliminar"
+        });
+        if (!result.isConfirmed) return;
 
         try {
             const token = localStorage.getItem('access_token');
             await axios.delete(`http://127.0.0.1:8000/api/gestion/productos/${id}/`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
-            alert("Producto eliminado.");
+            notify.success("Producto eliminado.");
             cargarProductos();
         } catch (error) {
             // Aquí capturamos la validación de Stock del backend
             const msg = error.response?.data?.error || "No se pudo eliminar.";
-            alert(`⛔ ${msg}`);
+            notify.error(`${msg}`);
         }
     };
 

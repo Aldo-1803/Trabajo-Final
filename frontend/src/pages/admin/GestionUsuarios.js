@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
+import { confirmarAccion, notify } from '../../utils/notificaciones';
 
 const GestionUsuarios = () => {
     const [usuarios, setUsuarios] = useState([]);
@@ -41,7 +42,7 @@ const GestionUsuarios = () => {
         } catch (error) {
             console.error("Error cargando usuarios:", error);
             if (error.response?.status === 403) {
-                alert("Acceso denegado. Solo administradores.");
+                notify.error("Acceso denegado. Solo administradores.");
                 navigate('/');
             }
         } finally {
@@ -67,20 +68,25 @@ const GestionUsuarios = () => {
             await axios.post('http://127.0.0.1:8000/api/gestion/admin/usuarios/', form, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
-            alert("Usuario creado exitosamente.");
+            notify.success("Usuario creado exitosamente.");
             setModalAbierto(false);
             setForm({ email: '', first_name: '', last_name: '', password: '', is_staff: false }); // Reset
             cargarUsuarios();
         } catch (error) {
             const msg = error.response?.data?.email ? "El email ya existe." : "Error al crear usuario.";
-            alert(`⚠️ ${msg}`);
+            notify.error(`${msg}`);
         }
     };
 
     // --- ACCIÓN DE DESACTIVAR (SOFT DELETE) ---
     const toggleEstadoUsuario = async (usuario) => {
         const accion = usuario.is_active ? "desactivar" : "reactivar";
-        if (!window.confirm(`¿Seguro que deseas ${accion} a ${usuario.email}?`)) return;
+        const result = await confirmarAccion({
+            title: `¿${accion.charAt(0).toUpperCase() + accion.slice(1)} usuario?`,
+            text: `${accion.charAt(0).toUpperCase() + accion.slice(1)} a ${usuario.email}`,
+            confirmButtonText: `Sí, ${accion}`
+        });
+        if (!result.isConfirmed) return;
 
         try {
             const token = localStorage.getItem('access_token');
@@ -90,9 +96,10 @@ const GestionUsuarios = () => {
                 { headers: { 'Authorization': `Bearer ${token}` } }
             );
             cargarUsuarios();
+            notify.success(`Usuario ${accion}do correctamente`);
         } catch (error) {
             // Aquí capturamos la validación del backend ("No se puede desactivar si tiene turnos...")
-            alert(`⛔ Error: ${JSON.stringify(error.response?.data)}`);
+            notify.error(`${JSON.stringify(error.response?.data)}`);
         }
     };
 

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useParams, useNavigate } from 'react-router-dom';
+import { confirmarAccion, notify } from '../../utils/notificaciones';
 
 const DetalleRutina = () => {
     const { id } = useParams();
@@ -27,7 +28,7 @@ const DetalleRutina = () => {
 
     const handleDescargarRutina = () => {
         if (!rutina.archivo) {
-            alert('Esta rutina no tiene archivo adjunto');
+            notify.error('Esta rutina no tiene archivo adjunto');
             return;
         }
         // Abre el archivo en una nueva pestaña o lo descarga
@@ -53,10 +54,11 @@ const DetalleRutina = () => {
                 headers: {'Authorization': `Bearer ${token}`}
             }
         );
-        alert("¡Rutina agregada a tu perfil!");
+        notify.success("¡Rutina agregada a tu perfil!");
 
     } catch (error) {
         console.error("Error al agregar rutina:", error);
+        notify.error("Error al agregar rutina");
     }
 };
 

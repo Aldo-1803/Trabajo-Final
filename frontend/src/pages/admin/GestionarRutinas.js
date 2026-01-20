@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
+import { confirmarAccion, notify } from '../../utils/notificaciones';
 
 const GestionarRutinas = () => {
   const [rutinas, setRutinas] = useState([]);
@@ -62,7 +63,7 @@ const GestionarRutinas = () => {
     
     // Validación: archivo requerido SOLO para crear (no para editar)
     if (!editingId && !formData.archivo) {
-      alert('⚠️ Debe cargar un archivo para crear la rutina.');
+      notify.error('Debe cargar un archivo para crear la rutina.');
       return;
     }
     
@@ -86,7 +87,7 @@ const GestionarRutinas = () => {
             'Content-Type': 'multipart/form-data'
           }
         });
-        alert('✅ Rutina actualizada exitosamente');
+        notify.success('Rutina actualizada exitosamente');
       } else {
         const response = await axios.post('http://127.0.0.1:8000/api/gestion/rutinas/', formDataToSend, {
           headers: { 
@@ -94,7 +95,7 @@ const GestionarRutinas = () => {
             'Content-Type': 'multipart/form-data'
           }
         });
-        alert('✅ Rutina creada exitosamente');
+        notify.success('Rutina creada exitosamente');
       }
       
       setShowForm(false);
@@ -104,7 +105,7 @@ const GestionarRutinas = () => {
       console.error('❌ Error al guardar:', err);
       console.error('Respuesta del servidor:', err.response?.data);
       const errorMsg = err.response?.data?.archivo?.[0] || err.response?.data?.detail || 'Error al guardar la rutina. Verifica los campos.';
-      alert(`❌ Error: ${errorMsg}`);
+      notify.error(errorMsg);
     }
   };
 
@@ -123,7 +124,12 @@ const GestionarRutinas = () => {
 
   const handleDelete = async (id) => {
     // 1. Confirmación inicial
-    if (!window.confirm('¿Estás seguro de eliminar esta rutina?')) return;
+    const result = await confirmarAccion({
+      title: '¿Eliminar rutina?',
+      text: '¿Estás seguro de que deseas eliminar esta rutina?',
+      confirmButtonText: 'Sí, eliminar'
+    });
+    if (!result.isConfirmed) return;
 
     try {
       const token = localStorage.getItem('access_token');
@@ -138,7 +144,7 @@ const GestionarRutinas = () => {
       // CASO A: ELIMINACIÓN FÍSICA (Nadie la usaba)
       // El backend devuelve status 204 No Content
       if (res.status === 204) {
-          alert("✅ Rutina eliminada permanentemente del sistema.");
+          notify.success("Rutina eliminada permanentemente del sistema.");
       } 
       
       // CASO B: MARCADA COMO OBSOLETA (Estaba en uso)
@@ -146,7 +152,7 @@ const GestionarRutinas = () => {
       else if (res.status === 200) {
           // Mostramos el mensaje detallado que armamos en Python
           // Ej: "La rutina está en uso. Se marcó como 'Obsoleta' y se notificó a los clientes."
-          alert(`⚠️ AVISO DE INTEGRIDAD:\n${res.data.mensaje}`);
+          notify.info(res.data.mensaje);
           
           if (res.data.notificados) {
           }
@@ -157,7 +163,7 @@ const GestionarRutinas = () => {
 
     } catch (err) {
       console.error(err);
-      alert('Error al intentar eliminar la rutina. Revisa la consola.');
+      notify.error('Error al intentar eliminar la rutina. Revisa la consola.');
     }
   };
 
@@ -175,7 +181,7 @@ const GestionarRutinas = () => {
     } catch (err) {
       console.error('Error al cargar detalles:', err);
       console.error('Detalles del error:', err.response?.data);
-      alert('Error al cargar usuarios que usan esta rutina: ' + (err.response?.data?.detail || err.message));
+      notify.error('Error al cargar usuarios que usan esta rutina: ' + (err.response?.data?.detail || err.message));
     }
   };
 

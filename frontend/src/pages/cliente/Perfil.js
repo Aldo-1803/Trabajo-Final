@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
-// import CampanaNotificaciones from '../../components/CampanaNotificaciones';  // No usada
+import CampanaNotificaciones from '../../components/CampanaNotificaciones';
 
 // ============================================================================
 // COMPONENTE PRINCIPAL
@@ -85,6 +85,11 @@ const Perfil = () => {
     // ========================================================================
     return (
         <div style={{ backgroundColor: '#F5EBE0' }} className="min-h-screen">
+            {/* --- CAMPANA DE NOTIFICACIONES --- */}
+            <div className="fixed top-4 right-4 z-50">
+                <CampanaNotificaciones />
+            </div>
+
             {/* CONTENIDO PRINCIPAL */}
             <div className="max-w-5xl mx-auto px-4 py-12">
                 {/* ALERTA DE ERROR */}

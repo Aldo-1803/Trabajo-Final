@@ -1,14 +1,15 @@
 import React from 'react';
+import { notify } from '../../utils/notificaciones';
 
 function Paso1DatosPersonales({ formData, handleChange, nextStep }) {
     
     const handleNext = () => {
         if (formData.email === '' || formData.password === '' || formData.first_name === '') {
-            alert('Por favor, complete los campos requeridos.');
+            notify.error('Por favor, complete los campos requeridos.');
             return;
         }
         if (formData.password !== formData.password2) {
-            alert('Las contraseñas no coinciden.');
+            notify.error('Las contraseñas no coinciden.');
             return;
         }
         nextStep();

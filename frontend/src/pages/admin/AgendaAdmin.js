@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import ConfiguracionAgendaMasiva from './ConfiguracionAgendaMasiva.js';
+import { notify } from '../../utils/notificaciones';
 
 const AgendaAdmin = () => {
     // Estado del Calendario
@@ -32,10 +33,15 @@ const AgendaAdmin = () => {
         try {
             setLoading(true);
             const token = localStorage.getItem('access_token');
-            const res = await axios.get('http://127.0.0.1:8000/api/gestion/agenda/general/', {
+            const ahora = new Date();
+            const mes = ahora.getMonth() + 1;
+            const anio = ahora.getFullYear();
+            
+            const res = await axios.get('http://127.0.0.1:8000/api/gestion/obtener_disponibilidad_calendario/', {
+                params: { mes, anio },
                 headers: { Authorization: `Bearer ${token}` }
             });
-            setHorariosBase(res.data.horarios_base);
+            setHorariosBase(res.data.reglas);
             setBloqueos(res.data.bloqueos);
             setLoading(false);
         } catch (error) {
@@ -91,7 +97,7 @@ const AgendaAdmin = () => {
             });
             
             // ÉXITO (Paso 7 del C.U.)
-            alert("Bloqueo creado exitosamente.");
+            notify.success('Bloqueo creado exitosamente');
             setMostrarModal(false);
             fetchAgendaData(); // Refrescar calendario
 
@@ -109,11 +115,11 @@ const AgendaAdmin = () => {
                 
                 mensaje += `\nVe a la sección "Turnos" para resolverlos antes de bloquear.`;
 
-                alert(mensaje);
+                notify.error('Conflictos detectados: ' + data.mensaje);
                 // No cerramos el modal para que pueda corregir las fechas si quiere
             } else {
                 // Otros errores (400, 500)
-                alert("Error al guardar: " + (error.response?.data?.error || "Error desconocido"));
+                notify.error('Error al guardar: ' + (error.response?.data?.error || 'Error desconocido'));
             }
         }
     };

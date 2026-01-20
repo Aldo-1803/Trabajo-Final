@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useTransition } from 'react'
 import DatePicker from 'react-datepicker'
 import 'react-datepicker/dist/react-datepicker.css'
+import { notify, confirmarAccion } from '../../utils/notificaciones'
 
 const API_URL = 'http://127.0.0.1:8000/api/gestion/horariolaboral/configurar_rango/'
+const LIMPIAR_URL = 'http://127.0.0.1:8000/api/gestion/horariolaboral/limpiar_agenda/'
 
 // Paleta de colores Bohemia Hair
 const COLORS = {
@@ -32,7 +34,9 @@ export default function ConfiguracionAgendaMasiva({ fetchPersonal }) {
   const [fechaDesde, setFechaDesde] = useState(null)
   const [fechaHasta, setFechaHasta] = useState(null)
   const [personalList, setPersonalList] = useState([])
+  const [personalSeleccionado, setPersonalSeleccionado] = useState(null)
   const [pending, startTransition] = useTransition()
+  const [loadingLimpiar, setLoadingLimpiar] = useState(false)
   const [error, setError] = useState(null)
   const [successMsg, setSuccessMsg] = useState(null)
   const [conflictos, setConflictos] = useState(null)
@@ -67,12 +71,14 @@ export default function ConfiguracionAgendaMasiva({ fetchPersonal }) {
       try {
         if (fetchPersonal) {
           const data = await fetchPersonal()
-          setPersonalList(data)
+          const activos = data.filter(p => p.activo)
+          setPersonalList(activos)
         } else {
           const res = await fetch('http://127.0.0.1:8000/api/gestion/personal/')
           if (!res.ok) throw new Error('No se pudo cargar personal')
           const json = await res.json()
-          setPersonalList(json)
+          const activos = json.filter(p => p.activo)
+          setPersonalList(activos)
         }
       } catch (e) {
         console.error(e)
@@ -92,9 +98,13 @@ export default function ConfiguracionAgendaMasiva({ fetchPersonal }) {
   }
 
   function buildPayload() {
+    // Verificar si todos los items tienen personal_id nulo
+    const todosSinProfesional = patron.every(p => p.personal_id === null)
+
     return {
       fecha_desde: fechaDesde ? fechaDesde.toISOString().split('T')[0] : null,
       fecha_hasta: fechaHasta ? fechaHasta.toISOString().split('T')[0] : null,
+      todos_profesionales: todosSinProfesional,
       patron: patron.map(p => ({
         dia: p.dia,
         hora_inicio: p.hora_inicio,
@@ -102,8 +112,51 @@ export default function ConfiguracionAgendaMasiva({ fetchPersonal }) {
         permite_diseno: !!p.permite_diseno,
         permite_complemento: !!p.permite_complemento,
         personal_id: p.personal_id,
-        activo: !!p.activo
+        activo: !!p.activo,
+        fecha_desde: fechaDesde ? fechaDesde.toISOString().split('T')[0] : null,
+        fecha_hasta: fechaHasta ? fechaHasta.toISOString().split('T')[0] : null
       }))
+    }
+  }
+
+  async function handleLimpiarAgenda() {
+    if (!personalSeleccionado) {
+      notify.error('Selecciona un profesional primero')
+      return
+    }
+
+    const confirmar = await confirmarAccion({
+      title: '⚠️ Limpiar Agenda',
+      text: `¿Eliminar todos los horarios de ${personalSeleccionado.nombre}? Esta acción no se puede deshacer.`,
+      confirmButtonText: 'Sí, limpiar'
+    })
+
+    if (!confirmar.isConfirmed) return
+
+    setLoadingLimpiar(true)
+    try {
+      const token = localStorage.getItem('access_token')
+      const headers = { 'Content-Type': 'application/json' }
+      if (token) headers['Authorization'] = `Bearer ${token}`
+
+      const res = await fetch(`${LIMPIAR_URL}?personal_id=${personalSeleccionado.id}`, {
+        method: 'DELETE',
+        headers
+      })
+
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({ error: 'Error desconocido' }))
+        throw new Error(json.error || 'Error al limpiar agenda')
+      }
+
+      const json = await res.json()
+      notify.success(json.mensaje || 'Agenda limpiada correctamente')
+      setPersonalSeleccionado(null)
+    } catch (err) {
+      console.error(err)
+      notify.error(err.message || 'Fallo al limpiar la agenda')
+    } finally {
+      setLoadingLimpiar(false)
     }
   }
 
@@ -242,7 +295,7 @@ export default function ConfiguracionAgendaMasiva({ fetchPersonal }) {
               background: `linear-gradient(135deg, ${COLORS.accent_light} 0%, ${COLORS.primary_light} 100%)`,
               cursor: pending ? 'not-allowed' : 'pointer'
             }}
-            disabled={pending}
+            disabled={pending || loadingLimpiar}
           >
             {pending ? 'Aplicando' : 'Aplicar'}
           </button>
@@ -258,6 +311,43 @@ export default function ConfiguracionAgendaMasiva({ fetchPersonal }) {
             onClick={resetForm}
           >
             Limpiar
+          </button>
+        </div>
+
+        {/* Selector de Profesional para limpiar agenda */}
+        <div 
+          className="grid grid-cols-1 md:grid-cols-3 gap-3 p-4 rounded-xl shadow-md"
+          style={{ backgroundColor: COLORS.bg_white, borderLeft: `5px solid ${COLORS.warning}` }}
+        >
+          <div className="md:col-span-2 flex flex-col">
+            <label className="font-bold text-xs mb-2" style={{ color: COLORS.primary_dark }}>
+              🗑️ Limpiar agenda de profesional
+            </label>
+            <select 
+              value={personalSeleccionado?.id || ''} 
+              onChange={e => {
+                const selected = personalList.find(p => p.id === parseInt(e.target.value, 10))
+                setPersonalSeleccionado(selected || null)
+              }}
+              className="px-3 py-2 rounded-lg border text-xs focus:outline-none transition"
+              style={{ borderColor: COLORS.accent_very_light, backgroundColor: COLORS.bg_white }}
+            >
+              <option value="">Seleccionar profesional...</option>
+              {personalList.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+            </select>
+          </div>
+
+          <button
+            type="button"
+            className="md:col-span-1 px-4 py-2 rounded-lg font-bold text-white text-xs transition transform hover:scale-105 disabled:opacity-60 shadow-md mt-6 md:mt-0"
+            style={{ 
+              backgroundColor: COLORS.error,
+              cursor: loadingLimpiar || !personalSeleccionado ? 'not-allowed' : 'pointer'
+            }}
+            onClick={handleLimpiarAgenda}
+            disabled={loadingLimpiar || !personalSeleccionado}
+          >
+            {loadingLimpiar ? 'Limpiando...' : 'Limpiar Agenda'}
           </button>
         </div>
 

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { notify } from '../../utils/notificaciones';
 
 const NuevoTurno = () => {
     // Estados para los datos del formulario
@@ -34,7 +35,7 @@ const NuevoTurno = () => {
     // 2. Función para consultar disponibilidad (Llama a tu nuevo algoritmo)
     const consultarDisponibilidad = async () => {
         if (!fecha || !servicioSeleccionado) {
-            alert("Por favor selecciona fecha y servicio.");
+            notify.error("Por favor selecciona fecha y servicio.");
             return;
         }
         
@@ -58,7 +59,7 @@ const NuevoTurno = () => {
     // 3. Función para confirmar turno
     const confirmarTurno = async () => {
         if (!clienteSeleccionado) {
-            alert("¡Falta seleccionar el cliente!");
+            notify.error("¡Falta seleccionar el cliente!");
             return;
         }
 

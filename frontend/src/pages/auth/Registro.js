@@ -3,6 +3,7 @@ import Paso1DatosPersonales from './Paso1DatosPersonales';
 import Paso2PerfilCabello from './Paso2PerfilCabello';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
+import { notify } from '../../utils/notificaciones';
 
 const Registro = () => {
     const [step, setStep] = useState(1);
@@ -84,16 +85,16 @@ const Registro = () => {
 
         try {
             await axios.post('/api/usuarios/registro/', formData);
-            alert('¡Registro exitoso! Ahora inicia sesión.');
+            notify.success('¡Registro exitoso! Ahora inicia sesión.');
             navigate('/login');
         } catch (error) {
             console.error('Error al registrar usuario:', error.response?.data);
             if (error.response?.data) {
                 const errors = Object.entries(error.response.data);
                 const errorMsg = errors.map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : value}`).join('\n');
-                alert(`Error al registrar:\n${errorMsg}`);
+                notify.error(`Error al registrar: ${errorMsg}`);
             } else {
-                alert('Error al registrar usuario. Intenta nuevamente.');
+                notify.error('Error al registrar usuario. Intenta nuevamente.');
             }
         } finally {
             setLoading(false);

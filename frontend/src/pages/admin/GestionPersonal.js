@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { confirmarAccion, notify } from '../../utils/notificaciones';
 
 const GestionPersonal = () => {
     const [personal, setPersonal] = useState([]);
@@ -101,18 +102,23 @@ const GestionPersonal = () => {
     };
 
     const eliminarPersonal = async (id, nombre) => {
-        if (!window.confirm(`¿Eliminar a ${nombre}?`)) return;
+        const result = await confirmarAccion({
+            title: "¿Eliminar personal?",
+            text: `Se eliminará a ${nombre}`,
+            confirmButtonText: "Sí, eliminar"
+        });
+        if (!result.isConfirmed) return;
 
         try {
             const token = localStorage.getItem('access_token');
             await axios.delete(`http://127.0.0.1:8000/api/gestion/personal/${id}/`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
-            setMensaje('✅ Personal eliminado');
+            notify.success('Personal eliminado');
             cargarPersonal();
         } catch (error) {
             console.error('Error al eliminar:', error);
-            setMensaje('❌ No se pudo eliminar');
+            notify.error('No se pudo eliminar');
         }
     };
 

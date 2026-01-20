@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
+import { confirmarAccion, notify } from '../../utils/notificaciones';
 
 const GestionEquipamiento = () => {
     // --- ESTADOS ---
@@ -104,34 +105,39 @@ const GestionEquipamiento = () => {
         try {
             if (modoEdicion) {
                 await axios.put(`http://127.0.0.1:8000/api/gestion/equipamiento/${form.id}/`, form, { headers });
-                alert("Equipo actualizado correctamente.");
+                notify.success("Equipo actualizado correctamente.");
             } else {
                 await axios.post('http://127.0.0.1:8000/api/gestion/equipamiento/', form, { headers });
-                alert("Nuevo equipo registrado.");
+                notify.success("Nuevo equipo registrado.");
             }
             setModalAbierto(false);
             cargarEquipos();
         } catch (error) {
             // Manejo de errores (ej: código duplicado)
             const msg = error.response?.data?.codigo ? "El código ya existe." : "Error al guardar.";
-            alert(`⚠️ ${msg}`);
+            notify.error(`${msg}`);
         }
     };
 
     const eliminarEquipo = async (id, nombre) => {
-        if (!window.confirm(`¿Dar de baja el equipo "${nombre}"? Esta acción es permanente.`)) return;
+        const result = await confirmarAccion({
+            title: "¿Dar de baja equipamiento?",
+            text: `Se eliminará "${nombre}". Esta acción es permanente.`,
+            confirmButtonText: "Sí, eliminar"
+        });
+        if (!result.isConfirmed) return;
 
         try {
             const token = localStorage.getItem('access_token');
             await axios.delete(`http://127.0.0.1:8000/api/gestion/equipamiento/${id}/`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
-            alert("Equipo eliminado del inventario.");
+            notify.success("Equipo eliminado del inventario.");
             cargarEquipos();
         } catch (error) {
             // Aquí el backend valida si hay turnos en las próximas 24hs
             const msg = error.response?.data?.error || "No se puede eliminar (¿Está en uso?).";
-            alert(`⛔ ${msg}`);
+            notify.error(`${msg}`);
         }
     };
 

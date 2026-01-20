@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { confirmarAccion, notify } from '../../utils/notificaciones';
 
 const CampanaNotificaciones = () => {
     const [notificaciones, setNotificaciones] = useState([]);
@@ -68,14 +69,17 @@ const CampanaNotificaciones = () => {
             
             // Validar datos
             if (!fecha_oferta || !hora_oferta) {
-                alert('Datos incompletos en la notificación');
+                notify.error('Datos incompletos en la notificación');
                 return;
             }
 
             // Confirmación visual
-            if (!window.confirm(`¿Confirmas adelantar tu turno al ${fecha_oferta} a las ${hora_oferta}?`)) {
-                return;
-            }
+            const result = await confirmarAccion({
+                title: "¿Adelantar turno?",
+                text: `¿Confirmas adelantar tu turno al ${fecha_oferta} a las ${hora_oferta}?`,
+                confirmButtonText: "Sí, adelantar"
+            });
+            if (!result.isConfirmed) return;
 
             setProcesando(prev => ({ ...prev, [notif.id]: true }));
             const token = localStorage.getItem('access_token');
@@ -104,7 +108,7 @@ const CampanaNotificaciones = () => {
             }
 
             // Si llegamos aquí, el cambio fue exitoso
-            alert("¡Turno adelantado correctamente!");
+            notify.success("¡Turno adelantado correctamente!");
             
             // Marcar notificación como leída
             await marcarComoLeida(notif.id);
@@ -118,7 +122,7 @@ const CampanaNotificaciones = () => {
                 || error.response?.data?.detail 
                 || error.message 
                 || "Error al procesar la solicitud";
-            alert(errorMsg);
+            notify.error(errorMsg);
         } finally {
             setProcesando(prev => ({ ...prev, [notif.id]: false }));
         }
