@@ -85,7 +85,8 @@ class UsuarioPerfilReadSerializer(serializers.ModelSerializer):
     
     def get_historial_servicios(self, obj):
         if hasattr(obj, 'cliente'):
-            return [s.id for s in obj.cliente.historial_servicios.all()]
+            # Obtiene el histórico completo desde la propiedad @property del Cliente
+            return [turno.id for turno in obj.cliente.historial_completo]
         return []
 
 
@@ -120,12 +121,6 @@ class UsuarioPerfilUpdateSerializer(serializers.ModelSerializer):
         allow_null=True, 
         required=False
     )
-    historial_servicios = serializers.PrimaryKeyRelatedField(
-        queryset=Servicio.objects.all(),
-        many=True,
-        allow_null=True,
-        required=False
-    )
     
     # Campos adicionales del cliente
     zona = serializers.CharField(required=False, allow_blank=True)
@@ -140,7 +135,7 @@ class UsuarioPerfilUpdateSerializer(serializers.ModelSerializer):
         fields = [
             'first_name', 'last_name', 
             'tipo_cabello', 'grosor_cabello', 'porosidad_cabello',
-            'cuero_cabelludo', 'estado_general', 'historial_servicios',
+            'cuero_cabelludo', 'estado_general',
             'zona', 'numero', 'fecha_nacimiento', 'sexo', 'redes',
             'productos_actuales'
         ]
@@ -185,10 +180,6 @@ class UsuarioPerfilUpdateSerializer(serializers.ModelSerializer):
             cliente.estado_general = validated_data['estado_general']
         
         cliente.save()
-
-        # 3. Guardar ManyToMany (historial_servicios)
-        if 'historial_servicios' in validated_data:
-            cliente.historial_servicios.set(validated_data['historial_servicios'])
 
         return instance
 

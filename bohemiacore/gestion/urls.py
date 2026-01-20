@@ -1,17 +1,18 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
+from . import views
 from .views import (
     DisponibilidadTurnosView, MiAgendaCuidadosView, AdminDashboardStatsView, TipoCabelloViewSet, GrosorCabelloViewSet,
     PorosidadCabelloViewSet, CueroCabelludoViewSet, EstadoGeneralViewSet, CategoriaServicioViewSet, ServicioViewSet,
     ServiciosQuimicosViewSet, TurnoViewSet, RutinaViewSet, ReglaDiagnosticoViewSet, NotificacionViewSet, SeleccionarRutinaView,
-    RutinaClienteViewSet, TipoEquipamientoViewSet,
+    RutinaClienteViewSet, TipoEquipamientoViewSet, FichaTecnicaViewSet, RequisitoServicioViewSet, DiagnosticoCapilarViewSet,
     #ListaEsperaCreateView,
     # ViewSets
     #PasoRutinaViewSet,
 
 )
 
-from . import views
+
 
 # Crear el router automático
 router = DefaultRouter()
@@ -39,6 +40,9 @@ router.register(r'productos', views.ProductoViewSet, basename='productos')
 router.register(r'personal', views.PersonalViewSet, basename='personal')
 router.register(r'tipo-equipamiento', TipoEquipamientoViewSet, basename='tipo-equipamiento')
 router.register(r'equipamiento', views.EquipamientoViewSet, basename='equipamiento')
+router.register(r'fichas-tecnicas', FichaTecnicaViewSet, basename='ficha-tecnica')
+router.register(r'requisitos-servicio', RequisitoServicioViewSet, basename='requisito-servicio')
+router.register(r'diagnosticos-capilares', DiagnosticoCapilarViewSet, basename='diagnostico-capilar')
 
 # Las URLs se generan automáticamente
 urlpatterns = [
@@ -52,4 +56,5 @@ urlpatterns = [
     #path('lista-espera/', ListaEsperaCreateView.as_view(), name='unirse-lista-espera'),
     path('agenda/general/', views.obtener_agenda_general, name='agenda-general'),
     path('agenda/bloquear/', views.crear_bloqueo, name='agenda-bloquear'),
+    path('obtener_disponibilidad_calendario/', views.obtener_disponibilidad_calendario, name='disponibilidad-calendario'),
 ]

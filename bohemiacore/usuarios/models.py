@@ -8,10 +8,11 @@ from gestion.models import (
     PorosidadCabello, 
     CueroCabelludo, 
     EstadoGeneral,
-    Servicio
+    Servicio,
+    Turno
 )
 
-# 1. Manager Personalizado (SIN CAMBIOS)
+# 1. Manager Personalizado 
 class UsuarioManager(BaseUserManager):
     """
     Manager que garantiza que el campo 'email' siempre se use
@@ -46,7 +47,7 @@ class UsuarioManager(BaseUserManager):
         return self._create_user(email, password, **extra_fields)
 
 
-# 2. Modelo de Usuario Personalizado (SIN CAMBIOS)
+# 2. Modelo de Usuario Personalizado 
 class Usuario(AbstractUser):
     email = models.EmailField(unique=True, null=False, blank=False)
     username = None 
@@ -61,7 +62,7 @@ class Usuario(AbstractUser):
         return self.email
     
 
-# 3. Modelo de Cliente (¡CORREGIDO Y CONSOLIDADO!)
+# 3. Modelo de Cliente
 class Cliente(models.Model):
     # 1. VÍNCULO 1:1
     usuario = models.OneToOneField(
@@ -109,26 +110,16 @@ class Cliente(models.Model):
         blank=True
     )
 
-    # --- CAMPO MOVIDO AQUÍ ---
     productos_actuales = models.TextField(
         blank=True, 
         null=True, 
         verbose_name="Productos Actuales"
     )
 
-    # --- CAMPO HISTORIAL (ya estaba aquí, perfecto) ---
-    historial_servicios = models.ManyToManyField(
-        Servicio,
-        blank=True,
-        verbose_name="Historial de Servicios (Estructurado)"
-    )
-
-    rutinas = models.ManyToManyField(
-        'gestion.Rutina',  
-        blank=True,
-        related_name='clientes_guardaron',
-        verbose_name="Mis Rutinas Guardadas"
-    )
+    @property
+    def historial_completo(self):
+        # Importación local para evitar importación circular
+        return Turno.objects.filter(cliente=self, estado='realizado').order_by('-fecha')
 
     fecha_actualizacion = models.DateTimeField(auto_now=True)
 

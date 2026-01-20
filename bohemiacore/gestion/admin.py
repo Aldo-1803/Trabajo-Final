@@ -3,7 +3,7 @@ from .models import (
     TipoCabello, GrosorCabello, PorosidadCabello, CueroCabelludo, EstadoGeneral,
     CategoriaServicio, Servicio, ReglaDiagnostico, Rutina, RutinaCliente,
     Notificacion, Configuracion, Personal, HorarioLaboral, BloqueoAgenda, DiasSemana, Equipamiento,
-    TipoEquipamiento
+    TipoEquipamiento, RequisitoServicio, FichaTecnica, DiagnosticoCapilar
     #PasoRutinaCliente, #PasoRutina,
 )
 
@@ -36,13 +36,6 @@ admin.site.register(EstadoGeneral, CatalogoAdmin)
 class CategoriaServicioAdmin(admin.ModelAdmin):
     list_display = ('nombre', 'descripcion')
     search_fields = ('nombre',)
-
-@admin.register(Servicio)
-class ServicioAdmin(admin.ModelAdmin):
-    list_display = ('nombre', 'categoria', 'precio_base', 'duracion_estimada')
-    list_filter = ('categoria',) # ¡Muy útil para filtrar por categoría!
-    search_fields = ('nombre', 'descripcion')
-
 
 @admin.register(ReglaDiagnostico)
 class ReglaDiagnosticoAdmin(admin.ModelAdmin):
@@ -378,3 +371,68 @@ class EquipamientoAdmin(admin.ModelAdmin):
     list_filter = ('tipo', 'estado', 'is_active')
     search_fields = ('codigo', 'nombre')
     ordering = ('codigo',)
+
+
+class RequisitoServicioInline(admin.TabularInline):
+    """
+    Inline para mostrar requisitos de equipamiento dentro de Servicio.
+    Permite agregar/editar requisitos directamente desde el formulario del servicio.
+    """
+    model = RequisitoServicio
+    extra = 1
+    fields = ('tipo_equipamiento', 'obligatorio', 'cantidad_minima')
+    verbose_name = "Requisito de Equipamiento"
+    verbose_name_plural = "Requisitos de Equipamiento"
+
+
+@admin.register(Servicio)
+class ServicioAdminMejorado(admin.ModelAdmin):
+    list_display = ('nombre', 'categoria', 'precio_base', 'duracion_estimada')
+    list_filter = ('categoria',)
+    search_fields = ('nombre', 'descripcion')
+    inlines = [RequisitoServicioInline]  # Agregar inline
+
+
+@admin.register(RequisitoServicio)
+class RequisitoServicioAdmin(admin.ModelAdmin):
+    list_display = ('servicio', 'tipo_equipamiento', 'obligatorio', 'cantidad_minima')
+    list_filter = ('obligatorio', 'servicio', 'tipo_equipamiento')
+    search_fields = ('servicio__nombre', 'tipo_equipamiento__nombre')
+    ordering = ('servicio', 'tipo_equipamiento')
+
+
+@admin.register(FichaTecnica)
+class FichaTecnicaAdmin(admin.ModelAdmin):
+    list_display = ('detalle_turno', 'profesional_autor', 'porosidad_final', 'estado_general_final', 'fecha_registro')
+    list_filter = ('fecha_registro', 'porosidad_final', 'estado_general_final', 'profesional_autor')
+    search_fields = ('detalle_turno__turno__cliente__usuario__email', 'profesional_autor__email')
+    readonly_fields = ('fecha_registro',)
+    fields = (
+        'detalle_turno', 'profesional_autor', 'formula', 'observaciones_proceso',
+        'porosidad_final', 'estado_general_final', 'resultado_post_servicio',
+        'foto_resultado', 'fecha_registro'
+    )
+
+
+@admin.register(DiagnosticoCapilar)
+class DiagnosticoCapilarAdmin(admin.ModelAdmin):
+    list_display = ('cliente', 'profesional', 'tipo_cabello', 'porosidad_cabello', 'fecha_diagnostico')
+    list_filter = ('fecha_diagnostico', 'tipo_cabello', 'grosor_cabello', 'porosidad_cabello', 'estado_general', 'profesional')
+    search_fields = ('cliente__usuario__email', 'profesional__email', 'observaciones')
+    readonly_fields = ('fecha_diagnostico',)
+    fieldsets = (
+        ('Cliente y Profesional', {
+            'fields': ('cliente', 'profesional')
+        }),
+        ('Estado del Cabello', {
+            'fields': ('tipo_cabello', 'grosor_cabello', 'porosidad_cabello', 'cuero_cabelludo', 'estado_general')
+        }),
+        ('Análisis y Resultados', {
+            'fields': ('observaciones', 'recomendaciones', 'regla_diagnostico', 'rutina_sugerida')
+        }),
+        ('Registro', {
+            'fields': ('fecha_diagnostico',),
+            'classes': ('collapse',)
+        }),
+    )
+    ordering = ('-fecha_diagnostico',)
