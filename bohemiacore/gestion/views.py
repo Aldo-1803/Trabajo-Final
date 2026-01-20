@@ -1,21 +1,23 @@
 from rest_framework import viewsets, status, serializers
 from rest_framework.decorators import api_view, permission_classes, action
 from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import ValidationError, PermissionDenied
 from rest_framework import generics
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, time
+import datetime as dt
+from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
-import datetime as datetime_module
+import logging
 
 from .models import (
     TipoCabello, GrosorCabello, PorosidadCabello, CueroCabelludo, EstadoGeneral, CategoriaServicio, Servicio, Turno, DetalleTurno,
     Configuracion, ListaEspera, Producto, Equipamiento, Rutina, Notificacion, AgendaCuidados, Producto, ReglaDiagnostico,
-    RutinaCliente, HorarioLaboral, BloqueoAgenda, Personal, TipoEquipamiento,
+    RutinaCliente, HorarioLaboral, BloqueoAgenda, Personal, TipoEquipamiento, FichaTecnica, DiagnosticoCapilar, RequisitoServicio,
     #PasoRutinaCliente
     #PasoRutina
 )
@@ -25,12 +27,12 @@ from .serializers import (
     CategoriaServicioSerializer, ServicioSerializer, TurnoSerializer, RutinaSerializer, RutinaClienteSerializer,
     RutinaClienteCreateSerializer, ReglaDiagnosticoSerializer, NotificacionSerializer, ProductoSerializer, EquipamientoSerializer,
     UsuarioAdminSerializer, AgendaCuidadosSerializer, HorarioLaboralSerializer, BloqueoAgendaSerializer, PersonalSerializer,
-    TipoEquipamientoSerializer,
+    TipoEquipamientoSerializer, FichaTecnicaSerializer, RequisitoServicioSerializer, DiagnosticoCapilarSerializer,
     #PasoRutinaSerializer,
 )
 
 from .services import DisponibilidadService 
-from usuarios.models import Usuario
+from usuarios.models import Usuario, Cliente
 
 class CatalogoBaseListView(generics.ListAPIView):
     permission_classes = [AllowAny]
@@ -238,25 +240,441 @@ class ServicioViewSet(viewsets.ModelViewSet):
 # --- 3. VIEWSET DE TURNOS (CRUD) ---
 class TurnoViewSet(viewsets.ModelViewSet):
     # Usamos prefetch_related para optimizar la consulta de la tabla intermedia
-    queryset = Turno.objects.all().prefetch_related('detalles__servicio')
+    queryset = Turno.objects.all().prefetch_related('detalles__servicio', 'cliente__usuario')
     serializer_class = TurnoSerializer
     pagination_class = None 
+    permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         queryset = super().get_queryset()
-        # Filtro para que el cliente solo vea sus propios turnos (Seguridad)
-        if not self.request.user.is_staff and hasattr(self.request.user, 'cliente'):
-             queryset = queryset.filter(cliente=self.request.user.cliente)
+        # Filtro según el rol del usuario
+        if self.request.user.is_staff:
+            # Admin ve todos los turnos
+            pass
+        elif hasattr(self.request.user, 'cliente'):
+            # Cliente solo ve sus propios turnos
+            queryset = queryset.filter(cliente=self.request.user.cliente)
+        else:
+            # Usuario sin cliente, no ve nada
+            queryset = queryset.none()
              
+        # Filtro opcional por estado
         estado = self.request.query_params.get('estado')
         if estado:
             queryset = queryset.filter(estado=estado)
         return queryset
 
     def perform_create(self, serializer):
-        # Aquí puedes agregar lógica extra antes de guardar, 
-        # como enviar un email de "Turno Solicitado"
+        # El serializer se encargará de asignar el cliente desde el usuario autenticado
         serializer.save()
+    
+    def perform_update(self, serializer):
+        """Solo admins pueden actualizar turnos"""
+        if not self.request.user.is_staff:
+            raise PermissionDenied("Solo administradores pueden actualizar turnos.")
+        serializer.save()
+    
+    @action(detail=True, methods=['post'])
+    def reprogramar_cliente(self, request, pk=None):
+        """
+        Permite que el cliente reprograme su turno (solo turnos en estado 'solicitado' o 'esperando_sena')
+        POST /api/gestion/turnos/{id}/reprogramar_cliente/
+        Body: {"fecha": "2026-01-20", "hora_inicio": "14:00"}
+        """
+        turno = self.get_object()
+        
+        # 1. Validar que el cliente es el dueño del turno
+        if turno.cliente.usuario != request.user:
+            raise PermissionDenied("No puedes reprogramar turnos de otros clientes.")
+        
+        # 2. Validar que el turno pueda ser reprogramado (solo en ciertos estados)
+        if turno.estado not in ['solicitado', 'esperando_sena']:
+            return Response({
+                "error": f"No puedes reprogramar un turno en estado '{turno.estado}'. "
+                         "Solo puedes reprogramar turnos solicitados o pendientes de seña."
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # 3. Obtener nueva fecha y hora
+        nueva_fecha_str = request.data.get('fecha')
+        nueva_hora_str = request.data.get('hora_inicio')
+        
+        if not nueva_fecha_str or not nueva_hora_str:
+            return Response({
+                "error": "Debes proporcionar 'fecha' y 'hora_inicio'."
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            nueva_fecha = datetime.strptime(nueva_fecha_str, '%Y-%m-%d').date()
+            nueva_hora = datetime.strptime(nueva_hora_str, '%H:%M').time()
+        except ValueError:
+            return Response({
+                "error": "Formato inválido. Usa: fecha='YYYY-MM-DD', hora_inicio='HH:MM'"
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # 4. Validar política de tiempo para reprogramación (48hs antes para confirmados)
+        config = Configuracion.objects.first()
+        if turno.estado == 'confirmado':
+            horas_limite = config.horas_limite_cancelacion if config else 48
+            fecha_hora_actual = datetime.combine(turno.fecha, turno.hora_inicio)
+            fecha_hora_utc = timezone.make_aware(fecha_hora_actual) if timezone.is_naive(fecha_hora_actual) else fecha_hora_actual
+            ahora = timezone.now()
+            
+            horas_restantes = (fecha_hora_utc - ahora).total_seconds() / 3600
+            if horas_restantes < horas_limite:
+                return Response({
+                    "error": f"Ya no puedes reprogramar este turno de forma autónoma. "
+                             f"Quedan menos de {horas_limite}hs. Por favor, contacta al salón."
+                }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # 5. Validar que no hay turno duplicado en la nueva fecha/hora
+        turno_duplicado = Turno.objects.filter(
+            cliente=turno.cliente,
+            fecha=nueva_fecha,
+            hora_inicio=nueva_hora,
+            estado__in=['solicitado', 'esperando_sena', 'confirmado']
+        ).exclude(id=turno.id).exists()
+        
+        if turno_duplicado:
+            return Response({
+                "error": "Ya tienes un turno en esa fecha y hora."
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # 6. Validar que el nuevo slot está disponible (sin conflictos)
+        es_valido = self._validar_slot_libre(
+            fecha=nueva_fecha,
+            hora=nueva_hora,
+            profesional=turno.profesional,
+            duracion_minutos=sum(d.duracion_minutos for d in turno.detalles.all()) or 60,
+            excluir_turno_id=turno.id  # Excluir el turno actual de la validación
+        )
+        
+        if not es_valido:
+            return Response({
+                "error": "El horario seleccionado ya no está disponible."
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # 7. Guardar cambios
+        turno.fecha = nueva_fecha
+        turno.hora_inicio = nueva_hora
+        turno.cambios_realizados += 1
+        turno.save()
+        
+        # Refrescar desde BD para asegurar que los cambios se persistieron
+        turno.refresh_from_db()
+        
+        return Response({
+            "mensaje": "Turno reprogramado con éxito.",
+            "turno": TurnoSerializer(turno, context={'request': request}).data
+        }, status=status.HTTP_200_OK)
+    
+    def _validar_slot_libre(self, fecha, hora, profesional, duracion_minutos, excluir_turno_id=None):
+        """
+        Valida si un slot está realmente disponible (sin conflictos)
+        excluir_turno_id: ID del turno a excluir de la búsqueda (usado para reprogramación)
+        """
+        if not profesional:
+            return False
+        
+        # Convertir hora a datetime para comparación
+        inicio_dt = datetime.combine(fecha, hora)
+        duracion_min = duracion_minutos or 60
+        fin_minutos = hora.hour * 60 + hora.minute + duracion_min
+        fin_horas = fin_minutos // 60
+        fin_mins = fin_minutos % 60
+        fin_hora = time(fin_horas, fin_mins)
+        fin_dt = datetime.combine(fecha, fin_hora)
+        
+        # 1. Verificar conflictos con otros turnos
+        turnos_conflicto = Turno.objects.filter(
+            fecha=fecha,
+            profesional=profesional,
+            estado__in=['confirmado', 'esperando_sena', 'solicitado']
+        ).prefetch_related('detalles')
+        
+        # Excluir el turno actual si se proporciona un ID
+        if excluir_turno_id:
+            turnos_conflicto = turnos_conflicto.exclude(id=excluir_turno_id)
+        
+        for turno in turnos_conflicto:
+            turno_duracion = sum(d.duracion_minutos for d in turno.detalles.all()) or 60
+            turno_fin_minutos = turno.hora_inicio.hour * 60 + turno.hora_inicio.minute + turno_duracion
+            turno_fin_horas = turno_fin_minutos // 60
+            turno_fin_mins = turno_fin_minutos % 60
+            turno_fin_hora = time(turno_fin_horas, turno_fin_mins)
+            turno_fin_dt = datetime.combine(fecha, turno_fin_hora)
+            
+            turno_inicio_dt = datetime.combine(fecha, turno.hora_inicio)
+            
+            # Verificar solapamiento: (inicio < otro_fin) AND (fin > otro_inicio)
+            if (inicio_dt < turno_fin_dt) and (fin_dt > turno_inicio_dt):
+                return False
+        
+        # 2. Verificar conflictos con bloqueos
+        bloqueos_conflicto = BloqueoAgenda.objects.filter(
+            Q(personal=profesional) | Q(personal__isnull=True),
+            fecha_inicio__date__lte=fecha,
+            fecha_fin__date__gte=fecha
+        )
+        
+        for bloqueo in bloqueos_conflicto:
+            bloqueo_inicio = bloqueo.fecha_inicio.replace(tzinfo=None) if bloqueo.fecha_inicio.tzinfo else bloqueo.fecha_inicio
+            bloqueo_fin = bloqueo.fecha_fin.replace(tzinfo=None) if bloqueo.fecha_fin.tzinfo else bloqueo.fecha_fin
+            inicio_dt_naive = inicio_dt.replace(tzinfo=None) if hasattr(inicio_dt, 'tzinfo') else inicio_dt
+            fin_dt_naive = fin_dt.replace(tzinfo=None) if hasattr(fin_dt, 'tzinfo') else fin_dt
+            
+            if (inicio_dt_naive < bloqueo_fin) and (fin_dt_naive > bloqueo_inicio):
+                return False
+        
+        return True
+
+    # =====================================================================
+    # NUEVA ACCIÓN: CONSULTAR DISPONIBILIDAD (Flujo actualizado)
+    # =====================================================================
+    @action(detail=False, methods=['get'])
+    def consultar_disponibilidad(self, request):
+        """
+        Devuelve fechas y horarios disponibles para un servicio.
+        Query params: ?servicio_id=1&fecha=2026-01-15 (fecha opcional, por defecto hoy)
+        """
+        servicio_id = request.query_params.get('servicio_id')
+        fecha_inicio_str = request.query_params.get('fecha')
+        
+        if not servicio_id:
+            return Response(
+                {"error": "Se requiere servicio_id"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            servicio = Servicio.objects.get(id=servicio_id, activo=True)
+        except Servicio.DoesNotExist:
+            return Response(
+                {"error": "El servicio no existe"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Determinar fecha de inicio
+        try:
+            if fecha_inicio_str:
+                fecha_inicio = datetime.datetime.strptime(fecha_inicio_str, '%Y-%m-%d').date()
+            else:
+                fecha_inicio = timezone.now().date()
+        except ValueError:
+            return Response(
+                {"error": "Formato de fecha inválido. Use YYYY-MM-DD"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # 1. Obtener horizonte de reserva (config)
+        config = Configuracion.objects.first()
+        max_dias = config.max_dias_anticipacion if config else 60
+        intervalo_minutos = config.intervalo_turnos if config else 30
+        fecha_limite = fecha_inicio + timedelta(days=max_dias)
+        
+        # 2. Validar que no sea fecha pasada
+        if fecha_inicio < timezone.now().date():
+            return Response(
+                {"error": "No se pueden agendar turnos en el pasado"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # 3. Determinar tipo de servicio (para filtrar reglas)
+        categoria_nombre = servicio.categoria.nombre if servicio.categoria else ""
+        requiere_diseno = "Diseño" in categoria_nombre
+        requiere_complemento = "Complemento" in categoria_nombre or "Turno de Complemento" in categoria_nombre
+        
+        duracion_minutos = servicio.duracion_estimada or 60
+        
+        # 4. Iterar próximos días (hasta 7 para mostrar lo más cercano)
+        disponibilidad_total = []
+        
+        for i in range(7):
+            fecha_consulta = fecha_inicio + timedelta(days=i)
+            
+            # Validar horizonte
+            if fecha_consulta > fecha_limite:
+                break
+            
+            # No agendar en fechas pasadas
+            if fecha_consulta < timezone.now().date():
+                continue
+            
+            dia_semana = fecha_consulta.weekday()
+            
+            # 5. Obtener reglas de horarios para este día
+            reglas = HorarioLaboral.objects.filter(
+                dia_semana=dia_semana,
+                activo=True,
+                personal__activo=True,  # Solo profesionales activos
+            )
+            
+            # Filtrar solo reglas que aplican en esta fecha (null = aplica siempre)
+            reglas = reglas.filter(
+                Q(fecha_desde__isnull=True) | Q(fecha_desde__lte=fecha_consulta),
+                Q(fecha_hasta__isnull=True) | Q(fecha_hasta__gte=fecha_consulta)
+            )
+            
+            # --- FILTRO DE COMPETENCIA TÉCNICA (Refinado) ---
+            # Identificamos qué habilidad se requiere según la categoría
+            habilidad_requerida = None
+            if requiere_diseno:
+                habilidad_requerida = 'realiza_color'
+                reglas = reglas.filter(permite_diseno_color=True)
+            elif requiere_complemento:
+                habilidad_requerida = 'realiza_lavado'
+                reglas = reglas.filter(permite_complemento=True)
+            
+            # Aplicamos el filtro dinámico de habilidad a las reglas
+            if habilidad_requerida:
+                filtro_habilidad = {f'personal__{habilidad_requerida}': True}
+                reglas = reglas.filter(**filtro_habilidad)
+            
+            if not reglas.exists():
+                continue
+            
+            # 6. Generar slots disponibles para este día
+            slots_del_dia = []
+            profesionales_dia = {}
+            
+            for regla in reglas:
+                prof_id = regla.personal.id
+                prof_nombre = regla.personal.nombre
+                
+                slots = self._generar_slots_disponibles(
+                    fecha_consulta, 
+                    regla, 
+                    duracion_minutos,
+                    intervalo_minutos
+                )
+                
+                if slots:
+                    if prof_id not in profesionales_dia:
+                        profesionales_dia[prof_id] = {
+                            "id": prof_id,
+                            "nombre": prof_nombre,
+                            "slots": []
+                        }
+                    profesionales_dia[prof_id]["slots"].extend(slots)
+            
+            if profesionales_dia:
+                disponibilidad_total.append({
+                    "fecha": fecha_consulta.isoformat(),
+                    "dia_semana": ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"][dia_semana],
+                    "profesionales": list(profesionales_dia.values())
+                })
+        
+        return Response({
+            "servicio_id": servicio.id,
+            "servicio_nombre": servicio.nombre,
+            "duracion_minutos": duracion_minutos,
+            "disponibilidad": disponibilidad_total,
+            "horizonte_dias": max_dias
+        }, status=status.HTTP_200_OK)
+    
+    def _generar_slots_disponibles(self, fecha, regla, duracion_minutos, intervalo_minutos):
+        slots_disponibles = []
+        
+        # 1. Traemos TODOS los turnos y bloqueos del día UNA SOLA VEZ (Optimización)
+        turnos_del_dia = Turno.objects.filter(
+            fecha=fecha,
+            profesional=regla.personal,
+            estado__in=['confirmado', 'esperando_sena', 'solicitado']
+        ).prefetch_related('detalles')
+
+        bloqueos_del_dia = BloqueoAgenda.objects.filter(
+            Q(personal=regla.personal) | Q(personal__isnull=True),
+            fecha_inicio__date__lte=fecha,
+            fecha_fin__date__gte=fecha
+        )
+
+        # Convertimos los horarios de la regla a minutos
+        actual_min = regla.hora_inicio.hour * 60 + regla.hora_inicio.minute
+        fin_min = regla.hora_fin.hour * 60 + regla.hora_fin.minute
+
+        while actual_min + duracion_minutos <= fin_min:
+            hora_inicio_slot = time(actual_min // 60, actual_min % 60)
+            hora_fin_slot = time((actual_min + duracion_minutos) // 60, (actual_min + duracion_minutos) % 60)
+            
+            # Combinamos con fecha para comparar datetimes completos (más seguro)
+            inicio_dt = datetime.combine(fecha, hora_inicio_slot)
+            fin_dt = datetime.combine(fecha, hora_fin_slot)
+
+            # --- VALIDACIÓN DE CONFLICTOS ---
+            hay_choque = False
+
+            # A. Choque con Turnos (Validación de Rango)
+            for turno in turnos_del_dia:
+                # Fórmula: (StartA < EndB) y (EndA > StartB)
+                t_ini = datetime.combine(fecha, turno.hora_inicio)
+                # Calculamos la hora fin basándose en duración total de servicios del turno
+                duracion_turno = sum(d.duracion_minutos for d in turno.detalles.all()) or 60
+                t_fin_minutos = turno.hora_inicio.hour * 60 + turno.hora_inicio.minute + duracion_turno
+                t_fin_hours = t_fin_minutos // 60
+                t_fin_mins = t_fin_minutos % 60
+                t_fin = datetime.combine(fecha, time(t_fin_hours, t_fin_mins))
+                
+                if (inicio_dt < t_fin) and (fin_dt > t_ini):
+                    hay_choque = True
+                    break
+            
+            # B. Choque con Bloqueos
+            if not hay_choque:
+                for bloqueo in bloqueos_del_dia:
+                    # Quitamos zona horaria si es necesario para comparar
+                    b_ini = bloqueo.fecha_inicio.replace(tzinfo=None) if bloqueo.fecha_inicio.tzinfo else bloqueo.fecha_inicio
+                    b_fin = bloqueo.fecha_fin.replace(tzinfo=None) if bloqueo.fecha_fin.tzinfo else bloqueo.fecha_fin
+                    
+                    if (inicio_dt < b_fin) and (fin_dt > b_ini):
+                        hay_choque = True
+                        break
+            
+            if not hay_choque:
+                # Validación extra: si es HOY, no mostrar horas que ya pasaron
+                ahora_naive = timezone.now().replace(tzinfo=None)
+                if inicio_dt > ahora_naive:
+                    slots_disponibles.append({
+                        "hora": hora_inicio_slot.strftime("%H:%M"),
+                        "profesional_id": regla.personal.id,
+                    })
+            
+            actual_min += intervalo_minutos
+        
+        return slots_disponibles
+    
+    def _buscar_proxima_fecha(self, servicio_id, fecha_desde):
+        """
+        Escanea los próximos 30 días para encontrar el primer día con al menos un slot.
+        """
+        servicio = Servicio.objects.get(id=servicio_id)
+        config = Configuracion.objects.first()
+        max_busqueda = 30 # No buscamos eternamente, solo un mes
+        
+        for i in range(7, max_busqueda): # Empezamos desde el día 7
+            fecha_proxima = fecha_desde + timedelta(days=i)
+            
+            # 1. Filtramos reglas para ese día
+            weekday = fecha_proxima.weekday()
+            reglas = HorarioLaboral.objects.filter(
+                dia_semana=weekday,
+                fecha_desde__lte=fecha_proxima,
+                fecha_hasta__gte=fecha_proxima,
+                activo=True
+            )
+            
+            # Filtro por tipo de servicio (lo que ya tienes)
+            # ... (aquí aplicas el filtro de Diseño/Complemento) ...
+
+            for regla in reglas:
+                slots = self._generar_slots_disponibles(
+                    fecha_proxima, 
+                    regla, 
+                    servicio.duracion_estimada, 
+                    config.intervalo_turnos
+                )
+                if slots:
+                    return fecha_proxima.isoformat()
+                    
+        return None # No hay nada en todo el mes
 
     # =====================================================================
     # AQUÍ ESTÁ EL PROCESO AUTOMATIZADO #2 (Integrado como Acción)
@@ -1241,110 +1659,120 @@ class HorarioLaboralViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'])
     def configurar_rango(self, request):
-        """
-        Recibe un patrón semanal y un rango de fechas para 
-        crear la disponibilidad en masa.
-
-        Payload esperado:
-        {
-            "fecha_desde": "2025-12-01",
-            "fecha_hasta": "2025-12-31",
-            "patron": [
-                {"dia": 0, "hora_inicio": "10:00", "hora_fin": "14:00", "permite_diseno": true, "personal_id": 1},
-                ...
-            ]
-        }
-        """
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info(f"configurar_rango: payload received -> {request.data}")
-
         fecha_desde = request.data.get('fecha_desde')
         fecha_hasta = request.data.get('fecha_hasta')
         patron = request.data.get('patron')
+        # Nuevo: recibir si es para todos o un ID específico
+        seleccionar_todos = request.data.get('todos_profesionales', False) 
 
-        if not fecha_desde or not fecha_hasta or not patron:
-            return Response({"error": "Se requieren 'fecha_desde', 'fecha_hasta' y 'patron'."}, status=400)
-
-        from django.utils.dateparse import parse_date
         try:
-            fd = parse_date(fecha_desde)
-            fh = parse_date(fecha_hasta)
-            if not fd or not fh:
-                raise ValueError("Fechas inválidas")
-            if fd > fh:
-                return Response({"error": "'fecha_desde' debe ser menor o igual a 'fecha_hasta'"}, status=400)
+            # VALIDACIÓN ESTRICTA: Si no es "todos", verificar que NO haya personal_id nulo
+            if not seleccionar_todos:
+                has_null_personal = any(item.get('personal_id') is None for item in patron)
+                if has_null_personal:
+                    return Response(
+                        {"error": "No se pueden crear horarios sin asignar personal. Selecciona profesionales específicos o usa 'Todos'."},
+                        status=400
+                    )
+            
+            with transaction.atomic():
+                for item in patron:
+                    # 1. Determinamos a quiénes aplicar la regla
+                    if seleccionar_todos:
+                        # Buscamos a todo el personal activo
+                        profesionales = Personal.objects.filter(activo=True)
+                    else:
+                        # Solo al ID que viene en el item
+                        personal_id = item.get('personal_id')
+                        profesionales = Personal.objects.filter(id=personal_id, activo=True)
+                        
+                        # Validar que el personal existe y está activo
+                        if not profesionales.exists():
+                            return Response(
+                                {"error": f"El profesional con ID {personal_id} no existe o está inactivo."},
+                                status=400
+                            )
+
+                    # 2. Creamos la regla para cada profesional identificado
+                    for prof in profesionales:
+                        HorarioLaboral.objects.create(
+                            personal=prof,
+                            fecha_desde=fecha_desde,
+                            fecha_hasta=fecha_hasta,
+                            dia_semana=int(item.get('dia')),
+                            hora_inicio=item.get('hora_inicio'),
+                            hora_fin=item.get('hora_fin'),
+                            permite_diseno_color=item.get('permite_diseno', True),
+                            permite_complemento=item.get('permite_complemento', True),
+                            activo=True
+                        )
+            
+            return Response({"status": "success", "mensaje": "Agenda configurada para el personal seleccionado."}, status=201)
         except Exception as e:
             return Response({"error": str(e)}, status=400)
 
-        # Versión optimizada: acumulamos objetos y hacemos bulk_create dentro
-        # de una transacción atómica para performance y consistencia.
-        from datetime import timedelta, datetime as _dt
-        from django.db import transaction
-
-        objetos_a_crear = []
-        current = fd
-
+    @action(detail=False, methods=['delete'])
+    def limpiar_agenda(self, request):
+        """
+        Borra todos los horarios del profesional para permitir una nueva carga masiva.
+        Query param: ?personal_id=1
+        """
+        personal_id = request.query_params.get('personal_id')
+        if not personal_id:
+            return Response({"error": "Se requiere personal_id"}, status=400)
+            
         try:
-            with transaction.atomic():
-                while current <= fh:
-                    weekday = current.weekday()
-                    # Filtrar el patrón para el día de la semana actual
-                    items_dia = [i for i in patron if int(i.get('dia')) == weekday]
-
-                    for item in items_dia:
-                        hi = _dt.strptime(item.get('hora_inicio'), '%H:%M').time()
-                        hf = _dt.strptime(item.get('hora_fin'), '%H:%M').time()
-
-                        # Validar si ya existe para evitar duplicados exactos
-                        existe = HorarioLaboral.objects.filter(
-                            dia_semana=weekday,
-                            hora_inicio=hi,
-                            hora_fin=hf,
-                            personal_id=item.get('personal_id')
-                        ).exists()
-
-                        if not existe:
-                            objetos_a_crear.append(HorarioLaboral(
-                                dia_semana=weekday,
-                                hora_inicio=hi,
-                                hora_fin=hf,
-                                personal_id=item.get('personal_id'),
-                                permite_diseno_color=item.get('permite_diseno', True),
-                                permite_complemento=item.get('permite_complemento', True),
-                                activo=item.get('activo', True)
-                            ))
-
-                    current += timedelta(days=1)
-
-                # Creación masiva en una sola consulta SQL
-                if objetos_a_crear:
-                    HorarioLaboral.objects.bulk_create(objetos_a_crear)
-
+            # Borramos solo los de ese profesional
+            count, _ = HorarioLaboral.objects.filter(personal_id=personal_id).delete()
             return Response({
-                "status": "success",
-                "mensaje": f"Se crearon {len(objetos_a_crear)} registros de horario."
-            }, status=status.HTTP_201_CREATED if objetos_a_crear else status.HTTP_200_OK)
-
+                "mensaje": f"Agenda limpiada con éxito. Se eliminaron {count} horarios."
+            }, status=200)
         except Exception as e:
-            return Response({"error": f"Fallo en la carga masiva: {str(e)}"}, status=400)
+            return Response({"error": str(e)}, status=500)
 
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated]) # Idealmente IsAdminUser si es solo para Yanina
+@permission_classes([IsAuthenticated])
 def obtener_agenda_general(request):
     """
-    Devuelve la configuración base y los bloqueos futuros.
+    Devuelve la configuración base, horarios y bloqueos para un profesional específico.
+    Query params: ?personal_id=1 (opcional, si no viene usa el primer profesional activo)
     """
-    # 1. Obtenemos los horarios base (La Regla)
-    # Filtramos por Yanina (colorista) que es la dueña de la agenda principal
-    horarios = HorarioLaboral.objects.filter(personal__rol='colorista')
+    # 1. Obtenemos el personal (ahora pasamos el ID por parámetro para que sea flexible)
+    # Si no viene ID, buscamos al primer profesional activo
+    personal_id = request.query_params.get('personal_id')
     
-    # 2. Obtenemos bloqueos desde hoy en adelante (La Excepción)
+    if personal_id:
+        personal = Personal.objects.filter(id=personal_id).first()
+    else:
+        # Fallback: buscamos el primer profesional
+        personal = Personal.objects.filter(activo=True).first()
+
+    if not personal:
+        return Response({"error": "No se encontró personal disponible"}, status=404)
+
+    # 2. Obtenemos la Regla (Horarios Base)
+    horarios = HorarioLaboral.objects.filter(personal=personal, activo=True)
+    
+    # 3. Obtenemos la Excepción (Bloqueos)
     hoy = timezone.now()
-    bloqueos = BloqueoAgenda.objects.filter(fecha_fin__gte=hoy)
+    bloqueos = BloqueoAgenda.objects.filter(
+        Q(personal=personal) | Q(personal__isnull=True),  # Bloqueos suyos o globales
+        fecha_fin__gte=hoy
+    )
+
+    # 4. Obtenemos la Configuración Global (Singleton)
+    config = Configuracion.objects.first()  # El ID=1 que definiste
 
     return Response({
+        'profesional': {
+            'id': personal.id,
+            'nombre': personal.nombre,
+        },
+        'configuracion': {
+            'max_dias_anticipacion': config.max_dias_anticipacion if config else 60,
+            'intervalo': config.intervalo_turnos if config else 30
+        },
         'horarios_base': HorarioLaboralSerializer(horarios, many=True).data,
         'bloqueos': BloqueoAgendaSerializer(bloqueos, many=True).data
     })
@@ -1430,3 +1858,234 @@ def crear_bloqueo(request):
 
     except Exception as e:
         return Response({"error": str(e)}, status=500)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def obtener_disponibilidad_calendario(request):
+    """
+    Cruza Reglas (HorarioLaboral) + Excepciones (BloqueoAgenda) para mostrar disponibilidad en calendario.
+    Query params: ?mes=1&anio=2025
+    Retorna las reglas de horarios y bloqueos para que el frontend calcule disponibilidad.
+    """
+    try:
+        mes = int(request.query_params.get('mes', 1))
+        anio = int(request.query_params.get('anio', timezone.now().year))
+        
+        # Validar rango válido de mes
+        if mes < 1 or mes > 12:
+            return Response(
+                {"error": "El mes debe estar entre 1 y 12"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # 1. Traer todas las reglas activas (HorarioLaboral)
+        # Filtramos por profesional si se proporciona
+        reglas = HorarioLaboral.objects.filter(activo=True)
+        
+        personal_id = request.query_params.get('personal_id')
+        if personal_id:
+            reglas = reglas.filter(personal_id=personal_id)
+        
+        # 2. Traer bloqueos del mes especificado
+        # Buscamos bloqueos que se sobrepongan con cualquier día del mes
+        from datetime import date, timedelta
+        
+        primer_dia = date(anio, mes, 1)
+        if mes == 12:
+            ultimo_dia = date(anio + 1, 1, 1) - timedelta(days=1)
+        else:
+            ultimo_dia = date(anio, mes + 1, 1) - timedelta(days=1)
+        
+        bloqueos = BloqueoAgenda.objects.filter(
+            fecha_inicio__lte=ultimo_dia,
+            fecha_fin__gte=primer_dia
+        )
+        
+        # Filtrar por personal si se proporciona
+        if personal_id:
+            from django.db.models import Q
+            bloqueos = bloqueos.filter(
+                Q(personal_id=personal_id) | Q(personal__isnull=True)
+            )
+        
+        # 3. Serializar y retornar
+        return Response({
+            "mes": mes,
+            "anio": anio,
+            "reglas": HorarioLaboralSerializer(reglas, many=True).data,
+            "bloqueos": BloqueoAgendaSerializer(bloqueos, many=True).data
+        }, status=status.HTTP_200_OK)
+    
+    except ValueError:
+        return Response(
+            {"error": "Los parámetros mes y anio deben ser números enteros"},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    except Exception as e:
+        return Response(
+            {"error": f"Error al obtener disponibilidad: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+# ============================================================
+# FICHA TÉCNICA VIEWSET
+# ============================================================
+
+class FichaTecnicaViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestionar fichas técnicas de servicios realizados.
+    Solo el personal técnico (is_staff) puede crear/editar fichas.
+    """
+    queryset = FichaTecnica.objects.all()
+    serializer_class = FichaTecnicaSerializer
+    permission_classes = [IsAuthenticated, IsAdminUser]
+    
+    def get_queryset(self):
+        """
+        Filtro: 
+        - Admins ven todas las fichas
+        - Staff solo ve sus propias fichas redactadas
+        """
+        user = self.request.user
+        if user.is_superuser:
+            return FichaTecnica.objects.all()
+        elif user.is_staff:
+            return FichaTecnica.objects.filter(profesional_autor=user)
+        else:
+            # No staff no puede ver fichas (la permission_classes lo bloquea igual)
+            return FichaTecnica.objects.none()
+    
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated, IsAdminUser])
+    def por_turno(self, request):
+        """
+        GET /fichas-tecnicas/por-turno/?turno_id=123
+        Obtiene la ficha técnica de un turno específico.
+        """
+        turno_id = request.query_params.get('turno_id')
+        if not turno_id:
+            return Response(
+                {"error": "Se requiere el parámetro turno_id"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            turno = Turno.objects.get(id=turno_id)
+            fichas = FichaTecnica.objects.filter(detalle_turno__turno=turno)
+            serializer = self.get_serializer(fichas, many=True)
+            return Response(serializer.data)
+        except Turno.DoesNotExist:
+            return Response(
+                {"error": "Turno no encontrado"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+    
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated, IsAdminUser])
+    def mis_fichas(self, request):
+        """
+        GET /fichas-tecnicas/mis_fichas/
+        Obtiene todas las fichas técnicas creadas por el usuario autenticado (profesional).
+        """
+        fichas = FichaTecnica.objects.filter(profesional_autor=request.user)
+        serializer = self.get_serializer(fichas, many=True)
+        return Response(serializer.data)
+
+
+class RequisitoServicioViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestionar los requisitos de equipamiento por servicio.
+    Solo administradores pueden ver/crear/editar/eliminar.
+    """
+    queryset = RequisitoServicio.objects.all()
+    serializer_class = RequisitoServicioSerializer
+    permission_classes = [IsAuthenticated, IsAdminUser]
+    
+    def get_queryset(self):
+        """
+        Filtra por servicio si se proporciona en query params.
+        GET /requisitos-servicio/?servicio_id=1
+        """
+        queryset = super().get_queryset()
+        servicio_id = self.request.query_params.get('servicio_id')
+        if servicio_id:
+            queryset = queryset.filter(servicio_id=servicio_id)
+        return queryset
+
+
+class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestionar diagnósticos capilares.
+    - Lectura: Cualquier usuario autenticado puede ver diagnósticos (especialmente clientes sus propios)
+    - Creación/Edición: Solo staff (profesionales) pueden crear y editar
+    """
+    queryset = DiagnosticoCapilar.objects.all()
+    serializer_class = DiagnosticoCapilarSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        """
+        Clientes ven solo sus diagnósticos.
+        Staff ve todos.
+        """
+        if self.request.user.is_staff:
+            return DiagnosticoCapilar.objects.all()
+        
+        # Cliente solo ve sus propios diagnósticos
+        try:
+            cliente = Cliente.objects.get(usuario=self.request.user)
+            return DiagnosticoCapilar.objects.filter(cliente=cliente)
+        except Cliente.DoesNotExist:
+            return DiagnosticoCapilar.objects.none()
+    
+    def create(self, request, *args, **kwargs):
+        """Solo staff puede crear diagnósticos"""
+        if not request.user.is_staff:
+            return Response(
+                {"error": "Solo profesionales pueden crear diagnósticos"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        return super().create(request, *args, **kwargs)
+    
+    def update(self, request, *args, **kwargs):
+        """Solo staff puede actualizar diagnósticos"""
+        if not request.user.is_staff:
+            return Response(
+                {"error": "Solo profesionales pueden actualizar diagnósticos"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        return super().update(request, *args, **kwargs)
+    
+    @action(detail=False, methods=['get'])
+    def por_cliente(self, request):
+        """
+        GET /diagnosticos-capilares/por_cliente/?cliente_id=1
+        Obtiene todos los diagnósticos de un cliente específico.
+        """
+        cliente_id = request.query_params.get('cliente_id')
+        if not cliente_id:
+            return Response(
+                {"error": "Se requiere cliente_id como parámetro"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        diagnosticos = DiagnosticoCapilar.objects.filter(cliente_id=cliente_id).order_by('-fecha_diagnostico')
+        serializer = self.get_serializer(diagnosticos, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def mis_diagnosticos(self, request):
+        """
+        GET /diagnosticos-capilares/mis_diagnosticos/
+        Un cliente obtiene el histórico de sus propios diagnósticos.
+        """
+        try:
+            cliente = Cliente.objects.get(usuario=request.user)
+            diagnosticos = DiagnosticoCapilar.objects.filter(cliente=cliente).order_by('-fecha_diagnostico')
+            serializer = self.get_serializer(diagnosticos, many=True)
+            return Response(serializer.data)
+        except Cliente.DoesNotExist:
+            return Response(
+                {"error": "El usuario no es un cliente registrado"},
+                status=status.HTTP_404_NOT_FOUND
+            )

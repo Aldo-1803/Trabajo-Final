@@ -4,7 +4,7 @@ from .models import (
     EstadoGeneral, Equipamiento, Producto, ReglaDiagnostico,
     Notificacion, Rutina, AgendaCuidados, RutinaCliente, Servicio,
     CategoriaServicio, Turno, DetalleTurno, HorarioLaboral, BloqueoAgenda, Personal,
-    TipoEquipamiento,
+    TipoEquipamiento, FichaTecnica, DiagnosticoCapilar, RequisitoServicio,
     #PasoRutina, #PasoRutinaCliente,
 )
 
@@ -13,6 +13,7 @@ from usuarios.models import Usuario, Cliente
 import os
 from django.core.exceptions import ValidationError 
 from datetime import datetime
+from django.db import transaction
 
 # 1. EL SERIALIZER BASE (El "Molde")
 # Define los campos que TODOS los catálogos compartirán
@@ -53,6 +54,7 @@ class ServicioSerializer(serializers.ModelSerializer):
     # Campos de lectura para mostrar nombres en lugar de IDs en la tabla
     categoria_nombre = serializers.CharField(source='categoria.nombre', read_only=True)
     rutina_nombre = serializers.CharField(source='rutina_recomendada.nombre', read_only=True)
+    requisitos_equipamiento = serializers.SerializerMethodField()
     
     class Meta:
         model = Servicio
@@ -61,8 +63,15 @@ class ServicioSerializer(serializers.ModelSerializer):
             'duracion_estimada', 'precio_base',
             'rutina_recomendada', 'rutina_nombre',
             'impacto_porosidad', 'impacto_estado',
+            'plantilla_formula',
+            'requisitos_equipamiento',
             'activo'
         ]
+    
+    def get_requisitos_equipamiento(self, obj):
+        """Retorna los requisitos de equipamiento para este servicio"""
+        requisitos = obj.requisitos_equipamiento.all()
+        return RequisitoServicioSerializer(requisitos, many=True).data
    
 class DetalleTurnoSerializer(serializers.ModelSerializer):
     servicio_nombre = serializers.CharField(source='servicio.nombre', read_only=True)
@@ -75,24 +84,201 @@ class DetalleTurnoSerializer(serializers.ModelSerializer):
 
 class TurnoSerializer(serializers.ModelSerializer):
     # Nested serializer para los detalles/servicios del turno
-    detalles = DetalleTurnoSerializer(many=True)
+    detalles = DetalleTurnoSerializer(many=True, required=False, allow_null=True)
+    # Campo para servicio simple (cuando el frontend envía servicio_id)
+    servicio = serializers.IntegerField(write_only=True, required=False)
+    # Campos de lectura con nombres amigables
+    cliente_nombre = serializers.SerializerMethodField(read_only=True)
+    servicio_nombre = serializers.SerializerMethodField(read_only=True)
+    profesional_nombre = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Turno
         fields = [
-            'id', 'cliente', 'profesional', 'equipamiento', 
-            'fecha', 'hora_inicio', 'estado', 'detalles'
+            'id', 'cliente', 'cliente_nombre', 'profesional', 'profesional_nombre', 
+            'equipamiento', 'fecha', 'hora_inicio', 'estado', 'detalles', 'servicio', 
+            'servicio_nombre', 'comprobante_pago'
         ]
+        read_only_fields = ['cliente']
+    
+    def get_cliente_nombre(self, obj):
+        """Retorna el nombre completo del cliente"""
+        if obj.cliente and obj.cliente.usuario:
+            return f"{obj.cliente.usuario.first_name} {obj.cliente.usuario.last_name}".strip()
+        return "Desconocido"
+    
+    def get_servicio_nombre(self, obj):
+        """Retorna los nombres de servicios concatenados"""
+        servicios = [d.servicio.nombre for d in obj.detalles.all()]
+        return ', '.join(servicios) if servicios else "Sin servicios"
+    
+    def get_profesional_nombre(self, obj):
+        """Retorna el nombre del profesional si existe"""
+        if obj.profesional:
+            return obj.profesional.nombre
+        return "No asignado"
+
+    def validate(self, data):
+        """Validar según el tipo de operación"""
+        request = self.context.get('request')
+        
+        # En POST (crear nuevo turno), validar no duplicado
+        if request and request.method == 'POST' and request.user:
+            try:
+                cliente = request.user.cliente
+                # Verificar si ya existe un turno con la misma fecha, hora y cliente
+                existe = Turno.objects.filter(
+                    cliente=cliente,
+                    fecha=data.get('fecha'),
+                    hora_inicio=data.get('hora_inicio')
+                ).exists()
+                
+                if existe:
+                    raise serializers.ValidationError(
+                        "Ya tienes un turno solicitado para esa fecha y hora. "
+                        "Por favor, elige otro horario."
+                    )
+            except Exception as e:
+                if "Ya tienes un turno" in str(e):
+                    raise
+                pass
+        
+        return data
 
     def create(self, validated_data):
-        # 1. Sacamos los detalles del paquete de datos
+        from .models import Servicio, DetalleTurno
+        from django.contrib.auth.models import User
+        
+        # Obtener el cliente del usuario autenticado
+        request = self.context.get('request')
+        if request and request.user:
+            try:
+                cliente = request.user.cliente
+                validated_data['cliente'] = cliente
+            except:
+                raise serializers.ValidationError("El usuario no tiene perfil de cliente.")
+        else:
+            raise serializers.ValidationError("Usuario no autenticado.")
+        
+        # Sacar servicio_id si vino (compatibilidad con frontend simple)
+        servicio_id = validated_data.pop('servicio', None)
+        
+        # Sacar detalles si vinieron
         detalles_data = validated_data.pop('detalles', [])
-        # 2. Creamos el Turno principal
+        
+        # Si no hay detalles pero sí hay servicio_id, crear detalle automáticamente
+        if not detalles_data and servicio_id:
+            try:
+                servicio = Servicio.objects.get(id=servicio_id)
+                detalles_data = [{
+                    'servicio': servicio,
+                    'precio_historico': servicio.precio_base or 0,
+                    'duracion_minutos': servicio.duracion_estimada or 60
+                }]
+            except Servicio.DoesNotExist:
+                raise serializers.ValidationError(f"Servicio {servicio_id} no existe.")
+        
+        # Crear el Turno principal
         turno = Turno.objects.create(**validated_data)
-        # 3. Creamos cada detalle en la tabla intermedia
-        for detalle in detalles_data:
-            DetalleTurno.objects.create(turno=turno, **detalle)
+        
+        # Crear cada detalle en la tabla intermedia
+        for detalle_data in detalles_data:
+            if isinstance(detalle_data.get('servicio'), dict):
+                # Si viene serializado, extraer el ID
+                servicio_id = detalle_data['servicio'].get('id')
+                detalle_data['servicio'] = Servicio.objects.get(id=servicio_id)
+            
+            DetalleTurno.objects.create(turno=turno, **detalle_data)
+        
         return turno
+    
+    def update(self, instance, validated_data):
+        """Actualizar un turno existente"""
+        from .models import DetalleTurno
+        
+        # Remover campos que no se pueden actualizar
+        validated_data.pop('servicio', None)
+        detalles_data = validated_data.pop('detalles', None)
+        
+        # Actualizar campos simples
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        
+        instance.save()
+        
+        # No actualizar detalles en un PATCH de estado
+        # Los detalles solo se crean en POST
+        
+        return instance
+
+class FichaTecnicaSerializer(serializers.ModelSerializer):
+    """Serializador para el registro técnico del profesional"""
+    detalle_turno_id = serializers.IntegerField(source='detalle_turno.id', read_only=True)
+    servicio_nombre = serializers.CharField(source='detalle_turno.servicio.nombre', read_only=True)
+    profesional_nombre = serializers.CharField(source='profesional_autor.get_full_name', read_only=True)
+    
+    # Campo extra para enviar la plantilla al frontend (Lógica de Inicio)
+    formula_base_servicio = serializers.CharField(
+        source='detalle_turno.servicio.plantilla_formula', read_only=True
+    )
+    
+    # Campos de lectura con nombres amigables para el frontend
+    porosidad_final_nombre = serializers.CharField(
+        source='porosidad_final.nombre', read_only=True
+    )
+    estado_general_final_nombre = serializers.CharField(
+        source='estado_general_final.nombre', read_only=True
+    )
+    
+    class Meta:
+        model = FichaTecnica
+        fields = [
+            'id', 'detalle_turno', 'detalle_turno_id', 'servicio_nombre',
+            'profesional_autor', 'profesional_nombre', 'formula_base_servicio',
+            'formula', 'observaciones_proceso', 
+            'porosidad_final', 'porosidad_final_nombre',
+            'estado_general_final', 'estado_general_final_nombre',
+            'resultado_post_servicio', 'foto_resultado', 'fecha_registro'
+        ]
+        read_only_fields = [
+            'id', 'fecha_registro', 'detalle_turno_id', 'servicio_nombre', 
+            'profesional_nombre', 'formula_base_servicio',
+            'porosidad_final_nombre', 'estado_general_final_nombre'
+        ]
+    
+    def validate(self, data):
+        # 1. Validar que el usuario sea Staff/Profesional
+        user = self.context['request'].user
+        if not user.is_staff:
+            raise serializers.ValidationError("Solo el personal técnico puede registrar fórmulas.")
+        
+        detalle = data.get('detalle_turno')
+        
+        # 2. Validación: Solo se puede crear ficha si el turno está 'confirmado' o 'en_proceso'
+        if detalle.turno.estado not in ['confirmado', 'en_proceso']:
+            raise serializers.ValidationError("No se puede registrar una ficha para un turno que no ha sido iniciado o confirmado.")
+        
+        # 3. Validar que el DetalleTurno no tenga ya una ficha (OneToOneField)
+        if FichaTecnica.objects.filter(detalle_turno=detalle).exists():
+            raise serializers.ValidationError("Este servicio ya tiene una ficha técnica registrada.")
+            
+        return data
+    
+    def create(self, validated_data):
+        # Implementación del Punto 2 del análisis: Persistencia Robusta y Atómica
+        with transaction.atomic():
+            # 1. Asignar autor
+            validated_data['profesional_autor'] = self.context['request'].user
+            ficha = super().create(validated_data)
+            
+            # 2. Actualizar estado del Turno a 'realizado' automáticamente
+            turno = ficha.detalle_turno.turno
+            turno.estado = 'realizado'
+            turno.save()
+            
+            # 3. (Opcional) Aquí podrías disparar la actualización del Diagnóstico Capilar
+            
+            return ficha
 
 class TurnoCreateSerializer(serializers.ModelSerializer):
     """
@@ -328,7 +514,7 @@ class HorarioLaboralSerializer(serializers.ModelSerializer):
         model = HorarioLaboral
         fields = [
             'id', 'personal', 'dia_semana', 'dia_nombre', 
-            'hora_inicio', 'hora_fin', 
+            'hora_inicio', 'hora_fin', 'fecha_desde', 'fecha_hasta',
             'permite_diseno_color', 'permite_complemento', 'activo'
         ]
 
@@ -378,3 +564,71 @@ class BloqueoAgendaSerializer(serializers.ModelSerializer):
             })
 
         return data
+
+
+class RequisitoServicioSerializer(serializers.ModelSerializer):
+    """
+    Serializer para la tabla intermedia RequisitoServicio.
+    Muestra qué equipamiento es requerido para cada servicio.
+    """
+    servicio_nombre = serializers.CharField(source='servicio.nombre', read_only=True)
+    tipo_equipamiento_nombre = serializers.CharField(source='tipo_equipamiento.nombre', read_only=True)
+    
+    class Meta:
+        model = RequisitoServicio
+        fields = [
+            'id', 'servicio', 'servicio_nombre',
+            'tipo_equipamiento', 'tipo_equipamiento_nombre',
+            'obligatorio', 'cantidad_minima', 'fecha_registro'
+        ]
+        read_only_fields = ['id', 'fecha_registro', 'servicio_nombre', 'tipo_equipamiento_nombre']
+
+
+class DiagnosticoCapilarSerializer(serializers.ModelSerializer):
+    """
+    Serializer para el diagnóstico capilar.
+    Contiene toda la información del estado del cabello en un momento específico.
+    """
+    cliente_email = serializers.CharField(source='cliente.usuario.email', read_only=True)
+    profesional_nombre = serializers.CharField(source='profesional.get_full_name', read_only=True)
+    tipo_cabello_nombre = serializers.CharField(source='tipo_cabello.nombre', read_only=True)
+    grosor_cabello_nombre = serializers.CharField(source='grosor_cabello.nombre', read_only=True)
+    porosidad_cabello_nombre = serializers.CharField(source='porosidad_cabello.nombre', read_only=True)
+    cuero_cabelludo_nombre = serializers.CharField(source='cuero_cabelludo.nombre', read_only=True)
+    estado_general_nombre = serializers.CharField(source='estado_general.nombre', read_only=True)
+    regla_diagnostico_accion = serializers.CharField(source='regla_diagnostico.accion_resultado', read_only=True)
+    rutina_sugerida_nombre = serializers.CharField(source='rutina_sugerida.nombre', read_only=True)
+    
+    class Meta:
+        model = DiagnosticoCapilar
+        fields = [
+            'id', 'cliente', 'cliente_email',
+            'profesional', 'profesional_nombre',
+            'tipo_cabello', 'tipo_cabello_nombre',
+            'grosor_cabello', 'grosor_cabello_nombre',
+            'porosidad_cabello', 'porosidad_cabello_nombre',
+            'cuero_cabelludo', 'cuero_cabelludo_nombre',
+            'estado_general', 'estado_general_nombre',
+            'observaciones', 'recomendaciones',
+            'regla_diagnostico', 'regla_diagnostico_accion',
+            'rutina_sugerida', 'rutina_sugerida_nombre',
+            'fecha_diagnostico'
+        ]
+        read_only_fields = [
+            'id', 'fecha_diagnostico', 'cliente_email', 'profesional_nombre',
+            'tipo_cabello_nombre', 'grosor_cabello_nombre', 'porosidad_cabello_nombre',
+            'cuero_cabelludo_nombre', 'estado_general_nombre', 'regla_diagnostico_accion',
+            'rutina_sugerida_nombre'
+        ]
+    
+    def create(self, validated_data):
+        """Auto-asigna el profesional actual al crear el diagnóstico"""
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            # Intenta obtener el Usuario del request
+            try:
+                usuario = Usuario.objects.get(email=request.user.email)
+                validated_data['profesional'] = usuario
+            except Usuario.DoesNotExist:
+                pass
+        return super().create(validated_data)

@@ -126,6 +126,12 @@ class Servicio(models.Model):
         verbose_name="Precio Base"
     )
     
+    # 3.5 PLANTILLA DE FORMULA
+    plantilla_formula = models.TextField(
+        blank=True, 
+        help_text="Estructura base: Base: __, Medios: __, Oxidante: __"
+    )
+    
     # 4. SIMULTANEIDAD
     permite_simultaneidad = models.BooleanField(
         default=False, 
@@ -567,6 +573,8 @@ class HorarioLaboral(models.Model):
     
     dia_semana = models.IntegerField(choices=DiasSemana.choices, default=0)  
     
+    fecha_desde = models.DateField(null=True, blank=True) 
+    fecha_hasta = models.DateField(null=True, blank=True)
     hora_inicio = models.TimeField()
     hora_fin = models.TimeField()
 
@@ -646,10 +654,11 @@ class Turno(models.Model):
         related_name='mis_turnos'
     )
     profesional = models.ForeignKey(
-        'usuarios.Usuario', 
-        on_delete=models.PROTECT, 
-        limit_choices_to={'rol__in': ['PROFESIONAL', 'PERSONAL']},
-        related_name='turnos_asignados'
+        'gestion.Personal', 
+        on_delete=models.PROTECT,
+        related_name='turnos_asignados',
+        null=True,
+        blank=True
     )
     equipamiento = models.ForeignKey(
         'gestion.Equipamiento', 
@@ -706,6 +715,56 @@ class DetalleTurno(models.Model):
 
     def __str__(self):
         return f"{self.servicio.nombre} - Turno ID: {self.turno.id}"
+    
+
+class FichaTecnica(models.Model):
+    # Relación 1:1 con el detalle del servicio realizado
+    # Esto asegura que cada servicio de un turno pueda tener su propia fórmula
+    detalle_turno = models.OneToOneField(
+        'DetalleTurno', 
+        on_delete=models.CASCADE, 
+        related_name='ficha_tecnica'
+    )
+    
+    # Profesional que realizó la anotación técnica
+    profesional_autor = models.ForeignKey(
+        'usuarios.Usuario',
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='fichas_redactadas'
+    )
+    
+    # NUEVO: Campos granulares según tu análisis
+    formula = models.TextField()  # Aquí se guarda la fórmula ajustada
+    observaciones_proceso = models.TextField(blank=True, null=True)
+    
+    # NUEVO: Estado final basado en IRQ-02
+    # Relaciones a las tablas maestras de diagnóstico
+    porosidad_final = models.ForeignKey(
+        'gestion.PorosidadCabello', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        verbose_name="Porosidad Post-Servicio",
+        related_name='fichas_registradas'
+    )
+    
+    estado_general_final = models.ForeignKey(
+        'gestion.EstadoGeneral',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        verbose_name="Estado General Post-Servicio",
+        related_name='fichas_registradas'
+    )
+    
+    resultado_post_servicio = models.TextField(blank=True, null=True)
+    foto_resultado = models.ImageField(upload_to='fichas_tecnicas/', null=True, blank=True)
+    fecha_registro = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Ficha Técnica"
+        verbose_name_plural = "Fichas Técnicas"
 
 
 class ListaEspera(models.Model):
@@ -793,6 +852,132 @@ class Equipamiento(models.Model):
 
     def __str__(self):
         return f"[{self.codigo}] {self.nombre}"
+
+
+class RequisitoServicio(models.Model):
+    """
+    Tabla Intermedia Explícita: Asocia Servicios con Tipos de Equipamiento requeridos.
+    Permite rastrear qué equipos son necesarios para cada servicio.
+    """
+    servicio = models.ForeignKey(
+        Servicio,
+        on_delete=models.CASCADE,
+        related_name='requisitos_equipamiento'
+    )
+    
+    tipo_equipamiento = models.ForeignKey(
+        TipoEquipamiento,
+        on_delete=models.CASCADE,
+        related_name='servicios_requeridos'
+    )
+    
+    obligatorio = models.BooleanField(
+        default=True,
+        help_text="Si es True, el equipo DEBE estar disponible para realizar el servicio"
+    )
+    
+    cantidad_minima = models.PositiveIntegerField(
+        default=1,
+        help_text="Cantidad mínima de este tipo de equipo necesaria"
+    )
+    
+    fecha_registro = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Requisito de Servicio"
+        verbose_name_plural = "Requisitos de Servicios"
+        unique_together = ('servicio', 'tipo_equipamiento')
+
+    def __str__(self):
+        return f"{self.servicio.nombre} requiere {self.tipo_equipamiento.nombre}"
+
+class DiagnosticoCapilar(models.Model):
+    """
+    Registro de diagnóstico realizado a un cliente.
+    Tabla maestra que guarda el histórico de evaluaciones del cabello.
+    """
+    cliente = models.ForeignKey(
+        'usuarios.Cliente',
+        on_delete=models.CASCADE,
+        related_name='diagnosticos_capilares'
+    )
+    
+    # Profesional que realizó el diagnóstico
+    profesional = models.ForeignKey(
+        'usuarios.Usuario',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='diagnosticos_realizados'
+    )
+    
+    # Estado del cabello en el momento del diagnóstico
+    tipo_cabello = models.ForeignKey(
+        TipoCabello,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True
+    )
+    
+    grosor_cabello = models.ForeignKey(
+        GrosorCabello,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True
+    )
+    
+    porosidad_cabello = models.ForeignKey(
+        PorosidadCabello,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True
+    )
+    
+    cuero_cabelludo = models.ForeignKey(
+        CueroCabelludo,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True
+    )
+    
+    estado_general = models.ForeignKey(
+        EstadoGeneral,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True
+    )
+    
+    # Observaciones y recomendaciones
+    observaciones = models.TextField(blank=True, null=True)
+    recomendaciones = models.TextField(blank=True, null=True)
+    
+    # Regla que se aplicó
+    regla_diagnostico = models.ForeignKey(
+        ReglaDiagnostico,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='diagnosticos_generados'
+    )
+    
+    # Rutina sugerida como resultado
+    rutina_sugerida = models.ForeignKey(
+        Rutina,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='diagnosticos_que_la_sugirieron'
+    )
+    
+    fecha_diagnostico = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        verbose_name = "Diagnóstico Capilar"
+        verbose_name_plural = "Diagnósticos Capilares"
+        ordering = ['-fecha_diagnostico']
+    
+    def __str__(self):
+        return f"Diagnóstico {self.cliente} - {self.fecha_diagnostico.strftime('%d/%m/%Y')}"
 
 class Notificacion(models.Model):
     """

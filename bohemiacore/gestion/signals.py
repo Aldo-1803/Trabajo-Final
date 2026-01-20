@@ -85,6 +85,10 @@ def crear_notificacion_cambio_estado(sender, instance, created, **kwargs):
     """
     Genera notificaciones In-App respetando el nuevo modelo del diagrama.
     """
+    # Obtener nombres de servicios del turno
+    servicios_nombres = [d.servicio.nombre for d in instance.detalles.all()]
+    servicios_str = ', '.join(servicios_nombres) if servicios_nombres else 'Servicios'
+    
     # 1. NOTIFICACIÓN AL PROFESIONAL (Nuevo Turno)
     if created and instance.estado == 'solicitado':
         admins = Usuario.objects.filter(is_staff=True)
@@ -92,7 +96,7 @@ def crear_notificacion_cambio_estado(sender, instance, created, **kwargs):
             Notificacion.objects.create(
                 usuario=admin,
                 titulo="Nuevo Turno Solicitado",
-                mensaje=f"{instance.cliente.usuario.first_name} solicitó {instance.servicio.nombre} el {instance.fecha}.",
+                mensaje=f"{instance.cliente.usuario.first_name} solicitó {servicios_str} el {instance.fecha}.",
                 tipo='alerta',
                 canal='app',
                 estado='pendiente',
@@ -109,7 +113,7 @@ def crear_notificacion_cambio_estado(sender, instance, created, **kwargs):
 
         if instance.estado == 'esperando_sena':
             titulo = "Turno Aceptado"
-            mensaje = f"Tu turno para {instance.servicio.nombre} fue aceptado. ¡Sube tu seña!"
+            mensaje = f"Tu turno para {servicios_str} fue aceptado. ¡Sube tu seña!"
             tipo_notif = 'alerta' # Es importante, requiere acción
         
         elif instance.estado == 'confirmado':
