@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
+import { confirmarAccion, notify } from '../../utils/notificaciones';
 
 const GestionTurnos = () => {
     const [turnos, setTurnos] = useState([]);
@@ -19,7 +20,11 @@ const GestionTurnos = () => {
         setLoading(true);
         try {
             // Usamos el filtro que creamos en el backend
-            const res = await axios.get(`http://127.0.0.1:8000/api/gestion/turnos/?estado=${filtroEstado}`);
+            const token = localStorage.getItem('access_token');
+            const res = await axios.get(
+                `http://127.0.0.1:8000/api/gestion/turnos/?estado=${filtroEstado}`,
+                { headers: { 'Authorization': `Bearer ${token}` } }
+            );
             setTurnos(res.data);
         } catch (error) {
             console.error("Error cargando turnos", error);
@@ -30,18 +35,33 @@ const GestionTurnos = () => {
 
     // Función genérica para cambiar el estado de un turno
     const cambiarEstado = async (id, nuevoEstado) => {
-        if (!window.confirm(`¿Estás segura de cambiar el estado a: ${nuevoEstado}?`)) return;
+        const result = await confirmarAccion({
+            title: "¿Cambiar estado del turno?",
+            text: `Nuevo estado: ${nuevoEstado}`,
+            confirmButtonText: "Sí, cambiar"
+        });
+        if (!result.isConfirmed) return;
 
         setProcesandoId(id);
         try {
-            await axios.patch(`http://127.0.0.1:8000/api/gestion/turnos/${id}/`, {
-                estado: nuevoEstado
-            });
+            const token = localStorage.getItem('access_token');
+            const response = await axios.patch(
+                `http://127.0.0.1:8000/api/gestion/turnos/${id}/`,
+                { estado: nuevoEstado },
+                { headers: { 'Authorization': `Bearer ${token}` } }
+            );
+            console.log('Respuesta exitosa:', response.data);
             // Recargamos la lista para quitar el turno de esta pestaña
             cargarTurnos();
+            notify.success(`Turno actualizado a ${nuevoEstado}`);
         } catch (error) {
-            alert("Error al actualizar el turno");
-            console.error(error);
+            console.error("Error completo:", error.response?.data || error);
+            const mensaje = error.response?.data?.estado?.[0] || 
+                           error.response?.data?.error || 
+                           error.response?.data?.detail ||
+                           JSON.stringify(error.response?.data) ||
+                           "Error al actualizar el turno";
+            notify.error(mensaje);
         } finally {
             setProcesandoId(null);
         }
