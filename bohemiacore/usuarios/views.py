@@ -357,14 +357,39 @@ class DiagnosticoView(APIView):
             accion_recomendada = "Cuidado Preventivo"
 
         # --- 4. RESPUESTA FINAL ---
-        return Response({
+        # Buscamos si hay una notificación de recomendación de turno
+        turno_recomendado = None
+        try:
+            from gestion.models import Notificacion
+            notif = Notificacion.objects.filter(
+                usuario=request.user,
+                tipo='alerta',
+                titulo__icontains='Recomendación'
+            ).order_by('-fecha_envio').first()
+            
+            if notif and notif.datos_extra:
+                turno_recomendado = {
+                    'fecha': notif.datos_extra.get('fecha'),
+                    'hora': notif.datos_extra.get('hora'),
+                    'servicio_id': notif.datos_extra.get('servicio_id')
+                }
+        except:
+            pass
+        
+        response_data = {
             'mensaje_diagnostico': mensaje_diagnostico,
             'accion': accion_recomendada,
             'puntaje_final': puntaje_salud_total,
             'fuente': f"{fuente_principal} - Pts: {puntaje_salud_total}",
             'rutina_id': rutina_id,
             'rutina_nombre': rutina_nombre,
-        }, status=status.HTTP_200_OK)
+        }
+        
+        # Agregamos el turno recomendado si existe
+        if turno_recomendado:
+            response_data['turno_recomendado'] = turno_recomendado
+        
+        return Response(response_data, status=status.HTTP_200_OK)
 
 
 # --- VIEWSET PARA LISTAR CLIENTES (ADMIN) ---

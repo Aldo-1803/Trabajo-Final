@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
 import { confirmarAccion, notify } from '../utils/notificaciones';
 
 const CampanaNotificaciones = () => {
@@ -7,6 +8,7 @@ const CampanaNotificaciones = () => {
     const [showDropdown, setShowDropdown] = useState(false);
     const [unreadCount, setUnreadCount] = useState(0);
     const [procesando, setProcesando] = useState({});
+    const navigate = useNavigate();
 
     const fetchNotificaciones = async () => {
         try {
@@ -138,6 +140,45 @@ const CampanaNotificaciones = () => {
         }
     };
 
+    // Nueva función: Determinar a dónde redirigir según el tipo de notificación
+    const handleClickNotificacion = async (notif) => {
+        try {
+            // Primero marcar como leído
+            await marcarComoLeida(notif.id);
+            
+            // Luego redirigir según el tipo
+            let rutaDestino = '/perfil'; // Ruta por defecto
+            
+            if (notif.tipo === 'alerta') {
+                // Si es una alerta de turno recomendado, ir a mis-turnos
+                if (notif.datos_extra && (notif.datos_extra.fecha || notif.datos_extra.servicio_id)) {
+                    rutaDestino = '/mis-turnos';
+                } else {
+                    // Si es otra alerta, ir al perfil
+                    rutaDestino = '/perfil';
+                }
+            } else if (notif.tipo === 'recordatorio') {
+                // Recordatorio de turno -> ir a mis-turnos
+                rutaDestino = '/mis-turnos';
+            } else if (notif.tipo === 'ADELANTO') {
+                // Adelanto de turno -> ir a mis-turnos
+                rutaDestino = '/mis-turnos';
+            } else if (notif.tipo === 'diagnostico') {
+                // Notificación de diagnóstico -> ir al perfil
+                rutaDestino = '/perfil';
+            }
+            
+            // Cerrar dropdown
+            setShowDropdown(false);
+            
+            // Redirigir
+            navigate(rutaDestino);
+            
+        } catch (error) {
+            console.error('Error al procesar notificación:', error);
+        }
+    };
+
     return (
         <div className="relative inline-block">
             {/* ÍCONO CAMPANA */}
@@ -176,8 +217,10 @@ const CampanaNotificaciones = () => {
                             notificaciones.map((notif) => (
                                 <div 
                                     key={notif.id} 
-                                    className={`p-4 border-b border-gray-50 transition-colors 
-                                        ${notif.estado === 'pendiente' ? 'bg-blue-50 border-l-4 border-l-pink-500' : 'bg-white opacity-80'}`}
+                                    className={`p-4 border-b border-gray-50 transition-all
+                                        ${notif.estado === 'pendiente' ? 'bg-blue-50 border-l-4 border-l-pink-500' : 'bg-white opacity-80'}
+                                        ${notif.tipo !== 'ADELANTO' ? 'cursor-pointer hover:bg-pink-100 hover:shadow-md' : ''}`}
+                                    onClick={() => notif.tipo !== 'ADELANTO' && handleClickNotificacion(notif)}
                                 >
                                     {/* Título y Mensaje */}
                                     <div className="flex justify-between items-start mb-1">
@@ -230,15 +273,27 @@ const CampanaNotificaciones = () => {
                                         </div>
                                     )}
 
-                                    {/* Si no es ADELANTO, solo click para marcar como leído */}
+                                    {/* Si no es ADELANTO, mostrar como clickeable */}
                                     {notif.tipo !== 'ADELANTO' && notif.estado === 'pendiente' && (
                                         <div className="mt-2 flex justify-end">
                                             <button
-                                                onClick={() => marcarComoLeida(notif.id)}
-                                                className="text-[10px] text-pink-600 font-bold uppercase tracking-wide hover:text-pink-700 transition"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleClickNotificacion(notif);
+                                                }}
+                                                className="text-[10px] text-pink-600 font-bold uppercase tracking-wide hover:text-pink-700 hover:underline transition"
                                             >
-                                                Marcar como leída →
+                                                Ver detalles →
                                             </button>
+                                        </div>
+                                    )}
+
+                                    {/* Si no es ADELANTO y ya fue leída */}
+                                    {notif.tipo !== 'ADELANTO' && notif.estado === 'leido' && (
+                                        <div className="mt-2 flex justify-end">
+                                            <span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">
+                                                ✓ Leída
+                                            </span>
                                         </div>
                                     )}
                                 </div>

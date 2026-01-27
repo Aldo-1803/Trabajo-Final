@@ -91,15 +91,19 @@ class TurnoSerializer(serializers.ModelSerializer):
     cliente_nombre = serializers.SerializerMethodField(read_only=True)
     servicio_nombre = serializers.SerializerMethodField(read_only=True)
     profesional_nombre = serializers.SerializerMethodField(read_only=True)
+    # ✅ NUEVO: Campos para verificar expiración
+    expired = serializers.SerializerMethodField(read_only=True)
+    horas_transcurridas = serializers.SerializerMethodField(read_only=True)
+    puede_modificar = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Turno
         fields = [
             'id', 'cliente', 'cliente_nombre', 'profesional', 'profesional_nombre', 
             'equipamiento', 'fecha', 'hora_inicio', 'estado', 'detalles', 'servicio', 
-            'servicio_nombre', 'comprobante_pago'
+            'servicio_nombre', 'comprobante_pago', 'expired', 'horas_transcurridas', 'puede_modificar'
         ]
-        read_only_fields = ['cliente']
+        read_only_fields = ['cliente', 'expired', 'horas_transcurridas', 'puede_modificar']
     
     def get_cliente_nombre(self, obj):
         """Retorna el nombre completo del cliente"""
@@ -117,6 +121,31 @@ class TurnoSerializer(serializers.ModelSerializer):
         if obj.profesional:
             return obj.profesional.nombre
         return "No asignado"
+
+    def get_expired(self, obj):
+        """✅ NUEVO: Verifica si el turno ya pasó su fecha"""
+        from django.utils import timezone
+        now = timezone.now()
+        turno_dt = timezone.make_aware(datetime.combine(obj.fecha, obj.hora_inicio)) \
+            if timezone.is_naive(datetime.combine(obj.fecha, obj.hora_inicio)) \
+            else datetime.combine(obj.fecha, obj.hora_inicio)
+        return turno_dt < now
+
+    def get_horas_transcurridas(self, obj):
+        """✅ NUEVO: Horas que transcurrieron desde que pasó la fecha"""
+        from django.utils import timezone
+        now = timezone.now()
+        turno_dt = timezone.make_aware(datetime.combine(obj.fecha, obj.hora_inicio)) \
+            if timezone.is_naive(datetime.combine(obj.fecha, obj.hora_inicio)) \
+            else datetime.combine(obj.fecha, obj.hora_inicio)
+        if turno_dt < now:
+            return round((now - turno_dt).total_seconds() / 3600, 1)
+        return 0
+
+    def get_puede_modificar(self, obj):
+        """✅ NUEVO: Indica si el cliente puede aún modificar el turno"""
+        expired = self.get_expired(obj)
+        return not expired and obj.estado in ['solicitado', 'esperando_sena']
 
     def validate(self, data):
         """Validar según el tipo de operación"""
@@ -417,6 +446,7 @@ class NotificacionSerializer(serializers.ModelSerializer):
 class ReglaDiagnosticoSerializer(serializers.ModelSerializer):
     # Campos de solo lectura para mostrar nombres en la tabla
     rutina_nombre = serializers.CharField(source='rutina_sugerida.nombre', read_only=True)
+    servicio_nombre = serializers.CharField(source='servicio_sugerido.nombre', read_only=True)
     
     # Nombres de las condiciones para facilitar la lectura en la tabla
     tipo_nombre = serializers.CharField(source='tipo_cabello.nombre', read_only=True)
@@ -433,7 +463,8 @@ class ReglaDiagnosticoSerializer(serializers.ModelSerializer):
             'cuero_cabelludo', 'cuero_nombre',
             'estado_general', 'estado_nombre',
             'mensaje_resultado', 'accion_resultado',
-            'rutina_sugerida', 'rutina_nombre'
+            'rutina_sugerida', 'rutina_nombre',
+            'servicio_sugerido', 'servicio_nombre'
         ]
     
 
@@ -598,6 +629,12 @@ class DiagnosticoCapilarSerializer(serializers.ModelSerializer):
     estado_general_nombre = serializers.CharField(source='estado_general.nombre', read_only=True)
     regla_diagnostico_accion = serializers.CharField(source='regla_diagnostico.accion_resultado', read_only=True)
     rutina_sugerida_nombre = serializers.CharField(source='rutina_sugerida.nombre', read_only=True)
+    rutina_asignada_nombre = serializers.CharField(source='rutina_asignada.nombre', read_only=True, required=False)
+    servicio_urgente_nombre = serializers.CharField(source='servicio_urgente.nombre', read_only=True, required=False)
+    servicio_urgente_id = serializers.IntegerField(source='servicio_urgente.id', read_only=True, required=False)
+    rutina_asignada_id = serializers.IntegerField(source='rutina_asignada.id', read_only=True, required=False)
+    # Campo personalizado: el mensaje profesional guardado en observaciones
+    mensaje_diagnostico = serializers.CharField(source='observaciones', read_only=True, required=False)
     
     class Meta:
         model = DiagnosticoCapilar
@@ -609,16 +646,19 @@ class DiagnosticoCapilarSerializer(serializers.ModelSerializer):
             'porosidad_cabello', 'porosidad_cabello_nombre',
             'cuero_cabelludo', 'cuero_cabelludo_nombre',
             'estado_general', 'estado_general_nombre',
-            'observaciones', 'recomendaciones',
+            'observaciones', 'mensaje_diagnostico', 'recomendaciones',
             'regla_diagnostico', 'regla_diagnostico_accion',
             'rutina_sugerida', 'rutina_sugerida_nombre',
+            'rutina_asignada', 'rutina_asignada_nombre', 'rutina_asignada_id',
+            'servicio_urgente', 'servicio_urgente_nombre', 'servicio_urgente_id',
             'fecha_diagnostico'
         ]
         read_only_fields = [
             'id', 'fecha_diagnostico', 'cliente_email', 'profesional_nombre',
             'tipo_cabello_nombre', 'grosor_cabello_nombre', 'porosidad_cabello_nombre',
             'cuero_cabelludo_nombre', 'estado_general_nombre', 'regla_diagnostico_accion',
-            'rutina_sugerida_nombre'
+            'rutina_sugerida_nombre', 'mensaje_diagnostico', 'rutina_asignada_nombre',
+            'servicio_urgente_nombre', 'servicio_urgente_id', 'rutina_asignada_id'
         ]
     
     def create(self, validated_data):

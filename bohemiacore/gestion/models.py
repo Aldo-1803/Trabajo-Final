@@ -222,7 +222,7 @@ class CatalogoBase(models.Model):
 
     puntaje_base = models.IntegerField(
         default=0, 
-        verbose_name="Puntaje PH (Lógica Diagnóstico)",
+        verbose_name="Puntaje (Lógica Diagnóstico)",
         help_text="Usado por el motor de reglas (ej. Sano=10, Dañado=50)"
     )
 
@@ -305,6 +305,14 @@ class ReglaDiagnostico(models.Model):
         null=True, 
         blank=True,
         help_text="La rutina que se asignará automáticamente al cliente."
+    )
+    
+    servicio_sugerido = models.ForeignKey(
+        'Servicio', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        help_text="Servicio específico para este diagnóstico técnico."
     )
 
     class Meta:
@@ -678,6 +686,13 @@ class Turno(models.Model):
         choices=Estado.choices, 
         default=Estado.SOLICITADO
     )
+
+    # Seña y pago
+    fecha_limite_pago = models.DateTimeField(
+        null=True, 
+        blank=True, 
+        help_text="Fecha y hora máxima para recibir el comprobante"
+    )
     
     # Auditoría
     comprobante_pago = models.FileField(upload_to='comprobantes/', null=True, blank=True)
@@ -960,13 +975,33 @@ class DiagnosticoCapilar(models.Model):
         related_name='diagnosticos_generados'
     )
     
-    # Rutina sugerida como resultado
+    # Rutina sugerida como resultado (por Nivel 1 o Nivel 2)
     rutina_sugerida = models.ForeignKey(
         Rutina,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name='diagnosticos_que_la_sugirieron'
+    )
+    
+    # Servicio urgente (si diagnóstico es CRÍTICO, ≤5 puntos)
+    servicio_urgente = models.ForeignKey(
+        Servicio,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='diagnosticos_urgentes',
+        help_text="Servicio recomendado urgentemente si score ≤5"
+    )
+    
+    # Rutina asignada al cliente (registro de quién ejecutó el motor)
+    rutina_asignada = models.ForeignKey(
+        Rutina,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='diagnosticos_que_la_asignaron',
+        help_text="Rutina efectivamente asignada al cliente"
     )
     
     fecha_diagnostico = models.DateTimeField(auto_now_add=True)

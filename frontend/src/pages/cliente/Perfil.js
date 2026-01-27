@@ -13,6 +13,7 @@ const Perfil = () => {
     // ========================================================================
     const [usuario, setUsuario] = useState(null);
     const [diagnostico, setDiagnostico] = useState(null);
+    const [notificaciones, setNotificaciones] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const navigate = useNavigate();
@@ -50,6 +51,15 @@ const Perfil = () => {
                 setDiagnostico(diagResponse.data);
             } catch (diagErr) {
                 console.error('Error al cargar diagnóstico:', diagErr);
+            }
+
+            try {
+                const notifResponse = await axios.get('/api/gestion/notificaciones/', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                setNotificaciones(notifResponse.data);
+            } catch (notifErr) {
+                console.error('Error al cargar notificaciones:', notifErr);
             }
         } catch (err) {
             console.error('Error al cargar perfil:', err);
@@ -97,12 +107,12 @@ const Perfil = () => {
 
                 {/* GRID DE TARJETAS */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-                    <InformacionPersonal usuario={usuario} />
+                    <InformacionPersonal usuario={usuario} navigate={navigate} />
                     <PerfilCapilar usuario={usuario} />
                 </div>
 
                 {/* DIAGNÓSTICO */}
-                {diagnostico && <DiagnosticoCard diagnostico={diagnostico} navigate={navigate} />}
+                {diagnostico && <DiagnosticoCard diagnostico={diagnostico} notificaciones={notificaciones} navigate={navigate} />}
             </div>
         </div>
     );
@@ -118,9 +128,18 @@ const ErrorAlert = ({ error }) => (
     </div>
 );
 
-const InformacionPersonal = ({ usuario }) => (
+const InformacionPersonal = ({ usuario, navigate }) => (
     <div style={{ backgroundColor: 'white', borderLeft: '5px solid #AB9A91' }} className="rounded-xl p-8 shadow-lg">
-        <h2 style={{ color: '#817773' }} className="text-2xl font-bold mb-6">📋 Información Personal</h2>
+        <div className="flex justify-between items-center mb-6">
+            <h2 style={{ color: '#817773' }} className="text-2xl font-bold">📋 Información Personal</h2>
+            <button
+                onClick={() => navigate('/editar-perfil')}
+                className="px-4 py-2 rounded-lg text-white font-bold shadow-md transform hover:scale-105 transition-all"
+                style={{ background: 'linear-gradient(135deg, #AB9A91 0%, #817773 100%)' }}
+            >
+                ✏️ Editar
+            </button>
+        </div>
         
         <div className="space-y-4">
             <InfoRow label="Nombre Completo" value={`${usuario?.first_name} ${usuario?.last_name}`} />
@@ -144,45 +163,43 @@ const PerfilCapilar = ({ usuario }) => (
     </div>
 );
 
-const DiagnosticoCard = ({ diagnostico, navigate }) => (
-    <div style={{ backgroundColor: 'white', borderLeft: '5px solid #E3D5CA' }} className="rounded-xl p-8 shadow-lg mb-8">
-        <h2 style={{ color: '#817773' }} className="text-2xl font-bold mb-6">Diagnóstico Personalizado</h2>
-        
-        {/* Mensaje Principal */}
-        <div className="bg-gradient-to-r from-transparent to-transparent rounded-lg p-6 mb-4 border-l-4" style={{ borderColor: '#AB9A91', backgroundColor: '#F5EBE0' }}>
-            <p style={{ color: '#817773' }} className="text-lg leading-relaxed font-medium">
-                {diagnostico.mensaje_diagnostico}
-            </p>
-        </div>
+const DiagnosticoCard = ({ diagnostico, notificaciones, navigate }) => {
+    // Obtener la notificación de turno recomendado más reciente
+    const turnoNotificacion = notificaciones && notificaciones.length > 0 
+        ? notificaciones.find(n => n.tipo === 'alerta' && n.datos_extra?.fecha && n.datos_extra?.hora)
+        : null;
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-            {/* Acción Recomendada */}
-            <div style={{ backgroundColor: '#F5EBE0' }} className="rounded-lg p-4">
-                <p style={{ color: '#AB9A91' }} className="text-sm font-semibold">Acción Sugerida:</p>
-                <p style={{ color: '#817773' }} className="font-medium mt-2">{diagnostico.accion}</p>
+    return (
+        <div style={{ backgroundColor: 'white', borderLeft: '5px solid #E3D5CA' }} className="rounded-xl p-8 shadow-lg mb-8">
+            <h2 style={{ color: '#817773' }} className="text-2xl font-bold mb-6">Diagnóstico Personalizado</h2>
+            
+            {/* Mensaje Principal */}
+            <div className="bg-gradient-to-r from-transparent to-transparent rounded-lg p-6 mb-4 border-l-4" style={{ borderColor: '#AB9A91', backgroundColor: '#F5EBE0' }}>
+                <p style={{ color: '#817773' }} className="text-lg leading-relaxed font-medium">
+                    {diagnostico.mensaje_diagnostico}
+                </p>
             </div>
 
-            {/* Puntaje */}
-            {diagnostico.puntaje_final !== undefined && (
-                <div style={{ backgroundColor: '#E3D5CA' }} className="rounded-lg p-4 flex items-center justify-center">
-                    <div className="text-center">
-                        <p style={{ color: '#817773' }} className="text-sm font-semibold mb-2">Puntaje de Salud</p>
-                        <p style={{ color: '#817773' }} className="text-4xl font-bold">{diagnostico.puntaje_final}/10</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                {/* Servicio Urgente */}
+                {diagnostico.servicio_urgente_nombre && (
+                    <div style={{ backgroundColor: '#F5EBE0' }} className="rounded-lg p-4">
+                        <p style={{ color: '#AB9A91' }} className="text-sm font-semibold">Servicio Recomendado:</p>
+                        <p style={{ color: '#817773' }} className="font-medium mt-2">{diagnostico.servicio_urgente_nombre}</p>
                     </div>
-                </div>
-            )}
-        </div>
+                )}
+            </div>
 
         {/* --- BLOQUE DE RUTINA SUGERIDA --- */}
-        {diagnostico.rutina_nombre && (
+        {diagnostico.rutina_asignada_nombre && (
             <div className="mt-6 p-6 rounded-xl border-2 border-dashed" style={{ borderColor: '#AB9A91', backgroundColor: '#FAF7F5' }}>
                 <div className="flex flex-col md:flex-row items-center justify-between gap-4">
                     <div>
                         <p className="text-sm font-bold uppercase tracking-wider" style={{ color: '#AB9A91' }}>
-                             Recomendación para ti
+                             Rutina Recomendada
                         </p>
                         <h3 className="text-xl font-bold" style={{ color: '#817773' }}>
-                            {diagnostico.rutina_nombre}
+                            {diagnostico.rutina_asignada_nombre}
                         </h3>
                         <p className="text-sm text-gray-500 mt-1">
                             Revisa los pasos y productos antes de adoptarla.
@@ -191,11 +208,38 @@ const DiagnosticoCard = ({ diagnostico, navigate }) => (
                     
                     <button
                         // Redirige a la vista de detalle (ej: /rutina/5)
-                        onClick={() => navigate(`/rutina/${diagnostico.rutina_id}`)}
+                        onClick={() => navigate(`/rutina/${diagnostico.rutina_asignada_id}`)}
                         className="px-6 py-3 rounded-lg text-white font-bold shadow-md transform hover:scale-105 transition-all flex items-center gap-2"
                         style={{ background: 'linear-gradient(135deg, #AB9A91 0%, #817773 100%)' }}
                     >
                         <span></span> Ver detalle de rutina
+                    </button>
+                </div>
+            </div>
+        )}
+
+        {/* --- BLOQUE DE TURNO RECOMENDADO --- */}
+        {turnoNotificacion && turnoNotificacion.datos_extra && (
+            <div className="mt-6 p-6 rounded-xl border-2 border-dashed" style={{ borderColor: '#E3D5CA', backgroundColor: '#FAF7F5' }}>
+                <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+                    <div>
+                        <p className="text-sm font-bold uppercase tracking-wider" style={{ color: '#E3D5CA' }}>
+                            Turno Disponible
+                        </p>
+                        <h3 className="text-lg font-bold" style={{ color: '#817773' }}>
+                            {turnoNotificacion.datos_extra.fecha} a las {turnoNotificacion.datos_extra.hora}
+                        </h3>
+                        <p className="text-sm text-gray-500 mt-1">
+                            Hemos reservado un espacio para ti en nuestro salón.
+                        </p>
+                    </div>
+                    
+                    <button
+                        onClick={() => navigate('/mis-turnos')}
+                        className="px-6 py-3 rounded-lg text-white font-bold shadow-md transform hover:scale-105 transition-all flex items-center gap-2"
+                        style={{ background: 'linear-gradient(135deg, #E3D5CA 0%, #D5BDAF 100%)' }}
+                    >
+                        <span>✨</span> Agendar Turno
                     </button>
                 </div>
             </div>
@@ -226,7 +270,8 @@ const DiagnosticoCard = ({ diagnostico, navigate }) => (
             </div>
         </div>
     </div>
-);
+    );
+};
 
 
 const InfoRow = ({ label, value }) => (

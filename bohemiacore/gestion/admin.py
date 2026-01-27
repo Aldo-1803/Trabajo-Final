@@ -47,6 +47,8 @@ class ReglaDiagnosticoAdmin(admin.ModelAdmin):
         '__str__',  # Muestra el nombre de la regla
         'prioridad', 
         'mensaje_resultado',
+        'get_rutina_sugerida',
+        'get_servicio_sugerido',
         'cuero_cabelludo', # Condición 1
         'estado_general'   # Condición 2
     )
@@ -56,7 +58,7 @@ class ReglaDiagnosticoAdmin(admin.ModelAdmin):
     # Esto ayuda a organizar el formulario de creación
     fieldsets = (
         ("Resultado (Qué pasa si coincide)", {
-            'fields': ('prioridad', 'mensaje_resultado', 'accion_resultado')
+            'fields': ('prioridad', 'mensaje_resultado', 'accion_resultado', 'rutina_sugerida', 'servicio_sugerido')
         }),
         ("Condiciones (Cuándo coincide)", {
             'classes': ('collapse',), # Lo muestra colapsado
@@ -70,6 +72,16 @@ class ReglaDiagnosticoAdmin(admin.ModelAdmin):
             'description': "Deja un campo vacío para 'Cualquiera'. La regla solo coincidirá si TODOS los campos seleccionados son iguales a los del perfil del cliente."
         }),
     )
+    
+    def get_rutina_sugerida(self, obj):
+        """Método para mostrar el nombre de la rutina en list_display"""
+        return obj.rutina_sugerida.nombre if obj.rutina_sugerida else "—"
+    get_rutina_sugerida.short_description = "Rutina Sugerida"
+    
+    def get_servicio_sugerido(self, obj):
+        """Método para mostrar el nombre del servicio en list_display"""
+        return obj.servicio_sugerido.nombre if obj.servicio_sugerido else "—"
+    get_servicio_sugerido.short_description = "Servicio Sugerido"
 
 
 # ============================================

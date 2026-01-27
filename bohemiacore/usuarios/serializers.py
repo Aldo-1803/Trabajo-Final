@@ -278,7 +278,26 @@ class RegistroSerializer(serializers.ModelSerializer):
         user = Usuario.objects.create_user(**validated_data)
         
         # Crear el Cliente con todos los datos
-        Cliente.objects.create(usuario=user, **cliente_data)
+        cliente = Cliente.objects.create(usuario=user, **cliente_data)
+        
+        # AUTOMÁTICO: Si hay datos capilares, crear diagnóstico
+        if cliente.tipo_cabello or cliente.grosor_cabello or cliente.porosidad_cabello or cliente.cuero_cabelludo or cliente.estado_general:
+            from gestion.models import DiagnosticoCapilar
+            from gestion.views import DiagnosticoCapilarViewSet
+            
+            # Crear el diagnóstico inicial
+            diag = DiagnosticoCapilar.objects.create(
+                cliente=cliente,
+                tipo_cabello=cliente.tipo_cabello,
+                grosor_cabello=cliente.grosor_cabello,
+                porosidad_cabello=cliente.porosidad_cabello,
+                cuero_cabelludo=cliente.cuero_cabelludo,
+                estado_general=cliente.estado_general
+            )
+            
+            # Ejecutar el motor diagnóstico automáticamente
+            viewset = DiagnosticoCapilarViewSet()
+            viewset._ejecutar_motor_diagnostico(diag)
         
         return user
 

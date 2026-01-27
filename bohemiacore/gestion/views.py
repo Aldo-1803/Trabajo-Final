@@ -18,6 +18,7 @@ from .models import (
     TipoCabello, GrosorCabello, PorosidadCabello, CueroCabelludo, EstadoGeneral, CategoriaServicio, Servicio, Turno, DetalleTurno,
     Configuracion, ListaEspera, Producto, Equipamiento, Rutina, Notificacion, AgendaCuidados, Producto, ReglaDiagnostico,
     RutinaCliente, HorarioLaboral, BloqueoAgenda, Personal, TipoEquipamiento, FichaTecnica, DiagnosticoCapilar, RequisitoServicio,
+    DiasSemana,
     #PasoRutinaCliente
     #PasoRutina
 )
@@ -245,12 +246,62 @@ class TurnoViewSet(viewsets.ModelViewSet):
     pagination_class = None 
     permission_classes = [IsAuthenticated]
 
+    def _auto_cancel_expired_turnos(self):
+        """
+        Detecta y cancela automáticamente turnos que pasaron su fecha
+        sin confirmación (estados SOLICITADO o ESPERANDO_SENA).
+        """
+        now = timezone.now()
+        
+        # Buscar turnos expirados comparando fecha + hora contra ahora
+        expired_turnos = Turno.objects.filter(
+            estado__in=[Turno.Estado.SOLICITADO, Turno.Estado.ESPERANDO_SENA]
+        )
+
+        for turno in expired_turnos:
+            try:
+                # Combinar fecha e hora para comparar
+                turno_dt = timezone.make_aware(datetime.combine(turno.fecha, turno.hora_inicio)) \
+                    if timezone.is_naive(datetime.combine(turno.fecha, turno.hora_inicio)) \
+                    else datetime.combine(turno.fecha, turno.hora_inicio)
+                
+                # Si ya pasó
+                if turno_dt < now:
+                    estado_anterior = turno.estado
+                    
+                    # Cancelar automáticamente
+                    turno.estado = Turno.Estado.CANCELADO
+                    turno.motivo_cancelacion = "Cancelado automáticamente: Turno expirado sin confirmación"
+                    turno.save()
+
+                    # Notificar al cliente
+                    Notificacion.objects.get_or_create(
+                        usuario=turno.cliente.usuario,
+                        tipo='TURNO',
+                        titulo='Turno Cancelado - Expiración de plazo',
+                        defaults={
+                            'canal': 'in-app',
+                            'mensaje': f'Tu turno del {turno_dt.strftime("%d/%m/%Y %H:%M")} ha sido cancelado automáticamente porque pasó la fecha sin confirmación.',
+                            'estado': 'pendiente'
+                        }
+                    )
+            except Exception as e:
+                logging.error(f"Error auto-cancelando turno {turno.id}: {str(e)}")
+
     def get_queryset(self):
+        # ✅ NUEVO: Auto-limpiar turnos expirados cada vez que se consulta
+        self._auto_cancel_expired_turnos()
+        
         queryset = super().get_queryset()
-        # Filtro según el rol del usuario
+        ahora = timezone.now()
+
+        # Si es el profesional/admin, ocultamos por defecto los pendientes que ya pasaron
         if self.request.user.is_staff:
-            # Admin ve todos los turnos
-            pass
+            # Solo mostramos SOLICITADOS o ESPERANDO_SENA si son de HOY en adelante
+            queryset = queryset.exclude(
+                Q(fecha__lt=ahora.date()) | Q(fecha=ahora.date(), hora_inicio__lt=ahora.time()),
+                estado__in=['solicitado', 'esperando_sena']
+            )
         elif hasattr(self.request.user, 'cliente'):
             # Cliente solo ve sus propios turnos
             queryset = queryset.filter(cliente=self.request.user.cliente)
@@ -262,16 +313,38 @@ class TurnoViewSet(viewsets.ModelViewSet):
         estado = self.request.query_params.get('estado')
         if estado:
             queryset = queryset.filter(estado=estado)
+        
+        # ✅ Ordenar por fecha y hora
+        queryset = queryset.order_by('-fecha', '-hora_inicio')
+        
         return queryset
 
     def perform_create(self, serializer):
-        # El serializer se encargará de asignar el cliente desde el usuario autenticado
-        serializer.save()
+        """Crear turno y calcular fecha_limite_pago si es necesario"""
+        turno = serializer.save()
+        
+        # Si el turno se crea directamente en ESPERANDO_SENA, calcular plazo de pago
+        if turno.estado == Turno.Estado.ESPERANDO_SENA:
+            config = Configuracion.objects.first()
+            if config:
+                turno.fecha_limite_pago = timezone.now() + timedelta(hours=config.tiempo_limite_pago_sena)
+                turno.save()
     
     def perform_update(self, serializer):
         """Solo admins pueden actualizar turnos"""
         if not self.request.user.is_staff:
             raise PermissionDenied("Solo administradores pueden actualizar turnos.")
+        
+        # Si el turno transiciona a ESPERANDO_SENA, calcular fecha_limite_pago
+        turno = serializer.instance
+        nuevo_estado = serializer.validated_data.get('estado', turno.estado)
+        
+        if nuevo_estado == Turno.Estado.ESPERANDO_SENA and turno.estado != Turno.Estado.ESPERANDO_SENA:
+            # Primera vez que pasa a ESPERANDO_SENA, calcular plazo de pago
+            config = Configuracion.objects.first()
+            if config:
+                turno.fecha_limite_pago = timezone.now() + timedelta(hours=config.tiempo_limite_pago_sena)
+        
         serializer.save()
     
     @action(detail=True, methods=['post'])
@@ -340,11 +413,15 @@ class TurnoViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_400_BAD_REQUEST)
         
         # 6. Validar que el nuevo slot está disponible (sin conflictos)
+        # Extraer IDs de servicios del turno
+        servicios_ids = [d.servicio.id for d in turno.detalles.all()]
+        
         es_valido = self._validar_slot_libre(
             fecha=nueva_fecha,
             hora=nueva_hora,
             profesional=turno.profesional,
             duracion_minutos=sum(d.duracion_minutos for d in turno.detalles.all()) or 60,
+            servicios_ids=servicios_ids,
             excluir_turno_id=turno.id  # Excluir el turno actual de la validación
         )
         
@@ -367,9 +444,10 @@ class TurnoViewSet(viewsets.ModelViewSet):
             "turno": TurnoSerializer(turno, context={'request': request}).data
         }, status=status.HTTP_200_OK)
     
-    def _validar_slot_libre(self, fecha, hora, profesional, duracion_minutos, excluir_turno_id=None):
+    def _validar_slot_libre(self, fecha, hora, profesional, duracion_minutos, servicios_ids=None, excluir_turno_id=None):
         """
-        Valida si un slot está realmente disponible (sin conflictos)
+        Valida si un slot está realmente disponible (sin conflictos).
+        servicios_ids: Lista de IDs de servicios para validar equipamiento
         excluir_turno_id: ID del turno a excluir de la búsqueda (usado para reprogramación)
         """
         if not profesional:
@@ -423,6 +501,11 @@ class TurnoViewSet(viewsets.ModelViewSet):
             fin_dt_naive = fin_dt.replace(tzinfo=None) if hasattr(fin_dt, 'tzinfo') else fin_dt
             
             if (inicio_dt_naive < bloqueo_fin) and (fin_dt_naive > bloqueo_inicio):
+                return False
+        
+        # 3. Nueva Validación: Recursos Físicos
+        if servicios_ids:
+            if not self._verificar_disponibilidad_equipamiento(fecha, inicio_dt, fin_dt, servicios_ids, excluir_turno_id):
                 return False
         
         return True
@@ -544,7 +627,8 @@ class TurnoViewSet(viewsets.ModelViewSet):
                     fecha_consulta, 
                     regla, 
                     duracion_minutos,
-                    intervalo_minutos
+                    intervalo_minutos,
+                    servicios_ids=[servicio.id]
                 )
                 
                 if slots:
@@ -571,7 +655,7 @@ class TurnoViewSet(viewsets.ModelViewSet):
             "horizonte_dias": max_dias
         }, status=status.HTTP_200_OK)
     
-    def _generar_slots_disponibles(self, fecha, regla, duracion_minutos, intervalo_minutos):
+    def _generar_slots_disponibles(self, fecha, regla, duracion_minutos, intervalo_minutos, servicios_ids=None):
         slots_disponibles = []
         
         # 1. Traemos TODOS los turnos y bloqueos del día UNA SOLA VEZ (Optimización)
@@ -628,6 +712,11 @@ class TurnoViewSet(viewsets.ModelViewSet):
                         hay_choque = True
                         break
             
+            # C. Choque con Equipamiento (Recursos físicos)
+            if not hay_choque and servicios_ids:
+                if not self._verificar_disponibilidad_equipamiento(fecha, inicio_dt, fin_dt, servicios_ids):
+                    hay_choque = True
+            
             if not hay_choque:
                 # Validación extra: si es HOY, no mostrar horas que ya pasaron
                 ahora_naive = timezone.now().replace(tzinfo=None)
@@ -676,57 +765,175 @@ class TurnoViewSet(viewsets.ModelViewSet):
                     
         return None # No hay nada en todo el mes
 
+    def _verificar_disponibilidad_equipamiento(self, fecha, inicio_dt, fin_dt, servicios_ids, excluir_turno_id=None):
+        """
+        Valida si hay unidades físicas disponibles (lavacabezas, puestos)
+        para realizar los servicios en el rango horario solicitado.
+        """
+        from django.db.models import Max
+        if not servicios_ids:
+            return True
+
+        # 1. Obtener los tipos de equipo requeridos por los servicios
+        requisitos = RequisitoServicio.objects.filter(
+            servicio_id__in=servicios_ids,
+            obligatorio=True
+        ).select_related('tipo_equipamiento')
+
+        if not requisitos.exists():
+            return True
+
+        # 2. Consolidar requerimientos (por si varios servicios piden lo mismo)
+        req_por_tipo = {}
+        for req in requisitos:
+            tid = req.tipo_equipamiento_id
+            req_por_tipo[tid] = max(req_por_tipo.get(tid, 0), req.cantidad_minima)
+
+        # 3. Chequear stock vs ocupación para cada tipo
+        for tipo_id, cant_necesaria in req_por_tipo.items():
+            # Unidades totales operativas de este tipo
+            stock_total = Equipamiento.objects.filter(
+                tipo_id=tipo_id,
+                is_active=True,
+                estado='DISPONIBLE'
+            ).count()
+
+            # Turnos que ya ocupan este recurso en esa fecha
+            turnos_competencia = Turno.objects.filter(
+                fecha=fecha,
+                estado__in=['confirmado', 'esperando_sena', 'solicitado'],
+                detalles__servicio__requisitos_equipamiento__tipo_equipamiento_id=tipo_id
+            ).distinct()
+
+            if excluir_turno_id:
+                turnos_competencia = turnos_competencia.exclude(id=excluir_turno_id)
+
+            # Contar cuántos equipos están 'en uso' en ese rango exacto
+            ocupados = 0
+            for t in turnos_competencia:
+                t_ini = datetime.combine(fecha, t.hora_inicio)
+                dur_t = sum(d.duracion_minutos for d in t.detalles.all()) or 60
+                t_fin = t_ini + timedelta(minutes=dur_t)
+
+                # Si hay solapamiento de horarios
+                if (inicio_dt < t_fin) and (fin_dt > t_ini):
+                    # Ver cuánto pide ese turno específico
+                    req_t = RequisitoServicio.objects.filter(
+                        servicio__detalles__turno=t,
+                        tipo_equipamiento_id=tipo_id
+                    ).aggregate(m=Max('cantidad_minima'))['m'] or 1
+                    ocupados += req_t
+
+            if (ocupados + cant_necesaria) > stock_total:
+                return False # No hay suficientes lavacabezas/puestos
+
+        return True
+
+    # =====================================================================
+    # ✅ NUEVO: VERIFICAR SI TURNO ESTÁ EXPIRADO
+    # =====================================================================
+    @action(detail=True, methods=['get'], url_path='verificar-expiracion')
+    def verificar_expiracion(self, request, pk=None):
+        """
+        Verifica si un turno ha expirado (pasó la fecha sin confirmación).
+        GET /api/gestion/turnos/{id}/verificar-expiracion/
+        
+        Retorna:
+        - expired: bool - True si el turno ya pasó su fecha
+        - estado_actual: str - Estado actual del turno
+        - fecha_hora: datetime - Fecha del turno
+        - horas_transcurridas: float - Horas desde que pasó la fecha (si aplica)
+        """
+        turno = self.get_object()
+        now = timezone.now()
+        
+        # Convertir fecha_hora a datetime aware
+        turno_dt = timezone.make_aware(datetime.combine(turno.fecha, turno.hora_inicio)) \
+            if timezone.is_naive(datetime.combine(turno.fecha, turno.hora_inicio)) \
+            else datetime.combine(turno.fecha, turno.hora_inicio)
+        
+        expired = turno_dt < now
+        horas_transcurridas = (now - turno_dt).total_seconds() / 3600 if expired else 0
+        
+        return Response({
+            'expired': expired,
+            'estado_actual': turno.get_estado_display(),
+            'fecha_hora': turno_dt,
+            'horas_transcurridas': round(horas_transcurridas, 1),
+            'mensaje': f'El turno pasó hace {round(horas_transcurridas, 1)} horas sin confirmación. Ha sido cancelado automáticamente.' 
+                      if expired and turno.estado == Turno.Estado.CANCELADO 
+                      else 'Turno vigente' if not expired 
+                      else f'Turno expirado hace {round(horas_transcurridas, 1)} horas.'
+        }, status=status.HTTP_200_OK)
+
     # =====================================================================
     # AQUÍ ESTÁ EL PROCESO AUTOMATIZADO #2 (Integrado como Acción)
     # =====================================================================
     @action(detail=True, methods=['post'], url_path='gestionar')
     def gestionar_cancelacion(self, request, pk=None):
         """
-        Lógica de Reprogramación Diferenciada por Estado (A, B, C).
+        Endpoint unificado para gestionar cambios en turnos (CONSULTAR/REPROGRAMAR/CANCELAR).
+        
+        - **CONSULTAR**: Info sobre el estado del turno y disponibilidad de cambios
+        - **REPROGRAMAR**: Cambiar fecha/hora (lógica diferenciada por estado)
+        - **CANCELAR**: Cancelar turno con Motor de Optimización
+        
+        POST /turnos/<id>/gestionar/
+        Body:
+        {
+            "accion": "CONSULTAR" | "REPROGRAMAR" | "CANCELAR",
+            "nueva_fecha": "YYYY-MM-DD" (solo para REPROGRAMAR),
+            "nueva_hora": "HH:MM" (solo para REPROGRAMAR)
+        }
+        
+        Cliente: CONFIRMADO → max 48hs antes. SOLICITADO/ESPERANDO_SEÑA → sin restricción.
+        Admin: Sin restricción.
         """
         import datetime
         
         turno = self.get_object()
         usuario = request.user
-        es_profesional = usuario.is_staff
-        
-        # Configuración
-        config = Configuracion.objects.first()
-        limite_cambios = config.max_reprogramaciones if config else 2
-        horas_limite = config.horas_limite_cancelacion if config else 48
 
-        accion = request.data.get('accion') # 'CONSULTAR', 'REPROGRAMAR', 'CANCELAR'
+        # Permisos
+        es_cliente = usuario.cliente_set.exists()
+        es_profesional = usuario.personal_set.exists()
+        if not (usuario == turno.cliente.usuario or es_profesional or usuario.is_staff):
+            raise PermissionDenied("No tienes permiso sobre este turno.")
 
-        # Cálculos de tiempo (Solo necesarios para Estado C, pero los preparamos)
-        ahora = timezone.now()
-        # Aseguramos que fecha_hora_turno sea aware (con zona horaria)
-        fecha_hora_turno = timezone.datetime.combine(turno.fecha, turno.hora_inicio)
-        if timezone.is_naive(fecha_hora_turno):
-            fecha_hora_turno = timezone.make_aware(fecha_hora_turno)
-        
-        diferencia = fecha_hora_turno - ahora
-        horas_restantes = diferencia.total_seconds() / 3600
+        # Valores de configuración
+        config = Configuracion.objects.first() or Configuracion()
+        limite_cambios = config.max_reprogramaciones
+        horas_limite = config.horas_limite_cancelacion
 
         # =====================================================================
-        # 1. BLOQUEO DE SEGURIDAD (Solo aplica a CONFIRMADOS)
+        # BLOQUE 1: REGLA DE SEGURIDAD - Restricción 48hs (solo clientes, solo CONFIRMADO)
         # =====================================================================
-        # La regla de 48hs solo aplica si el turno ya es firme (Estado C)
-        es_confirmado = turno.estado == Turno.Estado.CONFIRMADO
+        now = timezone.now()
+        fecha_hora_turno = timezone.make_aware(
+            datetime.datetime.combine(turno.fecha, turno.hora_inicio)
+        )
+        horas_restantes = (fecha_hora_turno - now).total_seconds() / 3600
+
+        accion = request.data.get('accion', '').upper()
+
+        # Solo bloquear si: 
+        # - El usuario es CLIENTE (no profesional)
+        # - El usuario NO es staff/admin
+        # - El turno está en estado CONFIRMADO
+        # - Intenta REPROGRAMAR o CANCELAR dentro de la ventana de seguridad
+        es_cliente_only = es_cliente and not es_profesional and not usuario.is_staff
         
-        if not es_profesional and es_confirmado and horas_restantes < horas_limite:
-            if accion in ['REPROGRAMAR', 'CANCELAR']:
+        if es_cliente_only and turno.estado == Turno.Estado.CONFIRMADO:
+            if horas_restantes < horas_limite and accion in ['REPROGRAMAR', 'CANCELAR']:
                 return Response({
-                    "error": "Restricción de tiempo",
-                    "mensaje_bloqueo": f"Faltan menos de {horas_limite}hs. Ya no se puede modificar por la App.",
-                    "contacto": "WhatsApp: +54 9 ..."
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-            if accion == 'CONSULTAR':
-                return Response({
-                    "puede_reprogramar": False,
-                    "mensaje": "Tiempo límite excedido (menos de 48hs).",
-                    "tipo_alerta": "danger"
-                })
+                    "error": f"No puedes {accion.lower()} un turno menos de {horas_limite}hs antes.",
+                    "horas_restantes": round(horas_restantes, 2),
+                    "horas_limite": horas_limite,
+                    "fecha_hora_turno": fecha_hora_turno.isoformat()
+                }, status=400)
+        
+        
+        # Si es staff/admin, NO hay restricción de tiempo - el código continúa normalmente
 
         # =====================================================================
         # 2. ACCIÓN: CONSULTAR (Información según Estado)
@@ -758,6 +965,8 @@ class TurnoViewSet(viewsets.ModelViewSet):
                     "mensaje": msg,
                     "cambios_realizados": turno.cambios_realizados,
                     "limite_cambios": limite_cambios,
+                    "horas_restantes": round(horas_restantes, 2),
+                    "puede_cancelar_reprogramar": horas_restantes >= horas_limite,
                     "tipo_alerta": "info" if puede else "danger"
                 })
 
@@ -791,6 +1000,7 @@ class TurnoViewSet(viewsets.ModelViewSet):
                 turno.fecha = nueva_fecha
                 turno.hora_inicio = nueva_hora
                 turno.estado = Turno.Estado.SOLICITADO # REINICIO DEL FLUJO
+                turno.fecha_limite_pago = None  # Limpiar deadline de pago
                 # No suma contador
                 turno.save()
                 return Response({"mensaje": "Fecha cambiada. Tu turno espera nueva aprobación."})
@@ -806,81 +1016,40 @@ class TurnoViewSet(viewsets.ModelViewSet):
                 # Mantiene estado Confirmado (Seña se traslada)
                 turno.save()
                 
-                # Aquí iría el disparador de optimización (liberar hueco viejo), 
-                # pero como es un update sobre el mismo objeto, el hueco se libera implícitamente.
-                
                 return Response({"mensaje": "Turno reprogramado. Seña transferida."})
 
         # =====================================================================
-        # 4. ACCIÓN: CANCELAR (Lógica General)
+        # BLOQUE 2: ACCIÓN CANCELAR - MOTOR DE OPTIMIZACIÓN
         # =====================================================================
         elif accion == 'CANCELAR':
             # 1. Guardar datos del hueco (Snapshot)
             fecha_hueco = turno.fecha
             hora_hueco = turno.hora_inicio
+            
             # Obtener servicios asociados desde detalles
             detalles_turno = turno.detalles.all()
             servicios_hueco = [d.servicio for d in detalles_turno]
             cliente_que_cancela = turno.cliente
             
-            # 2. Ejecutar la cancelación
+            # 2. Cambiar estado a CANCELADO
             turno.estado = Turno.Estado.CANCELADO
             turno.save()
             
-            candidatos_notificados = []
+            candidatos_adelanto = []
 
-            # === MOTOR DE OPTIMIZACIÓN DE AGENDA ===
+            # === MOTOR DE OPTIMIZACIÓN: Buscar candidatos para adelanto ===
             
-            # GRUPO 1: Lista de Espera (Gente sin turno)
-            espera_q = ListaEspera.objects.filter(
-                activa=True,
-                notificado=False,
-                fecha_deseada_inicio__lte=fecha_hueco,
-                fecha_deseada_fin__gte=fecha_hueco
-            )
-            
-            # GRUPO 2: Adelanto de Turnos (Gente con turno futuro)
-            # Buscamos turnos con al menos uno de los servicios liberados
-            futuros_q = Turno.objects.filter(
+            # Buscar turnos CONFIRMADOS con servicios coincidentes en fechas futuras
+            turnos_futuros = Turno.objects.filter(
                 estado=Turno.Estado.CONFIRMADO,
                 detalles__servicio__in=servicios_hueco,
                 fecha__gt=fecha_hueco
-            ).exclude(cliente=cliente_que_cancela).distinct()
+            ).exclude(cliente=cliente_que_cancela).distinct().order_by('fecha')[:5]
             
-            # --- Ejecución de Notificaciones ---
-            
-            # Procesar Grupo 1 (Lista de Espera)
-            for cand in espera_q:
+            # Crear notificaciones para adelanto (máximo 5)
+            for turno_futuro in turnos_futuros:
                 servicios_str = ', '.join([s.nombre for s in servicios_hueco])
-                print(f"[LISTA ESPERA] Notificando a {cand.cliente.usuario.first_name} sobre hueco el {fecha_hueco}")
                 
-                # Crear notificación con datos_extra
-                Notificacion.objects.create(
-                    usuario=cand.cliente.usuario,
-                    tipo='ADELANTO',  
-                    canal='app',
-                    titulo="¡Disponibilidad de Turno!",
-                    mensaje=f"Se liberó un espacio para {servicios_str} el {fecha_hueco} a las {hora_hueco.strftime('%H:%M')}. ¿Te gustaría reservarlo?",
-                    origen_entidad='Turno',
-                    origen_id=turno.id,
-                    datos_extra={
-                        "fecha_oferta": str(fecha_hueco),
-                        "hora_oferta": str(hora_hueco),
-                        "servicio_ids": [s.id for s in servicios_hueco],
-                        "turno_cancelado_id": turno.id
-                    }
-                )
-                
-                cand.notificado = True
-                cand.save()
-                candidatos_notificados.append(f"LE: {cand.cliente.usuario.first_name}")
-
-            # Procesar Grupo 2 (Adelanto de Turnos)
-            for turno_futuro in futuros_q:
-                servicios_str = ', '.join([s.nombre for s in servicios_hueco])
-                print(f"[ADELANTO] Ofreciendo a {turno_futuro.cliente.usuario.first_name} (Turno del {turno_futuro.fecha}) adelantar al {fecha_hueco}")
-                
-                # Crear notificación con datos_extra
                 Notificacion.objects.create(
                     usuario=turno_futuro.cliente.usuario,
                     tipo='ADELANTO',
@@ -891,24 +1060,111 @@ class TurnoViewSet(viewsets.ModelViewSet):
                     origen_id=turno_futuro.id,
                     datos_extra={
                         "fecha_oferta": str(fecha_hueco),
-                        "hora_oferta": str(hora_hueco),
+                        "hora_oferta": hora_hueco.strftime('%H:%M'),
                         "turno_actual_id": turno_futuro.id,
+                        "turno_cancelado_id": turno.id,
                         "servicio_ids": [s.id for s in servicios_hueco]
                     }
                 )
                 
-                candidatos_notificados.append(f"Adelanto: {turno_futuro.cliente.usuario.first_name}")
+                candidatos_adelanto.append({
+                    "cliente": turno_futuro.cliente.usuario.get_full_name(),
+                    "turno_actual": turno_futuro.fecha.isoformat()
+                })
 
             return Response({
                 "mensaje": "Turno cancelado correctamente.",
-                "automatizacion_info": {
-                    "hueco_liberado": f"{fecha_hueco} a las {hora_hueco.strftime('%H:%M')}",
-                    "total_notificados": len(candidatos_notificados),
-                    "detalle": candidatos_notificados
+                "estado": "CANCELADO",
+                "automatizacion": {
+                    "hueco_liberado": {
+                        "fecha": fecha_hueco.isoformat(),
+                        "hora": hora_hueco.strftime('%H:%M'),
+                        "servicios": [s.nombre for s in servicios_hueco]
+                    },
+                    "notificaciones_enviadas": len(candidatos_adelanto),
+                    "candidatos": candidatos_adelanto
                 }
-            })
+            }, status=200)
 
         return Response({"error": "Acción inválida"}, status=400)
+
+    @action(detail=True, methods=['post'])
+    def finalizar_turno(self, request, pk=None):
+        """
+        Acción para marcar el turno como realizado y disparar 
+        las Reglas de Cuidado automáticas + crear diagnóstico post-servicio.
+        
+        POST /api/gestion/turnos/{id}/finalizar_turno/
+        """
+        turno = self.get_object()
+        
+        if turno.estado == Turno.Estado.REALIZADO:
+            return Response({"error": "Este turno ya fue finalizado anteriormente."}, status=400)
+
+        # 1. Cambiamos el estado del turno
+        turno.estado = Turno.Estado.REALIZADO
+        turno.save()
+
+        # 2. CREAR DIAGNÓSTICO POST-SERVICIO AUTOMÁTICAMENTE
+        # Se crea un nuevo diagnóstico después de cada servicio para reevaluar el estado del cabello
+        cliente = turno.cliente
+        
+        # Solo crear diagnóstico si el cliente tiene datos capilares registrados
+        if cliente.tipo_cabello or cliente.grosor_cabello or cliente.porosidad_cabello or cliente.cuero_cabelludo or cliente.estado_general:
+            diag = DiagnosticoCapilar.objects.create(
+                cliente=cliente,
+                tipo_cabello=cliente.tipo_cabello,
+                grosor_cabello=cliente.grosor_cabello,
+                porosidad_cabello=cliente.porosidad_cabello,
+                cuero_cabelludo=cliente.cuero_cabelludo,
+                estado_general=cliente.estado_general
+            )
+            
+            # Ejecutar el motor diagnóstico automáticamente
+            self._ejecutar_motor_diagnostico(diag)
+
+        # 3. PROCESO AUTOMATIZADO: Aplicar Reglas de Cuidado
+        # Buscamos todos los servicios que se hicieron en este turno
+        detalles = turno.detalles.all()
+        servicios_realizados = [d.servicio for d in detalles]
+
+        for servicio in servicios_realizados:
+            # Buscamos las reglas configuradas para este servicio
+            reglas = servicio.reglas_post_servicio.all()
+            
+            for regla in reglas:
+                # A. Notificar a la clienta (Instrucciones de cuidado)
+                Notificacion.objects.create(
+                    usuario=turno.cliente.usuario,
+                    tipo='recordatorio',
+                    titulo=f"Cuidados post {servicio.nombre}",
+                    mensaje=f"{regla.descripcion}. (Válido por {regla.dias_duracion} días)",
+                    origen_entidad='Turno',
+                    origen_id=turno.id
+                )
+
+                # B. Si la regla tiene una RUTINA asociada, se la asignamos automáticamente
+                if regla.rutina:
+                    # Verificamos si ya la tiene activa para no duplicar
+                    if not RutinaCliente.objects.filter(
+                        cliente=turno.cliente, 
+                        rutina_original=regla.rutina, 
+                        estado='activa'
+                    ).exists():
+                        RutinaCliente.objects.create(
+                            cliente=turno.cliente,
+                            rutina_original=regla.rutina,
+                            nombre=regla.rutina.nombre,
+                            objetivo=regla.rutina.objetivo,
+                            archivo=regla.rutina.archivo,
+                            version_asignada=regla.rutina.version,
+                            estado='activa'
+                        )
+
+        return Response({
+            "mensaje": "Turno finalizado. Se han enviado las recomendaciones de cuidado a la clienta y se ha creado un nuevo diagnóstico.",
+            "estado": turno.estado
+        })
 
 class MiAgendaCuidadosView(generics.ListAPIView):
     """
@@ -2041,19 +2297,24 @@ class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         """Solo staff puede crear diagnósticos"""
         if not request.user.is_staff:
-            return Response(
-                {"error": "Solo profesionales pueden crear diagnósticos"},
-                status=status.HTTP_403_FORBIDDEN
-            )
+            raise PermissionDenied("Solo profesionales pueden crear diagnósticos.")
         return super().create(request, *args, **kwargs)
+    
+    def perform_create(self, serializer):
+        """
+        Sobrescribimos perform_create para ejecutar el motor de diagnóstico
+        automáticamente después de guardar el diagnóstico.
+        """
+        # 1. Guarda el diagnóstico en la base de datos
+        diagnostico = serializer.save()
+        
+        # 2. Dispara el motor de análisis (dos niveles)
+        self._ejecutar_motor_diagnostico(diagnostico)
     
     def update(self, request, *args, **kwargs):
         """Solo staff puede actualizar diagnósticos"""
         if not request.user.is_staff:
-            return Response(
-                {"error": "Solo profesionales pueden actualizar diagnósticos"},
-                status=status.HTTP_403_FORBIDDEN
-            )
+            raise PermissionDenied("Solo profesionales pueden actualizar diagnósticos.")
         return super().update(request, *args, **kwargs)
     
     @action(detail=False, methods=['get'])
@@ -2089,3 +2350,307 @@ class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
                 {"error": "El usuario no es un cliente registrado"},
                 status=status.HTTP_404_NOT_FOUND
             )
+
+    def _ejecutar_motor_diagnostico(self, diagnostico):
+        """
+        Proceso Automatizado P1: Diagnóstico en dos niveles.
+        Nivel 1: Reglas Expertas (Combinaciones específicas).
+        Nivel 2: Matriz de Puntuación (Estado de salud general).
+        """
+        # --- NIVEL 1: REGLAS EXPERTAS ---
+        # Buscamos reglas priorizando las de mayor peso
+        reglas = ReglaDiagnostico.objects.all().order_by('-prioridad')
+        regla_matcheada = None
+        
+        for r in reglas:
+            # Comprobamos coincidencia (si el campo de la regla no es null, debe coincidir)
+            if r.tipo_cabello and r.tipo_cabello != diagnostico.tipo_cabello: continue
+            if r.grosor_cabello and r.grosor_cabello != diagnostico.grosor_cabello: continue
+            if r.porosidad_cabello and r.porosidad_cabello != diagnostico.porosidad_cabello: continue
+            if r.cuero_cabelludo and r.cuero_cabelludo != diagnostico.cuero_cabelludo: continue
+            if r.estado_general and r.estado_general != diagnostico.estado_general: continue
+            
+            regla_matcheada = r
+            break
+
+        rutina_final = None
+        servicio_urgente = None
+
+        if regla_matcheada:
+            # Si hay regla experta (ej. Desequilibrio de pH), manda la regla
+            rutina_final = regla_matcheada.rutina_sugerida
+            # Si la regla tiene una acción que indique necesidad de turno
+            if "TURNO" in regla_matcheada.accion_resultado.upper():
+                servicio_urgente = Servicio.objects.filter(
+                    Q(nombre__icontains="Tratamiento") & Q(nombre__icontains="intensivo")).first()
+        else:
+            # --- NIVEL 2: MATRIZ DE PUNTUACIÓN (SCORING) ---
+            # Mapeo exacto según tus requerimientos técnicos
+            puntos = 0
+            
+            # 1. Tipo
+            map_tipo = {"Lacio": 2, "Ondulado": 1, "Rizado": 0, "Afro": 0}
+            # 2. Grosor
+            map_grosor = {"Fino": 2, "Medio": 1, "Grueso": 0}
+            # 3. Porosidad
+            map_porosidad = {"Baja": 4, "Media": 2, "Alta": 0}
+            # 4. Cuero Cabelludo
+            map_cuero = {"Seco": 3, "Normal": 2, "Mixto": 1, "Graso": 0}
+            # 5. Estado General
+            map_estado = {"Dañado": 0, "Normal": 1, "Sano": 2}
+
+            # Sumatoria del Score
+            puntos += map_tipo.get(diagnostico.tipo_cabello.nombre if diagnostico.tipo_cabello else "", 0)
+            puntos += map_grosor.get(diagnostico.grosor_cabello.nombre if diagnostico.grosor_cabello else "", 0)
+            puntos += map_porosidad.get(diagnostico.porosidad_cabello.nombre if diagnostico.porosidad_cabello else "", 0)
+            puntos += map_cuero.get(diagnostico.cuero_cabelludo.nombre if diagnostico.cuero_cabelludo else "", 0)
+            puntos += map_estado.get(diagnostico.estado_general.nombre if diagnostico.estado_general else "", 0)
+
+            # --- UMBRALES DE DECISIÓN (Escala 0-13) ---
+            if puntos <= 5:
+                # ESTADO CRÍTICO: Cabello dañado o muy procesado
+                rutina_final = Rutina.objects.filter(nombre__icontains="Recuperación").first()
+                servicio_urgente = Servicio.objects.filter(
+                    Q(nombre__icontains="Tratamiento") & Q(nombre__icontains="intensivo")).first()
+            elif puntos <= 9:
+                # ESTADO DE ALERTA: Requiere cuidado preventivo
+                rutina_final = Rutina.objects.filter(nombre__icontains="Nutrición").first()
+            else:
+                # ESTADO SALUDABLE: Mantenimiento básico
+                rutina_final = Rutina.objects.filter(nombre__icontains="Mantenimiento").first()
+
+        # --- EJECUCIÓN DE ACCIONES ---
+        # 1. Asignar Rutina
+        rutina_cliente = None
+        if rutina_final:
+            rutina_cliente = RutinaCliente.objects.create(
+                cliente=diagnostico.cliente,
+                rutina_original=rutina_final,
+                nombre=rutina_final.nombre,
+                objetivo=rutina_final.objetivo,
+                archivo=rutina_final.archivo,
+                version_asignada=rutina_final.version,
+                estado='activa'
+            )
+            print(f"\n✅ DEBUG: RutinaCliente creada (ID: {rutina_cliente.id})")
+
+        # 2. GENERAR MENSAJE PROFESIONAL
+        mensaje_profesional = self._generar_mensaje_diagnostico(
+            diagnostico, puntos if 'puntos' in locals() else None, 
+            servicio_urgente, regla_matcheada
+        )
+        
+        # 3. Guardar resultados en el Diagnóstico
+        diagnostico.servicio_urgente = servicio_urgente
+        diagnostico.rutina_asignada = rutina_final
+        diagnostico.rutina_sugerida = rutina_final
+        diagnostico.observaciones = mensaje_profesional
+        diagnostico.save()
+
+        # 4. Recomendar Turno (Si el score es bajo o la regla lo pide)
+        if servicio_urgente:
+            try:
+                self._recomendar_primer_hueco_disponible(diagnostico, servicio_urgente)
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Error en _recomendar_primer_hueco_disponible: {str(e)}")
+
+
+    def _generar_mensaje_diagnostico(self, diagnostico, puntos, servicio_urgente, regla_matcheada):
+        """
+        Genera un mensaje profesional y personalizado basado en el diagnóstico.
+        Incluye: descripción del problema, puntos, servicio recomendado.
+        """
+        # Obtener nombres de atributos
+        tipo = diagnostico.tipo_cabello.nombre if diagnostico.tipo_cabello else "desconocido"
+        grosor = diagnostico.grosor_cabello.nombre if diagnostico.grosor_cabello else "desconocido"
+        porosidad = diagnostico.porosidad_cabello.nombre if diagnostico.porosidad_cabello else "desconocida"
+        cuero = diagnostico.cuero_cabelludo.nombre if diagnostico.cuero_cabelludo else "desconocido"
+        estado = diagnostico.estado_general.nombre if diagnostico.estado_general else "desconocido"
+        servicio_nombre = servicio_urgente.nombre if servicio_urgente else "Tratamiento Especializado"
+        
+        # Describir el problema según los atributos
+        descripciones = []
+        
+        if estado == "Dañado":
+            descripciones.append("daño estructural severo")
+        
+        if porosidad == "Alta":
+            descripciones.append("alta porosidad con pérdida acelerada de hidratación")
+        elif porosidad == "Baja":
+            descripciones.append("baja porosidad que dificulta la penetración de nutrientes")
+        
+        if grosor == "Fino":
+            descripciones.append("cabello frágil propenso al quiebre")
+        
+        if cuero == "Seco":
+            descripciones.append("cuero cabelludo deshidratado")
+        elif cuero == "Graso":
+            descripciones.append("cuero cabelludo con exceso de sebo")
+        
+        # Construir el mensaje
+        problema = " debido a " + ", ".join(descripciones) if descripciones else ""
+        
+        # Generar mensaje según nivel crítico
+        if puntos is not None and puntos <= 5:
+            mensaje = (
+                f"🔴 Diagnóstico Profesional: Detectamos que tu cabello presenta un nivel de daño crítico{problema}. "
+                f"Con un score de {puntos}/13 en nuestro análisis profesional, la fibra capilar necesita atención inmediata "
+                f"para evitar mayor deterioro. Te recomendamos nuestro servicio de {servicio_nombre} "
+                f"que está diseñado específicamente para restaurar y proteger tu cabello. "
+                f"Hemos identificado espacios disponibles para brindarte atención prioritaria."
+            )
+        elif puntos is not None and puntos <= 9:
+            mensaje = (
+                f"🟡 Diagnóstico Profesional: Tu cabello requiere cuidado preventivo especializado{problema}. "
+                f"Con un score de {puntos}/13, está en estado de alerta. "
+                f"Recomendamos comenzar con nuestro {servicio_nombre} para estabilizar la salud capilar "
+                f"y prevenir futuros daños."
+            )
+        else:
+            mensaje = (
+                f"🟢 Diagnóstico Profesional: Tu cabello se encuentra en buen estado general. "
+                f"Con un score de {puntos if puntos is not None else '10+'}/13, recomendamos mantener una rutina de cuidado regular "
+                f"con nuestros servicios de mantenimiento."
+            )
+        
+        return mensaje
+
+    def _recomendar_primer_hueco_disponible(self, diagnostico, servicio):
+        """
+        Busca el primer hueco disponible en los próximos 30 días
+        y crea una notificación para el cliente recomendando agendar un turno.
+        """
+        import logging
+        from datetime import date, timedelta
+        logger = logging.getLogger(__name__)
+        
+        try:
+            # 1. VALIDACIONES INICIALES
+            if not servicio:
+                logger.error(f"[DIAGNOSTICO] Servicio no encontrado para recomendación")
+                return
+            
+            if not diagnostico or not diagnostico.cliente or not diagnostico.cliente.usuario:
+                logger.error(f"[DIAGNOSTICO] Diagnóstico o cliente inválido")
+                return
+            
+            # 2. OBTENER DURACIÓN DEL SERVICIO
+            duracion_minutos = servicio.duracion_estimada or 60
+            logger.info(f"[DIAGNOSTICO] Buscando turno para: {servicio.nombre} ({duracion_minutos} min)")
+            
+            # Obtener instancia de TurnoViewSet para usar su método _generar_slots_disponibles
+            turno_viewset = TurnoViewSet()
+            
+            # 3. BUSCAR PRIMER SLOT DISPONIBLE EN PRÓXIMOS 30 DÍAS
+            fecha_busqueda = date.today() + timedelta(days=1)
+            fecha_fin = fecha_busqueda + timedelta(days=30)
+            slot_encontrado = None
+            
+            while fecha_busqueda <= fecha_fin:
+                # Obtener día de la semana (0=lunes, 6=domingo)
+                dia_semana = fecha_busqueda.weekday()
+                
+                # 4. BUSCAR HORARIOS DEL PERSONAL PARA ESTE DÍA
+                horarios_disponibles = HorarioLaboral.objects.filter(
+                    activo=True,
+                    dia_semana=dia_semana,
+                    personal__isnull=False
+                )
+                
+                # Filtrar por tipo de servicio (Diseño vs Complemento)
+                categoria_nombre = servicio.categoria.nombre if servicio.categoria else ""
+                
+                if "Diseño" in categoria_nombre or "Color" in categoria_nombre:
+                    # Servicios de color/diseño: necesitan permite_diseno_color=True
+                    horarios_disponibles = horarios_disponibles.filter(permite_diseno_color=True)
+                    tipo_servicio = "Diseño"
+                else:
+                    # Servicios cortos (corte, nutrición): necesitan permite_complemento=True
+                    horarios_disponibles = horarios_disponibles.filter(permite_complemento=True)
+                    tipo_servicio = "Complemento"
+                
+                logger.info(f"[DIAGNOSTICO] {fecha_busqueda} ({DiasSemana(dia_semana).label}): {horarios_disponibles.count()} horarios disponibles para {tipo_servicio}")
+                
+                # 5. ITERAR POR CADA HORARIO DISPONIBLE
+                for horario in horarios_disponibles:
+                    personal = horario.personal
+                    
+                    # Verificar si el personal tiene bloqueo en esta fecha
+                    bloqueo = BloqueoAgenda.objects.filter(
+                        personal=personal,
+                        fecha_inicio__date__lte=fecha_busqueda,
+                        fecha_fin__date__gte=fecha_busqueda
+                    ).exists()
+                    
+                    if bloqueo:
+                        logger.info(f"[DIAGNOSTICO] {personal.nombre} tiene bloqueo en {fecha_busqueda}")
+                        continue
+                    
+                    # 6. GENERAR SLOTS PARA ESTE HORARIO
+                    try:
+                        slots = turno_viewset._generar_slots_disponibles(
+                            fecha_busqueda,
+                            horario,
+                            duracion_minutos,
+                            intervalo_minutos=15,
+                            servicios_ids=[servicio.id]
+                        )
+                        
+                        if slots:
+                            primer_slot = slots[0]
+                            slot_encontrado = {
+                                'fecha': fecha_busqueda,
+                                'hora': primer_slot.get('hora'),
+                                'profesional': personal,
+                                'horario': horario
+                            }
+                            logger.info(f"[DIAGNOSTICO] Slot encontrado: {fecha_busqueda} {primer_slot.get('hora')} con {personal.nombre}")
+                            break
+                    except Exception as e:
+                        logger.warning(f"[DIAGNOSTICO] Error generando slots para {personal.nombre}: {str(e)}")
+                        continue
+                
+                # Si encontramos slot, salir del loop de fechas
+                if slot_encontrado:
+                    break
+                
+                fecha_busqueda += timedelta(days=1)
+            
+            # 7. SI SE ENCONTRÓ SLOT, CREAR NOTIFICACIÓN
+            if slot_encontrado:
+                logger.info(f"[DIAGNOSTICO] Creando notificación de recomendación de turno...")
+                try:
+                    # Formato correcto: "2025-01-30" y "14:30"
+                    fecha_str = slot_encontrado['fecha'].strftime('%Y-%m-%d')
+                    hora_str = slot_encontrado['hora']  # Ya viene como string "HH:MM"
+                    
+                    # Usar el mensaje profesional del diagnóstico que ya fue generado
+                    mensaje_notificacion = diagnostico.observaciones or "Te recomendamos agendar tu cita"
+                    
+                    notif = Notificacion.objects.create(
+                        usuario=diagnostico.cliente.usuario,
+                        tipo='alerta',
+                        titulo="Recomendación para tu cabello",
+                        mensaje=mensaje_notificacion,
+                        datos_extra={
+                            "fecha": fecha_str,
+                            "hora": hora_str,
+                            "servicio_id": servicio.id,
+                            "profesional_id": slot_encontrado['profesional'].id
+                        }
+                    )
+                    logger.info(f"[DIAGNOSTICO] OK - Notificacion creada (ID: {notif.id})")
+                except Exception as e:
+                    logger.error(f"[DIAGNOSTICO] Error creando notificacion: {str(e)}")
+                    import traceback
+                    traceback.print_exc()
+            else:
+                logger.warning(f"[DIAGNOSTICO] AVISO - No se encontro disponibilidad en los proximos 30 dias para {servicio.nombre}")
+        
+        except Exception as e:
+            logger.error(f"[DIAGNOSTICO] Error en _recomendar_primer_hueco_disponible: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            logger.error(traceback.format_exc())

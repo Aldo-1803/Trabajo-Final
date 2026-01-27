@@ -12,6 +12,7 @@ const GestionarReglas = () => {
     const [cueros, setCueros] = useState([]);
     const [estados, setEstados] = useState([]);
     const [rutinas, setRutinas] = useState([]);
+    const [servicios, setServicios] = useState([]);
 
     const [loading, setLoading] = useState(true);
     const [showForm, setShowForm] = useState(false);
@@ -26,6 +27,7 @@ const GestionarReglas = () => {
         cuero_cabelludo: '',
         estado_general: '',
         rutina_sugerida: '',
+        servicio_sugerido: '',
         mensaje_resultado: '',
         accion_resultado: ''
     });
@@ -42,14 +44,15 @@ const GestionarReglas = () => {
             const token = localStorage.getItem('access_token');
             const config = { headers: { 'Authorization': `Bearer ${token}` } };
 
-            const [reglasRes, tiposRes, grosRes, poroRes, cueroRes, estRes, rutRes] = await Promise.all([
+            const [reglasRes, tiposRes, grosRes, poroRes, cueroRes, estRes, rutRes, servRes] = await Promise.all([
                 axios.get('http://127.0.0.1:8000/api/gestion/reglas-diagnostico/', config),
                 axios.get('http://127.0.0.1:8000/api/gestion/tipos-cabello/', config),
                 axios.get('http://127.0.0.1:8000/api/gestion/grosores-cabello/', config),
                 axios.get('http://127.0.0.1:8000/api/gestion/porosidades-cabello/', config),
                 axios.get('http://127.0.0.1:8000/api/gestion/cueros-cabelludos/', config),
                 axios.get('http://127.0.0.1:8000/api/gestion/estados-generales/', config),
-                axios.get('http://127.0.0.1:8000/api/gestion/rutinas/', config)
+                axios.get('http://127.0.0.1:8000/api/gestion/rutinas/', config),
+                axios.get('http://127.0.0.1:8000/api/gestion/servicios/', config)
             ]);
 
             // Función auxiliar para arrays seguros
@@ -62,6 +65,7 @@ const GestionarReglas = () => {
             setCueros(getSafeArray(cueroRes));
             setEstados(getSafeArray(estRes));
             setRutinas(getSafeArray(rutRes));
+            setServicios(getSafeArray(servRes));
             
             setLoading(false);
         } catch (error) {
@@ -114,6 +118,7 @@ const GestionarReglas = () => {
             cuero_cabelludo: regla.cuero_cabelludo || '',
             estado_general: regla.estado_general || '',
             rutina_sugerida: regla.rutina_sugerida || '',
+            servicio_sugerido: regla.servicio_sugerido || '',
             mensaje_resultado: regla.mensaje_resultado,
             accion_resultado: regla.accion_resultado
         });
@@ -142,6 +147,7 @@ const GestionarReglas = () => {
             cuero_cabelludo: '',
             estado_general: '',
             rutina_sugerida: '',
+            servicio_sugerido: '',
             mensaje_resultado: '',
             accion_resultado: ''
         });
@@ -212,12 +218,25 @@ const GestionarReglas = () => {
                                             className="w-full border-2 border-purple-300 p-2 rounded bg-white font-bold text-gray-700"
                                             value={formData.rutina_sugerida} 
                                             onChange={e => setFormData({...formData, rutina_sugerida: e.target.value})}
-                                            required
                                         >
                                             <option value="">-- Seleccionar Rutina --</option>
                                             {rutinas.map(r => <option key={r.id} value={r.id}>{r.nombre}</option>)}
                                         </select>
                                     </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-gray-600 mb-1">Recomendar este Servicio</label>
+                                        <select 
+                                            className="w-full border-2 border-purple-300 p-2 rounded bg-white font-bold text-gray-700"
+                                            value={formData.servicio_sugerido} 
+                                            onChange={e => setFormData({...formData, servicio_sugerido: e.target.value})}
+                                        >
+                                            <option value="">-- Seleccionar Servicio --</option>
+                                            {servicios.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+                                        </select>
+                                    </div>
+                                </div>
+                                
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4">
                                     <div>
                                         <label className="block text-xs font-bold text-gray-600 mb-1">Prioridad de Regla</label>
                                         <input 
