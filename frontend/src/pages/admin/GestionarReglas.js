@@ -156,7 +156,7 @@ const GestionarReglas = () => {
     if (loading) return <div className="p-10 text-center">Cargando Motor de Reglas...</div>;
 
     return (
-        <div className="p-8 bg-gray-50 min-h-screen">
+        <div className="p-8 min-h-screen" style={{ backgroundColor: '#F5F5EB' }}>
             <div className="max-w-7xl mx-auto">
                 <div className="flex justify-between items-center mb-8">
                     <div>

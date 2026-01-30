@@ -5,6 +5,8 @@ from .models import (
     Notificacion, Rutina, AgendaCuidados, RutinaCliente, Servicio,
     CategoriaServicio, Turno, DetalleTurno, HorarioLaboral, BloqueoAgenda, Personal,
     TipoEquipamiento, FichaTecnica, DiagnosticoCapilar, RequisitoServicio,
+    CategoriaProducto, Promocion, Configuracion, ConfiguracionRetoque,
+    Carrito, CarritoItem, ContenidoEducativo, MeGusta, ContenidoGuardado,
     #PasoRutina, #PasoRutinaCliente,
 )
 
@@ -499,15 +501,22 @@ class UsuarioAdminSerializer(serializers.ModelSerializer):
         return instance
 
 # --- B. SERIALIZER PRODUCTOS ---
-class ProductoSerializer(serializers.ModelSerializer):
+class CategoriaProductoSerializer(serializers.ModelSerializer):
     class Meta:
-        model = Producto
+        model = CategoriaProducto
         fields = '__all__'
 
-    def validate_precio(self, value):
-        if value <= 0:
-            raise serializers.ValidationError("El precio de venta debe ser mayor a cero.") #
-        return value
+class ProductoSerializer(serializers.ModelSerializer):
+    # Esto permite ver el nombre de la categoría en lugar de solo el ID
+    categoria_nombre = serializers.ReadOnlyField(source='categoria.nombre')
+
+    class Meta:
+        model = Producto
+        fields = [
+            'id', 'sku', 'nombre', 'marca', 'categoria', 'categoria_nombre',
+            'descripcion', 'precio', 'stock', 'stock_minimo', 
+            'imagen_url', 'estado_publicacion', 'compatibilidad', 'activo'
+        ]
 
 # --- D. SERIALIZER EQUIPAMIENTO ---
 
@@ -601,6 +610,10 @@ class RequisitoServicioSerializer(serializers.ModelSerializer):
     """
     Serializer para la tabla intermedia RequisitoServicio.
     Muestra qué equipamiento es requerido para cada servicio.
+    
+    Validaciones:
+    - tipo_equipamiento debe existir en la BD
+    - No permite asignar equipos que no existan
     """
     servicio_nombre = serializers.CharField(source='servicio.nombre', read_only=True)
     tipo_equipamiento_nombre = serializers.CharField(source='tipo_equipamiento.nombre', read_only=True)
@@ -614,6 +627,58 @@ class RequisitoServicioSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'fecha_registro', 'servicio_nombre', 'tipo_equipamiento_nombre']
 
+    def validate_tipo_equipamiento(self, value):
+        """
+        Validar que el tipo_equipamiento existe en la BD.
+        """
+        from .models import TipoEquipamiento
+        
+        if not value:
+            raise serializers.ValidationError(
+                'El tipo de equipamiento es obligatorio.'
+            )
+        
+        # Verificar que existe
+        if not TipoEquipamiento.objects.filter(id=value.id).exists():
+            raise serializers.ValidationError(
+                f'El tipo de equipamiento "{value.nombre}" no existe en el sistema. '
+                f'Debes crear primero el equipamiento antes de asignarlo a un servicio.'
+            )
+        
+        return value
+
+    def validate_cantidad_minima(self, value):
+        """
+        Validar que cantidad_minima sea positiva.
+        """
+        if value < 1:
+            raise serializers.ValidationError(
+                'La cantidad mínima debe ser al menos 1.'
+            )
+        return value
+
+    def validate(self, data):
+        """
+        Validación a nivel de objeto completo.
+        """
+        servicio = data.get('servicio')
+        tipo_equipamiento = data.get('tipo_equipamiento')
+        
+        if servicio and tipo_equipamiento:
+            # Evitar duplicados (ya controlado por unique_together en Meta)
+            # Pero aquí podemos dar un mensaje más amigable
+            existing = RequisitoServicio.objects.filter(
+                servicio=servicio,
+                tipo_equipamiento=tipo_equipamiento
+            ).first()
+            
+            # Si existe un requisito duplicado y no es el que estamos editando
+            if existing and (not self.instance or existing.id != self.instance.id):
+                raise serializers.ValidationError(
+                    f'Este servicio ya requiere "{tipo_equipamiento.nombre}".'
+                )
+        
+        return data
 
 class DiagnosticoCapilarSerializer(serializers.ModelSerializer):
     """
@@ -672,3 +737,219 @@ class DiagnosticoCapilarSerializer(serializers.ModelSerializer):
             except Usuario.DoesNotExist:
                 pass
         return super().create(validated_data)
+
+
+class PromocionSerializer(serializers.ModelSerializer):
+    """
+    Serializer para promociones del sistema.
+    Gestiona los tres pilares: COMBO, RETOQUE, LAST_MINUTE.
+    """
+    productos_count = serializers.SerializerMethodField()
+    servicios_count = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Promocion
+        fields = [
+            'id', 'nombre', 'descripcion', 'tipo', 
+            'descuento_porcentaje', 'fecha_inicio', 'fecha_fin',
+            'fecha_especifica', 'hora_inicio_promo', 'hora_fin_promo',
+            'is_active', 'productos', 'servicios',
+            'productos_count', 'servicios_count', 'fecha_creacion'
+        ]
+        read_only_fields = ['id', 'fecha_creacion', 'productos_count', 'servicios_count']
+    
+    def get_productos_count(self, obj):
+        """Retorna el número de productos en la promoción"""
+        return obj.productos.count()
+    
+    def get_servicios_count(self, obj):
+        """Retorna el número de servicios en la promoción"""
+        return obj.servicios.count()
+
+
+class ConfiguracionRetoqueSummarySerializer(serializers.ModelSerializer):
+    """Serializer compacto para mostrar configuraciones de retoque"""
+    servicio_principal_nombre = serializers.CharField(source='servicio_principal.nombre', read_only=True)
+    servicio_retoque_nombre = serializers.CharField(source='servicio_retoque.nombre', read_only=True)
+    
+    class Meta:
+        model = ConfiguracionRetoque
+        fields = [
+            'id', 'servicio_principal', 'servicio_principal_nombre',
+            'servicio_retoque', 'servicio_retoque_nombre',
+            'dias_sugeridos', 'descuento_retoque'
+        ]
+        read_only_fields = ['id']
+
+
+class ConfiguracionSerializer(serializers.ModelSerializer):
+    """
+    Serializer para la configuración global del sistema (patrón Singleton).
+    Expone todos los parámetros configurables del negocio.
+    """
+    class Meta:
+        model = Configuracion
+        fields = [
+            'id',
+            'intervalo_turnos',
+            'max_dias_anticipacion',
+            'monto_sena',
+            'tiempo_limite_pago_sena',
+            'max_reprogramaciones',
+            'horas_limite_cancelacion'
+        ]
+        read_only_fields = ['id']
+
+
+class CarritoItemSerializer(serializers.ModelSerializer):
+    """
+    Serializer para items individuales del carrito.
+    Incluye información del producto y cálculo de subtotal.
+    """
+    producto_nombre = serializers.ReadOnlyField(source='producto.nombre')
+    producto_precio = serializers.ReadOnlyField(source='producto.precio')
+    subtotal = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CarritoItem
+        fields = ['id', 'producto', 'producto_nombre', 'producto_precio', 'cantidad', 'subtotal']
+    
+    def get_subtotal(self, obj):
+        """Retorna el subtotal del item."""
+        return obj.subtotal
+
+
+class CarritoSerializer(serializers.ModelSerializer):
+    """
+    Serializer para el carrito de compras.
+    Incluye items anidados y totales calculados.
+    """
+    items = CarritoItemSerializer(many=True, read_only=True)
+    total = serializers.ReadOnlyField(source='total_carrito')
+
+    class Meta:
+        model = Carrito
+        fields = ['id', 'cliente', 'items', 'total', 'actualizado']
+        read_only_fields = ['id', 'actualizado']
+
+
+# ============================================================
+# SERIALIZERS PARA CONTENIDO EDUCATIVO
+# ============================================================
+
+class AutorContenidoSerializer(serializers.ModelSerializer):
+    """
+    Serializer anidado para mostrar datos del profesional/autor.
+    """
+    class Meta:
+        model = Personal
+        fields = ['id', 'nombre', 'apellido', 'rol']
+
+
+class ContenidoEducativoSerializer(serializers.ModelSerializer):
+    """
+    Serializer para contenido educativo con información de interacciones.
+    Incluye datos del autor, contadores de likes/guardados y estado personalizado del usuario.
+    """
+    total_likes = serializers.ReadOnlyField()
+    total_guardados = serializers.ReadOnlyField()
+    autor = AutorContenidoSerializer(read_only=True)
+    
+    # Información personalizada por usuario
+    ya_le_gusta = serializers.SerializerMethodField()
+    ya_esta_guardado = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ContenidoEducativo
+        fields = [
+            'id', 'titulo', 'descripcion', 'contenido_texto', 'multimedia_url', 
+            'tipo', 'tags', 'estado', 
+            'autor', 'fecha_publicacion', 'fecha_actualizacion',
+            'total_likes', 'total_guardados', 'ya_le_gusta', 'ya_esta_guardado'
+        ]
+        read_only_fields = ['fecha_publicacion', 'fecha_actualizacion']
+
+    def get_ya_le_gusta(self, obj):
+        """
+        Verifica si el usuario actual likeó este contenido.
+        Retorna False si el usuario no es cliente o no está autenticado.
+        """
+        request = self.context.get('request')
+        if not request or not request.user or not request.user.is_authenticated:
+            return False
+        
+        try:
+            cliente = request.user.cliente
+            return obj.me_gusta_por(cliente)
+        except AttributeError:
+            # Usuario no es cliente (ej: staff/admin)
+            return False
+
+    def get_ya_esta_guardado(self, obj):
+        """
+        Verifica si el usuario actual guardó este contenido.
+        Retorna False si el usuario no es cliente o no está autenticado.
+        """
+        request = self.context.get('request')
+        if not request or not request.user or not request.user.is_authenticated:
+            return False
+        
+        try:
+            cliente = request.user.cliente
+            return obj.es_guardado_por(cliente)
+        except AttributeError:
+            return False
+
+
+class MeGustaSerializer(serializers.ModelSerializer):
+    """
+    Serializer para registrar/eliminar likes en contenido.
+    Incluye información del contenido y del cliente.
+    """
+    contenido_titulo = serializers.CharField(
+        source='contenido.titulo', 
+        read_only=True
+    )
+    cliente_nombre = serializers.SerializerMethodField()
+
+    class Meta:
+        model = MeGusta
+        fields = ['id', 'contenido', 'contenido_titulo', 'cliente', 'cliente_nombre', 'fecha']
+        read_only_fields = ['fecha']
+
+    def get_cliente_nombre(self, obj):
+        """Obtiene el nombre completo del cliente."""
+        try:
+            return obj.cliente.usuario.get_full_name()
+        except:
+            return "Anónimo"
+
+
+class ContenidoGuardadoSerializer(serializers.ModelSerializer):
+    """
+    Serializer para contenido guardado por clientes.
+    Permite que los usuarios tengan un historial de favoritos.
+    """
+    contenido_titulo = serializers.CharField(
+        source='contenido.titulo',
+        read_only=True
+    )
+    contenido_descripcion = serializers.CharField(
+        source='contenido.descripcion',
+        read_only=True
+    )
+    contenido_tipo = serializers.CharField(
+        source='contenido.tipo',
+        read_only=True
+    )
+
+    class Meta:
+        model = ContenidoGuardado
+        fields = [
+            'id', 'contenido', 'contenido_titulo', 'contenido_descripcion',
+            'contenido_tipo', 'cliente', 'fecha'
+        ]
+        read_only_fields = ['fecha']
+
+
+

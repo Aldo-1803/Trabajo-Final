@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from django.utils import timezone
 from django.conf import settings
 from django.core.exceptions import ValidationError
-
+import logging
 
 # ============================================================
 # SECCIÓN 1: USUARIOS Y PERSONAL
@@ -176,24 +176,275 @@ class Servicio(models.Model):
             return f"[{self.categoria.nombre}] {self.nombre}"
         return self.nombre
 
-
-class Producto(models.Model):
-    """
-    Productos que se venden en la peluquería.
-    """
+class CategoriaProducto(models.Model):
     nombre = models.CharField(max_length=100, unique=True)
-    descripcion = models.TextField(blank=True)
-    precio = models.DecimalField(max_digits=10, decimal_places=2)
-    stock = models.IntegerField(default=0)
+    descripcion = models.TextField(blank=True, null=True)
     activo = models.BooleanField(default=True)
 
     class Meta:
-        verbose_name = "Producto"
-        verbose_name_plural = "Productos"
+        verbose_name = "Categoría de Producto"
+        verbose_name_plural = "Categorías de Productos"
+
+    def __str__(self):
+        return self.nombre
+
+
+class Producto(models.Model):
+    # Atributos Básicos y de Diagrama
+    sku = models.CharField(max_length=20, unique=True, help_text="Código único de inventario")
+    nombre = models.CharField(max_length=100)
+    marca = models.CharField(max_length=50, blank=True, null=True)
+    categoria = models.ForeignKey(
+        'CategoriaProducto', 
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='productos'
+    )
+    descripcion = models.TextField(blank=True)
+    
+    # Precios y Stock (Auditoría REQ-11)
+    precio = models.DecimalField(max_digits=10, decimal_places=2)
+    stock = models.IntegerField(default=0)
+    stock_minimo = models.IntegerField(default=3, help_text="Mínimo para alerta de reposición")
+    
+    # Atributos Visuales y de Estado (Diagrama)
+    imagen_url = models.URLField(max_length=500, blank=True, null=True)
+    estado_publicacion = models.CharField(
+        max_length=20, 
+        choices=[('BORRADOR', 'Borrador'), ('PUBLICADO', 'Publicado')],
+        default='PUBLICADO'
+    )
+    activo = models.BooleanField(default=True)
+
+    # --- EL SECRETO PARA LA TESIS: Compatibilidades ---
+    # Esto permite que el sistema diga: "Si el diagnóstico dio Pelo Seco, ofrece este producto"
+    COMPATIBILIDAD_CABELLO = [
+        ('TODO', 'Todo tipo'),
+        ('LACIO', 'Lacio'),
+        ('RIZADO', 'Rizado/Afro'),
+        ('DANADO', 'Dañado/Procesado'),
+        ('GRASO', 'Graso'),
+        ('SECO', 'Seco'),
+    ]
+    compatibilidad = models.CharField(
+        max_length=20, 
+        choices=COMPATIBILIDAD_CABELLO, 
+        default='TODO'
+    )
+
+    class Meta:
         ordering = ['nombre']
 
     def __str__(self):
-        return f"{self.nombre} (${self.precio})"
+        return f"{self.marca} - {self.nombre} ({self.stock} ud.)"
+
+
+class Promocion(models.Model):
+    """
+    Gestiona promociones del sistema en tres pilares:
+    - COMBO: Combos de productos
+    - RETOQUE: Packs de retoque/servicios
+    - LAST_MINUTE: Promociones de último minuto
+    """
+    TIPO_CHOICES = [
+        ('COMBO', 'Combo de Productos'),
+        ('RETOQUE', 'Pack Retoque Servicio'),
+        ('LAST_MINUTE', 'Promoción Last Minute'),
+    ]
+    
+    nombre = models.CharField(
+        max_length=100,
+        help_text="Nombre de la promoción (ej: 'Combo Hidratación Profunda')"
+    )
+    descripcion = models.TextField(
+        help_text="Descripción detallada de la promoción"
+    )
+    tipo = models.CharField(
+        max_length=20, 
+        choices=TIPO_CHOICES,
+        help_text="Tipo de promoción"
+    )
+    descuento_porcentaje = models.IntegerField(
+        default=10,
+        help_text="Porcentaje de descuento aplicado"
+    )
+    fecha_inicio = models.DateField(
+        help_text="Fecha de inicio de la promoción"
+    )
+    fecha_fin = models.DateField(
+        help_text="Fecha de finalización de la promoción"
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Si está activa la promoción"
+    )
+    
+    # Horario y Fecha Específica para promociones time-sensitive
+    hora_inicio_promo = models.TimeField(
+        null=True, 
+        blank=True,
+        help_text="Hora de inicio si la promoción es por horario específico"
+    )
+    hora_fin_promo = models.TimeField(
+        null=True, 
+        blank=True,
+        help_text="Hora de fin si la promoción es por horario específico"
+    )
+    fecha_especifica = models.DateField(
+        null=True, 
+        blank=True,
+        help_text="Fecha específica si la promoción aplica solo en un día concreto"
+    )
+    
+    # Para el Pilar A (Combos)
+    productos = models.ManyToManyField(
+        'Producto', 
+        blank=True,
+        related_name='promociones',
+        help_text="Productos incluidos en este combo"
+    )
+    
+    # Para el Pilar B y C (Servicios)
+    servicios = models.ManyToManyField(
+        'Servicio', 
+        blank=True,
+        related_name='promociones',
+        help_text="Servicios incluidos en este pack/promoción"
+    )
+    
+    # Campos para Promociones Diferidas / Personalizadas por Cliente
+    cliente_especifico = models.ForeignKey(
+        'usuarios.Cliente', 
+        on_delete=models.CASCADE, 
+        null=True, 
+        blank=True,
+        related_name='promociones_personalizadas',
+        help_text="Si se especifica, esta promoción es solo para este cliente (ej: Mantenimiento post-servicio)"
+    )
+    fecha_envio_notificacion = models.DateField(
+        null=True, 
+        blank=True, 
+        help_text="Día en que se enviará el aviso al cliente (para promociones diferidas)"
+    )
+    procesada = models.BooleanField(
+        default=False, 
+        help_text="Indica si la notificación ya fue enviada al cliente"
+    )
+    
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Promoción"
+        verbose_name_plural = "Promociones"
+        ordering = ['-fecha_inicio']
+
+    def __str__(self):
+        return f"{self.get_tipo_display()} - {self.nombre}"
+
+
+class ConfiguracionRetoque(models.Model):
+    """
+    Configura los detalles del Pilar B (RETOQUE): 
+    qué servicio principal requiere retoque, cuál es el servicio de retoque,
+    cuántos días se recomienda y qué descuento ofrecer.
+    """
+    servicio_principal = models.ForeignKey(
+        'Servicio', 
+        on_delete=models.CASCADE, 
+        related_name='config_retoques'
+    )
+    servicio_retoque = models.ForeignKey(
+        'Servicio', 
+        on_delete=models.CASCADE
+    )
+    dias_sugeridos = models.IntegerField(
+        default=21, 
+        help_text="Días recomendados para el retoque"
+    )
+    descuento_retoque = models.IntegerField(
+        default=15, 
+        help_text="Porcentaje de descuento si reserva ahora"
+    )
+
+    class Meta:
+        verbose_name = "Configuración de Retoque"
+        verbose_name_plural = "Configuraciones de Retoque"
+
+    def __str__(self):
+        return f"Retoque para {self.servicio_principal.nombre}"
+
+
+class Carrito(models.Model):
+    """
+    Carrito de compras para un cliente.
+    Permite acumular productos antes de proceder al pago.
+    """
+    cliente = models.OneToOneField(
+        'usuarios.Cliente', 
+        on_delete=models.CASCADE, 
+        related_name='carrito',
+        help_text="Cliente propietario del carrito"
+    )
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Carrito de Compras"
+        verbose_name_plural = "Carritos de Compras"
+        ordering = ['-actualizado']
+
+    def __str__(self):
+        return f"Carrito de {self.cliente.usuario.email}"
+
+    @property
+    def total_carrito(self):
+        """Calcula el total del carrito sumando subtotales de items."""
+        return sum(item.subtotal for item in self.items.all())
+    
+    @property
+    def cantidad_items(self):
+        """Cuenta total de items en el carrito."""
+        return self.items.aggregate(
+            total=models.Sum('cantidad')
+        )['total'] or 0
+
+
+class CarritoItem(models.Model):
+    """
+    Item individual dentro de un carrito.
+    Asocia un producto con una cantidad en el carrito.
+    """
+    carrito = models.ForeignKey(
+        Carrito, 
+        related_name='items', 
+        on_delete=models.CASCADE,
+        help_text="Carrito al que pertenece este item"
+    )
+    producto = models.ForeignKey(
+        'Producto', 
+        on_delete=models.CASCADE,
+        help_text="Producto en el carrito"
+    )
+    cantidad = models.PositiveIntegerField(
+        default=1,
+        help_text="Cantidad del producto"
+    )
+    fecha_agregado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Item del Carrito"
+        verbose_name_plural = "Items del Carrito"
+        unique_together = ('carrito', 'producto')
+        ordering = ['-fecha_agregado']
+
+    def __str__(self):
+        return f"{self.cantidad}x {self.producto.nombre} - Carrito {self.carrito.id}"
+
+    @property
+    def subtotal(self):
+        """Calcula el subtotal para este item (precio × cantidad)."""
+        return self.producto.precio * self.cantidad
 
 
 # ============================================================
@@ -557,11 +808,17 @@ class Configuracion(models.Model):
     class Meta:
         verbose_name = "Configuración del Sistema"
         verbose_name_plural = "Configuración"
+        ordering = ['id']  # Elimina UnorderedObjectListWarning en paginación
 
     def save(self, *args, **kwargs):
-        # Fuerza ID=1 siempre (patrón Singleton)
+        """
+        Implementa patrón Singleton: siempre hay un solo record con pk=1.
+        Aunque alguien intente crear otro, se sobrescribe automáticamente.
+        """
         self.pk = 1
         super().save(*args, **kwargs)
+        logger_config = logging.getLogger(__name__)
+        logger_config.info(f"Configuración actualizada: intervalo={self.intervalo_turnos}, max_dias={self.max_dias_anticipacion}")
 
     def __str__(self):
         return "Configuración General de Bohemia Hair"
@@ -822,7 +1079,187 @@ class ListaEspera(models.Model):
 
 
 # ============================================================
-# SECCIÓN 5: EQUIPAMIENTO Y NOTIFICACIONES
+# SECCIÓN 5: CONTENIDO EDUCATIVO Y RED SOCIAL
+# ============================================================
+
+class ContenidoEducativo(models.Model):
+    """
+    Contenido educativo publicado por profesionales.
+    Sistema similar a una red social pero enfocado en educación capilar.
+    Los clientes pueden dar "me gusta" y guardar contenido.
+    """
+    ESTADOS = [
+        ('BORRADOR', 'Borrador'),
+        ('PUBLICADO', 'Publicado'),
+        ('ARCHIVADO', 'Archivado'),
+    ]
+    TIPO_CONTENIDO = [
+        ('IMAGEN', 'Imagen'),
+        ('VIDEO', 'Video'),
+        ('TEXTO', 'Solo Texto'),
+    ]
+
+    # Contenido
+    titulo = models.CharField(max_length=200, help_text="Título del post educativo")
+    descripcion = models.CharField(
+        max_length=500, 
+        help_text="Breve resumen para la lista de contenidos"
+    )
+    contenido_texto = models.TextField(help_text="Cuerpo completo del post educativo")
+    multimedia_url = models.URLField(
+        max_length=500, 
+        blank=True, 
+        null=True,
+        help_text="Link a S3, YouTube, Cloudinary, etc."
+    )
+    tipo = models.CharField(
+        max_length=10, 
+        choices=TIPO_CONTENIDO, 
+        default='IMAGEN',
+        help_text="Tipo de contenido principal"
+    )
+    
+    # Organización
+    tags = models.CharField(
+        max_length=200, 
+        blank=True, 
+        help_text="Etiquetas separadas por comas (ej: hidratacion,secado,color)"
+    )
+    
+    # Relaciones y Control
+    autor = models.ForeignKey(
+        'Personal', 
+        on_delete=models.PROTECT, 
+        related_name='posts_educativos',
+        help_text="Profesional que creó el contenido"
+    )
+    estado = models.CharField(
+        max_length=20, 
+        choices=ESTADOS, 
+        default='BORRADOR',
+        help_text="Estado de publicación del contenido"
+    )
+    activo = models.BooleanField(
+        default=True,
+        help_text="Soft delete - Marcar como inactivo para ocultar"
+    )
+    
+    # Timestamps
+    fecha_publicacion = models.DateTimeField(auto_now_add=True)
+    fecha_actualizacion = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Contenido Educativo"
+        verbose_name_plural = "Contenidos Educativos"
+        ordering = ['-fecha_publicacion']
+        indexes = [
+            models.Index(fields=['estado', '-fecha_publicacion']),
+            models.Index(fields=['autor', '-fecha_publicacion']),
+        ]
+
+    def clean(self):
+        """Validar que tipo y multimedia_url sean coherentes."""
+        if self.tipo != 'TEXTO' and not self.multimedia_url:
+            raise ValidationError("Video e Imagen requieren URL de multimedia")
+        if self.tipo == 'TEXTO' and self.multimedia_url:
+            raise ValidationError("Contenido de Texto no debe tener multimedia")
+
+    @property
+    def total_likes(self):
+        """Cantidad total de 'me gusta' recibidos."""
+        return self.me_gusta_recibidos.count()
+
+    @property
+    def total_guardados(self):
+        """Cantidad total de veces que fue guardado."""
+        return self.guardados_recibidos.count()
+
+    def me_gusta_por(self, cliente):
+        """Verifica si un cliente específico likeó este contenido."""
+        return self.me_gusta_recibidos.filter(cliente=cliente).exists()
+
+    def es_guardado_por(self, cliente):
+        """Verifica si un cliente específico guardó este contenido."""
+        return self.guardados_recibidos.filter(cliente=cliente).exists()
+
+    def __str__(self):
+        return f"[{self.get_estado_display()}] {self.titulo}"
+
+
+class MeGusta(models.Model):
+    """
+    Registra cuándo un cliente dio "me gusta" a un contenido educativo.
+    Permite analytics: qué tipos de contenido les interesa más a los clientes.
+    """
+    contenido = models.ForeignKey(
+        ContenidoEducativo, 
+        on_delete=models.CASCADE, 
+        related_name='me_gusta_recibidos',
+        help_text="Contenido que recibió el like"
+    )
+    cliente = models.ForeignKey(
+        'usuarios.Cliente', 
+        on_delete=models.CASCADE,
+        related_name='contenido_likeado',
+        help_text="Cliente que dio el like"
+    )
+    fecha = models.DateTimeField(
+        auto_now_add=True,
+        help_text="Cuándo se dio el like (para analytics)"
+    )
+
+    class Meta:
+        verbose_name = "Me Gusta"
+        verbose_name_plural = "Me Gusta"
+        unique_together = ('contenido', 'cliente')
+        ordering = ['-fecha']
+        indexes = [
+            models.Index(fields=['cliente', '-fecha']),
+            models.Index(fields=['contenido', '-fecha']),
+        ]
+
+    def __str__(self):
+        return f"{self.cliente} likeó {self.contenido.titulo}"
+
+
+class ContenidoGuardado(models.Model):
+    """
+    Registra cuándo un cliente guardó un contenido en su perfil.
+    Permite que los clientes tengan un historial de contenidos favoritos.
+    """
+    contenido = models.ForeignKey(
+        ContenidoEducativo, 
+        on_delete=models.CASCADE, 
+        related_name='guardados_recibidos',
+        help_text="Contenido que fue guardado"
+    )
+    cliente = models.ForeignKey(
+        'usuarios.Cliente', 
+        on_delete=models.CASCADE,
+        related_name='contenido_guardado',
+        help_text="Cliente que guardó el contenido"
+    )
+    fecha = models.DateTimeField(
+        auto_now_add=True,
+        help_text="Cuándo se guardó (para analytics)"
+    )
+
+    class Meta:
+        verbose_name = "Contenido Guardado"
+        verbose_name_plural = "Contenidos Guardados"
+        unique_together = ('contenido', 'cliente')
+        ordering = ['-fecha']
+        indexes = [
+            models.Index(fields=['cliente', '-fecha']),
+            models.Index(fields=['contenido', '-fecha']),
+        ]
+
+    def __str__(self):
+        return f"{self.cliente} guardó {self.contenido.titulo}"
+
+
+# ============================================================
+# SECCIÓN 6: EQUIPAMIENTO Y NOTIFICACIONES
 # ============================================================
 
 class TipoEquipamiento(models.Model):
@@ -902,6 +1339,23 @@ class RequisitoServicio(models.Model):
         verbose_name = "Requisito de Servicio"
         verbose_name_plural = "Requisitos de Servicios"
         unique_together = ('servicio', 'tipo_equipamiento')
+
+    def clean(self):
+        """
+        Validación: Asegurar que el tipo_equipamiento existe y está activo.
+        """
+        from django.core.exceptions import ValidationError
+        
+        if not self.tipo_equipamiento:
+            raise ValidationError(
+                'El tipo de equipamiento es obligatorio.'
+            )
+        
+        # Verificar que el TipoEquipamiento existe
+        if not TipoEquipamiento.objects.filter(id=self.tipo_equipamiento.id).exists():
+            raise ValidationError(
+                f'El tipo de equipamiento "{self.tipo_equipamiento.nombre}" no existe en el sistema.'
+            )
 
     def __str__(self):
         return f"{self.servicio.nombre} requiere {self.tipo_equipamiento.nombre}"

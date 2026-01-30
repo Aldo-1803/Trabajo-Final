@@ -126,7 +126,7 @@ export default function ConfiguracionAgendaMasiva({ fetchPersonal }) {
     }
 
     const confirmar = await confirmarAccion({
-      title: '⚠️ Limpiar Agenda',
+      title: 'Limpiar Agenda',
       text: `¿Eliminar todos los horarios de ${personalSeleccionado.nombre}? Esta acción no se puede deshacer.`,
       confirmButtonText: 'Sí, limpiar'
     })

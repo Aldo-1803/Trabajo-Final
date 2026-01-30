@@ -7,6 +7,7 @@ import { AUTH_ROUTES, CLIENTE_ROUTES, ADMIN_ROUTES, NO_HEADER_ROUTES } from './r
 import Login from '../pages/auth/Login';
 import Registro from '../pages/auth/Registro';
 import RecuperarContrasena from '../pages/auth/RecuperarContrasena';
+import ResetearClave from '../pages/auth/ResetearClave';
 
 // Imports - Cliente Pages
 import Perfil from '../pages/cliente/Perfil';
@@ -15,10 +16,12 @@ import ReservaCliente from '../pages/cliente/ReservaCliente';
 import MisTurnos from '../pages/cliente/MisTurnos';
 import MiAgenda from '../pages/cliente/MiAgenda';
 import CatalogoRutinas from '../pages/cliente/CatalogoRutinas';
+import CatalogoProductos from '../pages/cliente/CatalogoProductos';
 import MisRutinas from '../pages/cliente/MisRutinas';
 import DetalleRutina from '../pages/cliente/DetalleRutina';
 import CatalogoServicios from '../pages/cliente/CatalogoServicios';
 import DetalleServicio from '../pages/cliente/DetalleServicio';
+import DetallePromocion from '../pages/cliente/DetallePromocion';
 
 // Imports - Admin Pages
 import DashboardAdmin from '../pages/admin/DashboardAdmin';
@@ -35,6 +38,10 @@ import GestionPersonal from '../pages/admin/GestionPersonal';
 import ConfiguracionAdmin from '../pages/admin/ConfiguracionAdmin';
 import AgendaAdmin from '../pages/admin/AgendaAdmin';
 
+// Imports - Admin Pages (Contenido Educativo)
+import GestionContenidoEducativo from '../pages/admin/GestionContenidoEducativo';
+import EditorContenidoEducativo from '../pages/admin/EditorContenidoEducativo';
+
 // Imports - Components
 import Header from '../components/Header';
 
@@ -50,6 +57,7 @@ export const AppRoutes = () => {
                 <Route path={AUTH_ROUTES.LOGIN} element={<Login />} />
                 <Route path={AUTH_ROUTES.REGISTRO} element={<Registro />} />
                 <Route path={AUTH_ROUTES.RECUPERAR_CONTRASENA} element={<RecuperarContrasena />} />
+                <Route path={AUTH_ROUTES.RESETEAR_CLAVE} element={<ResetearClave />} />
 
                 {/* Cliente Routes */}
                 <Route path={CLIENTE_ROUTES.PERFIL} element={<ProtectedRoute><Perfil /></ProtectedRoute>} />
@@ -58,10 +66,12 @@ export const AppRoutes = () => {
                 <Route path={CLIENTE_ROUTES.MIS_TURNOS} element={<ProtectedRoute><MisTurnos /></ProtectedRoute>} />
                 <Route path={CLIENTE_ROUTES.MI_AGENDA} element={<ProtectedRoute><MiAgenda /></ProtectedRoute>} />
                 <Route path={CLIENTE_ROUTES.CATALOGO_RUTINAS} element={<ProtectedRoute><CatalogoRutinas /></ProtectedRoute>} />
+                <Route path={CLIENTE_ROUTES.CATALOGO_PRODUCTOS} element={<ProtectedRoute><CatalogoProductos /></ProtectedRoute>} />
                 <Route path={CLIENTE_ROUTES.MIS_RUTINAS} element={<ProtectedRoute><MisRutinas /></ProtectedRoute>} />
                 <Route path={CLIENTE_ROUTES.RUTINA_DETALLE} element={<ProtectedRoute><DetalleRutina /></ProtectedRoute>} />
                 <Route path={CLIENTE_ROUTES.CATALOGO_SERVICIOS} element={<ProtectedRoute><CatalogoServicios /></ProtectedRoute>} />
                 <Route path={CLIENTE_ROUTES.SERVICIO_DETALLE} element={<ProtectedRoute><DetalleServicio /></ProtectedRoute>} />
+                <Route path={CLIENTE_ROUTES.PROMOCION_DETALLE} element={<ProtectedRoute><DetallePromocion /></ProtectedRoute>} />
 
                 {/* Admin Routes */}
                 <Route path={ADMIN_ROUTES.DASHBOARD} element={<ProtectedRoute><DashboardAdmin /></ProtectedRoute>} />
@@ -78,6 +88,11 @@ export const AppRoutes = () => {
                 <Route path={ADMIN_ROUTES.EQUIPAMIENTO} element={<ProtectedRoute><GestionEquipamiento /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.AGENDA} element={<ProtectedRoute><AgendaAdmin /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.CONFIGURACION} element={<ProtectedRoute><ConfiguracionAdmin /></ProtectedRoute>} />
+
+                {/* Admin Routes - Contenido Educativo */}
+                <Route path={ADMIN_ROUTES.CONTENIDO_EDUCATIVO} element={<ProtectedRoute><GestionContenidoEducativo /></ProtectedRoute>} />
+                <Route path={ADMIN_ROUTES.CREAR_CONTENIDO} element={<ProtectedRoute><EditorContenidoEducativo /></ProtectedRoute>} />
+                <Route path={ADMIN_ROUTES.EDITAR_CONTENIDO} element={<ProtectedRoute><EditorContenidoEducativo /></ProtectedRoute>} />
 
                 {/* Default Route */}
                 <Route path="/" element={<Navigate to={AUTH_ROUTES.LOGIN} />} />

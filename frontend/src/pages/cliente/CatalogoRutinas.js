@@ -121,10 +121,10 @@ const CatalogoRutinas = () => {
     doc.save(`${rutina.nombre}.pdf`);
   };
 
-  if (loading) return <div className="text-center py-20 font-bold" style={{ color: '#8B8682', backgroundColor: '#F5EBE0', minHeight: '100vh' }}>Cargando rutinas...</div>;
+  if (loading) return <div className="text-center py-20 font-bold" style={{ color: '#8B8682', backgroundColor: '#F5F5EB', minHeight: '100vh' }}>Cargando rutinas...</div>;
 
   return (
-    <div className="min-h-screen p-8" style={{ backgroundColor: '#F5EBE0' }}>
+    <div className="min-h-screen p-8" style={{ backgroundColor: '#F5F5EB' }}>
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="mb-10 text-center">

@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
-import CampanaNotificaciones from '../../components/CampanaNotificaciones';
+import FichaRecomendacion from '../../components/FichaRecomendacion';
+import PromocionesCarte from '../../components/PromocionesCarte';
 
 // ============================================================================
 // COMPONENTE PRINCIPAL
@@ -95,15 +96,32 @@ const Perfil = () => {
     // ========================================================================
     return (
         <div style={{ backgroundColor: '#F5EBE0' }} className="min-h-screen">
-            {/* --- CAMPANA DE NOTIFICACIONES --- */}
-            <div className="fixed top-4 right-4 z-50">
-                <CampanaNotificaciones />
-            </div>
-
             {/* CONTENIDO PRINCIPAL */}
             <div className="max-w-5xl mx-auto px-4 py-12">
                 {/* ALERTA DE ERROR */}
                 {error && <ErrorAlert error={error} />}
+
+                {/* BOTONES DE ACCESO RÁPIDO */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+                    <button
+                        onClick={() => navigate('/catalogo-productos')}
+                        className="px-6 py-4 rounded-lg font-bold text-white shadow-md transition-all duration-200 hover:shadow-lg"
+                        style={{ backgroundColor: '#817773' }}
+                        onMouseEnter={(e) => e.target.style.backgroundColor = '#5A5451'}
+                        onMouseLeave={(e) => e.target.style.backgroundColor = '#817773'}
+                    >
+                        Ver Catálogo de Productos
+                    </button>
+                    <button
+                        onClick={() => navigate('/catalogo-rutinas')}
+                        className="px-6 py-4 rounded-lg font-bold text-white shadow-md transition-all duration-200 hover:shadow-lg"
+                        style={{ backgroundColor: '#AB9A91' }}
+                        onMouseEnter={(e) => e.target.style.backgroundColor = '#817773'}
+                        onMouseLeave={(e) => e.target.style.backgroundColor = '#AB9A91'}
+                    >
+                        Explorar Rutinas
+                    </button>
+                </div>
 
                 {/* GRID DE TARJETAS */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
@@ -171,105 +189,105 @@ const DiagnosticoCard = ({ diagnostico, notificaciones, navigate }) => {
 
     return (
         <div style={{ backgroundColor: 'white', borderLeft: '5px solid #E3D5CA' }} className="rounded-xl p-8 shadow-lg mb-8">
-            <h2 style={{ color: '#817773' }} className="text-2xl font-bold mb-6">Diagnóstico Personalizado</h2>
+            <h2 style={{ color: '#817773' }} className="text-2xl font-bold mb-6">📋 Diagnóstico Personalizado</h2>
             
-            {/* Mensaje Principal */}
-            <div className="bg-gradient-to-r from-transparent to-transparent rounded-lg p-6 mb-4 border-l-4" style={{ borderColor: '#AB9A91', backgroundColor: '#F5EBE0' }}>
-                <p style={{ color: '#817773' }} className="text-lg leading-relaxed font-medium">
-                    {diagnostico.mensaje_diagnostico}
+            {/* Mensaje Principal - Análisis Profesional */}
+            <div className="bg-gradient-to-r from-transparent to-transparent rounded-lg p-6 mb-6 border-l-4" style={{ borderColor: '#AB9A91', backgroundColor: '#F5EBE0' }}>
+                <h3 style={{ color: '#817773' }} className="text-lg font-bold mb-2">Tu Análisis Capilar</h3>
+                <p style={{ color: '#817773' }} className="text-base leading-relaxed">
+                    {diagnostico.mensaje_diagnostico || 'Análisis en proceso...'}
                 </p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                {/* Servicio Urgente */}
-                {diagnostico.servicio_urgente_nombre && (
-                    <div style={{ backgroundColor: '#F5EBE0' }} className="rounded-lg p-4">
-                        <p style={{ color: '#AB9A91' }} className="text-sm font-semibold">Servicio Recomendado:</p>
-                        <p style={{ color: '#817773' }} className="font-medium mt-2">{diagnostico.servicio_urgente_nombre}</p>
-                    </div>
-                )}
-            </div>
+            {/* FICHA DE RECOMENDACIÓN - Componente Reutilizable */}
+            <FichaRecomendacion 
+                diagnostico={diagnostico} 
+                turnoNotificacion={turnoNotificacion} 
+                navigate={navigate}
+            />
 
-        {/* --- BLOQUE DE RUTINA SUGERIDA --- */}
-        {diagnostico.rutina_asignada_nombre && (
-            <div className="mt-6 p-6 rounded-xl border-2 border-dashed" style={{ borderColor: '#AB9A91', backgroundColor: '#FAF7F5' }}>
-                <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-                    <div>
-                        <p className="text-sm font-bold uppercase tracking-wider" style={{ color: '#AB9A91' }}>
-                             Rutina Recomendada
-                        </p>
-                        <h3 className="text-xl font-bold" style={{ color: '#817773' }}>
-                            {diagnostico.rutina_asignada_nombre}
-                        </h3>
-                        <p className="text-sm text-gray-500 mt-1">
-                            Revisa los pasos y productos antes de adoptarla.
-                        </p>
+            {/* PROMOCIONES EXCLUSIVAS - Widget P3 */}
+            <PromocionesCarte />
+
+            {/* --- BLOQUE DE RUTINA SUGERIDA --- */}
+            {diagnostico.rutina_asignada_nombre && (
+                <div className="mt-6 p-6 rounded-xl border-2 border-dashed" style={{ borderColor: '#AB9A91', backgroundColor: '#FAF7F5' }}>
+                    <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+                        <div>
+                            <p className="text-sm font-bold uppercase tracking-wider" style={{ color: '#AB9A91' }}>
+                                Rutina Recomendada
+                            </p>
+                            <h3 className="text-xl font-bold" style={{ color: '#817773' }}>
+                                {diagnostico.rutina_asignada_nombre}
+                            </h3>
+                            <p className="text-sm text-gray-500 mt-1">
+                                Revisa los pasos y productos antes de adoptarla.
+                            </p>
+                        </div>
+                        
+                        <button
+                            onClick={() => navigate(`/rutina/${diagnostico.rutina_asignada_id}`)}
+                            className="px-6 py-3 rounded-lg text-white font-bold shadow-md transform hover:scale-105 transition-all flex items-center gap-2"
+                            style={{ background: 'linear-gradient(135deg, #AB9A91 0%, #817773 100%)' }}
+                        >
+                            <span>📖</span> Ver detalle de rutina
+                        </button>
                     </div>
-                    
-                    <button
-                        // Redirige a la vista de detalle (ej: /rutina/5)
-                        onClick={() => navigate(`/rutina/${diagnostico.rutina_asignada_id}`)}
-                        className="px-6 py-3 rounded-lg text-white font-bold shadow-md transform hover:scale-105 transition-all flex items-center gap-2"
-                        style={{ background: 'linear-gradient(135deg, #AB9A91 0%, #817773 100%)' }}
-                    >
-                        <span></span> Ver detalle de rutina
-                    </button>
                 </div>
-            </div>
-        )}
+            )}
 
-        {/* --- BLOQUE DE TURNO RECOMENDADO --- */}
-        {turnoNotificacion && turnoNotificacion.datos_extra && (
-            <div className="mt-6 p-6 rounded-xl border-2 border-dashed" style={{ borderColor: '#E3D5CA', backgroundColor: '#FAF7F5' }}>
+            {/* --- BLOQUE DE TURNO RECOMENDADO --- */}
+            {turnoNotificacion && turnoNotificacion.datos_extra && (
+                <div className="mt-6 p-6 rounded-xl border-2 border-dashed" style={{ borderColor: '#E3D5CA', backgroundColor: '#FAF7F5' }}>
+                    <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+                        <div>
+                            <p className="text-sm font-bold uppercase tracking-wider" style={{ color: '#E3D5CA' }}>
+                                Turno Disponible
+                            </p>
+                            <h3 className="text-lg font-bold" style={{ color: '#817773' }}>
+                                {turnoNotificacion.datos_extra.fecha} a las {turnoNotificacion.datos_extra.hora}
+                            </h3>
+                            <p className="text-sm text-gray-500 mt-1">
+                                Hemos reservado un espacio para ti en nuestro salón.
+                            </p>
+                        </div>
+                        
+                        <button
+                            onClick={() => navigate('/mis-turnos')}
+                            className="px-6 py-3 rounded-lg text-white font-bold shadow-md transform hover:scale-105 transition-all flex items-center gap-2"
+                            style={{ background: 'linear-gradient(135deg, #E3D5CA 0%, #D5BDAF 100%)' }}
+                        >
+                            <span>✨</span> Agendar Turno
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* --- BLOQUE DE SERVICIOS DISPONIBLES --- */}
+            <div className="mt-6 p-6 rounded-xl border-2" style={{ borderColor: '#E3D5CA', backgroundColor: '#FAF7F5' }}>
                 <div className="flex flex-col md:flex-row items-center justify-between gap-4">
                     <div>
                         <p className="text-sm font-bold uppercase tracking-wider" style={{ color: '#E3D5CA' }}>
-                            Turno Disponible
+                            ✨ Servicios Disponibles
                         </p>
-                        <h3 className="text-lg font-bold" style={{ color: '#817773' }}>
-                            {turnoNotificacion.datos_extra.fecha} a las {turnoNotificacion.datos_extra.hora}
+                        <h3 className="text-xl font-bold" style={{ color: '#817773' }}>
+                            Explora nuestros tratamientos
                         </h3>
                         <p className="text-sm text-gray-500 mt-1">
-                            Hemos reservado un espacio para ti en nuestro salón.
+                            Descubre todos los servicios que ofrece nuestro salón.
                         </p>
                     </div>
                     
                     <button
-                        onClick={() => navigate('/mis-turnos')}
+                        onClick={() => navigate('/catalogo-servicios')}
                         className="px-6 py-3 rounded-lg text-white font-bold shadow-md transform hover:scale-105 transition-all flex items-center gap-2"
-                        style={{ background: 'linear-gradient(135deg, #E3D5CA 0%, #D5BDAF 100%)' }}
+                        style={{ background: 'linear-gradient(135deg, #D5BDAF 0%, #AB9A91 100%)' }}
                     >
-                        <span>✨</span> Agendar Turno
+                        <span>🛍️</span> Ver catálogo
                     </button>
                 </div>
             </div>
-        )}
-
-        {/* --- BLOQUE DE SERVICIOS DISPONIBLES --- */}
-        <div className="mt-6 p-6 rounded-xl border-2" style={{ borderColor: '#E3D5CA', backgroundColor: '#FAF7F5' }}>
-            <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-                <div>
-                    <p className="text-sm font-bold uppercase tracking-wider" style={{ color: '#E3D5CA' }}>
-                        ✨ Servicios Disponibles
-                    </p>
-                    <h3 className="text-xl font-bold" style={{ color: '#817773' }}>
-                        Explora nuestros tratamientos
-                    </h3>
-                    <p className="text-sm text-gray-500 mt-1">
-                        Descubre todos los servicios que ofrece nuestro salón.
-                    </p>
-                </div>
-                
-                <button
-                    onClick={() => navigate('/catalogo-rutinas')}
-                    className="px-6 py-3 rounded-lg text-white font-bold shadow-md transform hover:scale-105 transition-all flex items-center gap-2"
-                    style={{ background: 'linear-gradient(135deg, #D5BDAF 0%, #AB9A91 100%)' }}
-                >
-                    <span></span> Ver catálogo
-                </button>
-            </div>
         </div>
-    </div>
     );
 };
 
@@ -286,51 +304,6 @@ const AtributoRow = ({ label, value }) => (
         <span style={{ color: '#AB9A91' }} className="font-semibold">{label}</span>
         <span style={{ color: '#817773' }} className="font-bold">{value}</span>
     </div>
-);
-
-// ============================================================================
-// INTERCEPTOR AXIOS - REFRESH TOKEN
-// ============================================================================
-axios.interceptors.response.use(
-    response => response,
-    async (error) => {
-        const originalRequest = error.config;
-        
-        if (error.response && 
-            error.response.status === 401 && 
-            error.response.data.code === 'token_not_valid' && 
-            !originalRequest._retry) {
-            
-            originalRequest._retry = true;
-            const refreshToken = localStorage.getItem('refresh_token');
-
-            if (refreshToken) {
-                try {
-                    const response = await axios.post('/api/token/refresh/', {
-                        refresh: refreshToken
-                    });
-
-                    localStorage.setItem('access_token', response.data.access);
-                    axios.defaults.headers.common['Authorization'] = `Bearer ${response.data.access}`;
-                    originalRequest.headers['Authorization'] = `Bearer ${response.data.access}`;
-                    
-                    return axios(originalRequest);
-
-                } catch (refreshError) {
-                    console.error("Fallo al refrescar el token:", refreshError);
-                    localStorage.removeItem('access_token');
-                    localStorage.removeItem('refresh_token');
-                    axios.defaults.headers.common['Authorization'] = null;
-                    window.location.href = '/login'; 
-                    return Promise.reject(refreshError);
-                }
-            } else {
-                window.location.href = '/login';
-            }
-        }
-
-        return Promise.reject(error);
-    }
 );
 
 export default Perfil;

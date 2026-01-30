@@ -123,7 +123,7 @@ const GestionPersonal = () => {
     };
 
     return (
-        <div className="min-h-screen bg-gray-100 p-8">
+        <div className="min-h-screen p-8" style={{ backgroundColor: '#F5F5EB' }}>
             <div className="max-w-6xl mx-auto">
                 {/* ENCABEZADO */}
                 <div className="mb-8 flex justify-between items-center">
@@ -133,7 +133,10 @@ const GestionPersonal = () => {
                     </div>
                     <button
                         onClick={() => abrirModal()}
-                        className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 font-bold"
+                        className="text-white px-6 py-3 rounded-lg font-bold transition-all"
+                        style={{ backgroundColor: '#817773' }}
+                        onMouseEnter={(e) => e.target.style.backgroundColor = '#6B5F5B'}
+                        onMouseLeave={(e) => e.target.style.backgroundColor = '#817773'}
                     >
                         + Nuevo Personal
                     </button>
@@ -141,7 +144,7 @@ const GestionPersonal = () => {
 
                 {/* MENSAJE */}
                 {mensaje && (
-                    <div className={`mb-4 p-3 rounded ${mensaje.includes('✅') ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                    <div className={`mb-4 p-4 rounded-lg font-medium ${mensaje.includes('✅') ? 'text-green-700' : 'text-red-700'}`} style={{ backgroundColor: mensaje.includes('✅') ? '#D1FAE5' : '#FEE2E2' }}>
                         {mensaje}
                     </div>
                 )}
@@ -154,15 +157,15 @@ const GestionPersonal = () => {
                 ) : (
                     <div className="bg-white shadow-lg rounded-lg overflow-x-auto">
                         <table className="w-full text-sm">
-                            <thead className="bg-gray-200 border-b">
+                            <thead className="border-b" style={{ backgroundColor: '#E8DCC4' }}>
                                 <tr>
-                                    <th className="px-4 py-3 text-left font-bold text-gray-700">Nombre</th>
-                                    <th className="px-4 py-3 text-left font-bold text-gray-700">Email</th>
-                                    <th className="px-4 py-3 text-left font-bold text-gray-700">Teléfono</th>
-                                    <th className="px-4 py-3 text-left font-bold text-gray-700">Rol</th>
-                                    <th className="px-4 py-3 text-left font-bold text-gray-700">Habilidades</th>
-                                    <th className="px-4 py-3 text-center font-bold text-gray-700">Activo</th>
-                                    <th className="px-4 py-3 text-right font-bold text-gray-700">Acciones</th>
+                                    <th className="px-4 py-3 text-left font-bold text-gray-800">Nombre</th>
+                                    <th className="px-4 py-3 text-left font-bold text-gray-800">Email</th>
+                                    <th className="px-4 py-3 text-left font-bold text-gray-800">Teléfono</th>
+                                    <th className="px-4 py-3 text-left font-bold text-gray-800">Rol</th>
+                                    <th className="px-4 py-3 text-left font-bold text-gray-800">Habilidades</th>
+                                    <th className="px-4 py-3 text-center font-bold text-gray-800">Activo</th>
+                                    <th className="px-4 py-3 text-right font-bold text-gray-800">Acciones</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y">
@@ -174,15 +177,15 @@ const GestionPersonal = () => {
                                         <td className="px-4 py-3 text-gray-600">{p.email || '-'}</td>
                                         <td className="px-4 py-3 text-gray-600">{p.telefono || '-'}</td>
                                         <td className="px-4 py-3">
-                                            <span className="px-3 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-800">
+                                            <span className="px-3 py-1 rounded-full text-xs font-semibold text-white" style={{ backgroundColor: '#C1B4A4' }}>
                                                 {ROL_CHOICES.find(r => r.value === p.rol)?.label}
                                             </span>
                                         </td>
                                         <td className="px-4 py-3 text-sm text-gray-600">
-                                            <div className="flex gap-2">
-                                                {p.realiza_diagnostico && <span className="bg-purple-100 text-purple-800 px-2 py-1 rounded text-xs">Diagnóstico</span>}
-                                                {p.realiza_lavado && <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded text-xs">Lavado</span>}
-                                                {p.realiza_color && <span className="bg-pink-100 text-pink-800 px-2 py-1 rounded text-xs">Color</span>}
+                                            <div className="flex gap-2 flex-wrap">
+                                                {p.realiza_diagnostico && <span className="px-2 py-1 rounded text-xs font-medium text-white" style={{ backgroundColor: '#817773' }}>Diagnóstico</span>}
+                                                {p.realiza_lavado && <span className="px-2 py-1 rounded text-xs font-medium text-white" style={{ backgroundColor: '#C1B4A4' }}>Lavado</span>}
+                                                {p.realiza_color && <span className="px-2 py-1 rounded text-xs font-medium text-white" style={{ backgroundColor: '#A89484' }}>Color</span>}
                                             </div>
                                         </td>
                                         <td className="px-4 py-3 text-center">
@@ -191,13 +194,16 @@ const GestionPersonal = () => {
                                         <td className="px-4 py-3 text-right space-x-2">
                                             <button
                                                 onClick={() => abrirModal(p)}
-                                                className="text-blue-600 hover:text-blue-900 font-semibold"
+                                                className="font-semibold transition-all" 
+                                                style={{ color: '#817773' }}
+                                                onMouseEnter={(e) => e.target.style.color = '#6B5F5B'}
+                                                onMouseLeave={(e) => e.target.style.color = '#817773'}
                                             >
                                                 Editar
                                             </button>
                                             <button
                                                 onClick={() => eliminarPersonal(p.id, `${p.nombre} ${p.apellido}`)}
-                                                className="text-red-600 hover:text-red-900 font-semibold"
+                                                className="font-semibold transition-all text-red-600 hover:text-red-800"
                                             >
                                                 Eliminar
                                             </button>
@@ -212,7 +218,7 @@ const GestionPersonal = () => {
                 {/* MODAL */}
                 {modalAbierto && (
                     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-                        <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto">
+                        <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto" style={{ borderTop: '4px solid #817773' }}>
                             <h2 className="text-2xl font-bold text-gray-800 mb-6">
                                 {modoEdicion ? 'Editar Personal' : 'Crear Personal'}
                             </h2>
@@ -321,8 +327,8 @@ const GestionPersonal = () => {
                                 </div>
 
                                 {/* Habilidades Técnicas */}
-                                <div className="border-t pt-4">
-                                    <h3 className="font-semibold text-gray-700 mb-3">Habilidades Técnicas</h3>
+                                <div className="border-t pt-4" style={{ borderColor: '#E8DCC4' }}>
+                                    <h3 className="font-semibold mb-3" style={{ color: '#817773' }}>Habilidades Técnicas</h3>
                                     <div className="space-y-3">
                                         <label className="flex items-center gap-3 cursor-pointer">
                                             <input
@@ -358,31 +364,38 @@ const GestionPersonal = () => {
                                 </div>
 
                                 {/* Activo */}
-                                <div className="border-t pt-4 flex items-center gap-3">
+                                <div className="border-t pt-4 flex items-center gap-3" style={{ borderColor: '#E8DCC4' }}>
                                     <input
                                         type="checkbox"
                                         name="activo"
                                         checked={form.activo}
                                         onChange={handleChange}
                                         className="w-5 h-5 cursor-pointer"
+                                        style={{ accentColor: '#817773' }}
                                     />
-                                    <label className="text-sm font-medium text-gray-700">
+                                    <label className="text-sm font-medium" style={{ color: '#817773' }}>
                                         Activo
                                     </label>
                                 </div>
 
                                 {/* Botones */}
-                                <div className="flex gap-3 justify-end mt-6 border-t pt-4">
+                                <div className="flex gap-3 justify-end mt-6 border-t pt-4" style={{ borderColor: '#E8DCC4' }}>
                                     <button
                                         type="button"
                                         onClick={() => setModalAbierto(false)}
-                                        className="px-4 py-2 border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50"
+                                        className="px-4 py-2 border rounded-lg font-medium transition-all" 
+                                        style={{ borderColor: '#C1B4A4', color: '#817773' }}
+                                        onMouseEnter={(e) => e.target.style.backgroundColor = '#F5F5EB'}
+                                        onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
                                     >
                                         Cancelar
                                     </button>
                                     <button
                                         type="submit"
-                                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold"
+                                        className="px-4 py-2 text-white rounded-lg font-bold transition-all"
+                                        style={{ backgroundColor: '#817773' }}
+                                        onMouseEnter={(e) => e.target.style.backgroundColor = '#6B5F5B'}
+                                        onMouseLeave={(e) => e.target.style.backgroundColor = '#817773'}
                                     >
                                         Guardar
                                     </button>

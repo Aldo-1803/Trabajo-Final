@@ -6,19 +6,28 @@ from rest_framework import generics
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.authentication import JWTAuthentication
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import SearchFilter, OrderingFilter
 from datetime import datetime, date, timedelta, time
-import datetime as dt
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Q, F
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
+from django.core.files.storage import default_storage
+from django.core.files.base import ContentFile
 import logging
+import datetime as dt
+import os
+from uuid import uuid4
+
+# Configurar logger global
+logger = logging.getLogger(__name__)
 
 from .models import (
     TipoCabello, GrosorCabello, PorosidadCabello, CueroCabelludo, EstadoGeneral, CategoriaServicio, Servicio, Turno, DetalleTurno,
     Configuracion, ListaEspera, Producto, Equipamiento, Rutina, Notificacion, AgendaCuidados, Producto, ReglaDiagnostico,
     RutinaCliente, HorarioLaboral, BloqueoAgenda, Personal, TipoEquipamiento, FichaTecnica, DiagnosticoCapilar, RequisitoServicio,
-    DiasSemana,
+    CategoriaProducto, Promocion, ConfiguracionRetoque, DiasSemana, Carrito, CarritoItem, ContenidoEducativo, MeGusta, ContenidoGuardado,
     #PasoRutinaCliente
     #PasoRutina
 )
@@ -29,11 +38,103 @@ from .serializers import (
     RutinaClienteCreateSerializer, ReglaDiagnosticoSerializer, NotificacionSerializer, ProductoSerializer, EquipamientoSerializer,
     UsuarioAdminSerializer, AgendaCuidadosSerializer, HorarioLaboralSerializer, BloqueoAgendaSerializer, PersonalSerializer,
     TipoEquipamientoSerializer, FichaTecnicaSerializer, RequisitoServicioSerializer, DiagnosticoCapilarSerializer,
+    CategoriaProductoSerializer, PromocionSerializer, ConfiguracionSerializer, ConfiguracionRetoqueSummarySerializer, 
+    CarritoSerializer, CarritoItemSerializer, ContenidoEducativoSerializer, MeGustaSerializer, ContenidoGuardadoSerializer,
     #PasoRutinaSerializer,
 )
 
 from .services import DisponibilidadService 
 from usuarios.models import Usuario, Cliente
+from usuarios.filters import UsuarioFilter
+
+# --- UPLOAD DE IMÁGENES ---
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+def upload_imagen(request):
+    """
+    Endpoint para subir imágenes de productos.
+    Retorna la URL de la imagen subida.
+    """
+    if 'imagen' not in request.FILES:
+        return Response(
+            {'error': 'No se proporcionó imagen'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    imagen = request.FILES['imagen']
+    
+    # Validar tipo de archivo
+    archivo_valido = imagen.content_type in ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+    if not archivo_valido:
+        return Response(
+            {'error': 'Solo se permiten archivos de imagen (JPEG, PNG, GIF, WebP)'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    # Validar tamaño (máx 5MB)
+    if imagen.size > 5 * 1024 * 1024:
+        return Response(
+            {'error': 'La imagen es demasiado grande. Máximo 5MB'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    try:
+        # Generar nombre único para el archivo
+        ext = os.path.splitext(imagen.name)[1]
+        nombre_archivo = f'productos/{uuid4()}{ext}'
+        
+        # Guardar archivo en el storage (local o cloud)
+        ruta = default_storage.save(nombre_archivo, ContentFile(imagen.read()))
+        
+        # Obtener URL accesible de la imagen
+        url = default_storage.url(ruta)
+        
+        logger.info(f'Imagen subida exitosamente: {ruta}')
+        
+        return Response({
+            'url': url,
+            'nombre': imagen.name,
+            'tamano': imagen.size
+        }, status=status.HTTP_201_CREATED)
+        
+    except Exception as e:
+        logger.error(f'Error al subir imagen: {str(e)}')
+        return Response(
+            {'error': f'Error al guardar la imagen: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+class ConfiguracionViewSet(viewsets.ModelViewSet):
+    queryset = Configuracion.objects.all()
+    serializer_class = ConfiguracionSerializer
+    permission_classes = [IsAdminUser]  # Solo administradores
+    
+    def _ensure_singleton_exists(self):
+        """
+        Garantiza que existe el record singleton con pk=1.
+        Si no existe, lo crea con valores por defecto.
+        """
+        config, created = Configuracion.objects.get_or_create(pk=1)
+        if created:
+            logger.info("Configuración singleton creada automáticamente con valores por defecto")
+        return config
+    
+    def get_queryset(self):
+        # Asegurar que existe el singleton antes de consultar
+        self._ensure_singleton_exists()
+        # El singleton siempre retorna 1 solo objeto
+        return Configuracion.objects.filter(pk=1)
+
+    def update(self, request, *args, **kwargs):
+        # Log de quién cambió qué
+        logger.info(f"Usuario {request.user} ({request.user.email}) modificó Configuración Global del Sistema")
+        return super().update(request, *args, **kwargs)
+
+    def retrieve(self, request, *args, **kwargs):
+        # Asegurar que existe antes de recuperar
+        self._ensure_singleton_exists()
+        return super().retrieve(request, *args, **kwargs)
 
 class CatalogoBaseListView(generics.ListAPIView):
     permission_classes = [AllowAny]
@@ -656,6 +757,7 @@ class TurnoViewSet(viewsets.ModelViewSet):
         }, status=status.HTTP_200_OK)
     
     def _generar_slots_disponibles(self, fecha, regla, duracion_minutos, intervalo_minutos, servicios_ids=None):
+        logger = logging.getLogger(__name__)
         slots_disponibles = []
         
         # 1. Traemos TODOS los turnos y bloqueos del día UNA SOLA VEZ (Optimización)
@@ -715,6 +817,7 @@ class TurnoViewSet(viewsets.ModelViewSet):
             # C. Choque con Equipamiento (Recursos físicos)
             if not hay_choque and servicios_ids:
                 if not self._verificar_disponibilidad_equipamiento(fecha, inicio_dt, fin_dt, servicios_ids):
+                    logger.info(f"Slot {hora_inicio_slot} descartado: Equipamiento lleno para servicios {servicios_ids}.")
                     hay_choque = True
             
             if not hay_choque:
@@ -1092,7 +1195,7 @@ class TurnoViewSet(viewsets.ModelViewSet):
     def finalizar_turno(self, request, pk=None):
         """
         Acción para marcar el turno como realizado y disparar 
-        las Reglas de Cuidado automáticas + crear diagnóstico post-servicio.
+        las Reglas de Cuidado automáticas + crear diagnóstico post-servicio + Promociones de Retoque.
         
         POST /api/gestion/turnos/{id}/finalizar_turno/
         """
@@ -1161,8 +1264,34 @@ class TurnoViewSet(viewsets.ModelViewSet):
                             estado='activa'
                         )
 
+        # 4. LÓGICA P3: Programación de Retoque (Marketing Inteligente)
+        # Crea promociones diferidas para sugerir retoques en el momento ideal
+        for detalle in turno.detalles.all():
+            # Buscamos si el servicio tiene una regla de mantenimiento
+            config = ConfiguracionRetoque.objects.filter(servicio_principal=detalle.servicio).first()
+            
+            if config:
+                # Calculamos tiempos
+                fecha_ideal_retoque = date.today() + timedelta(days=config.dias_sugeridos)
+                # Programamos el aviso para 7 días antes de la fecha ideal
+                fecha_aviso = fecha_ideal_retoque - timedelta(days=7)
+
+                # Creamos la Promoción "Diferida"
+                Promocion.objects.create(
+                    nombre=f"Mantenimiento de {detalle.servicio.nombre}",
+                    descripcion=f"Es el momento ideal para retocar tu {detalle.servicio.nombre} y lucir impecable.",
+                    tipo='RETOQUE',
+                    descuento_porcentaje=config.descuento_retoque,
+                    fecha_inicio=fecha_aviso, 
+                    fecha_fin=fecha_ideal_retoque + timedelta(days=7),
+                    fecha_envio_notificacion=fecha_aviso,
+                    cliente_especifico=turno.cliente,
+                    is_active=True
+                )
+                logger.info(f"P3: Promoción de retoque programada para el cliente {turno.cliente} el día {fecha_aviso}")
+
         return Response({
-            "mensaje": "Turno finalizado. Se han enviado las recomendaciones de cuidado a la clienta y se ha creado un nuevo diagnóstico.",
+            "mensaje": "Turno finalizado. Se han enviado las recomendaciones de cuidado, se ha creado un nuevo diagnóstico y se han programado promociones de retoque.",
             "estado": turno.estado
         })
 
@@ -1810,36 +1939,54 @@ class SeleccionarRutinaView(APIView):
 # A. CRUD USUARIOS (ADMIN)
 # ----------------------------------------------------
 class AdminUsuarioViewSet(viewsets.ModelViewSet):
-    queryset = Usuario.objects.all()
+    queryset = Usuario.objects.all()  # Cambiar a todos, luego filtramos en get_queryset
     serializer_class = UsuarioAdminSerializer
     permission_classes = [IsAdminUser] # Solo admins pueden entrar aquí
+    
+    # Configurar filtros
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = UsuarioFilter
+    search_fields = ['first_name', 'last_name', 'email']
+    ordering_fields = ['date_joined', 'email', 'first_name', 'last_name']
+    ordering = ['-date_joined']  # Por defecto, mostrar primero los más nuevos
+
+    def get_queryset(self):
+        """
+        Por defecto muestra solo usuarios ACTIVOS.
+        Si se filtra con is_active=false, muestra los INACTIVOS.
+        """
+        queryset = Usuario.objects.all()
+        
+        # Si NO hay filtro de is_active explícito, mostrar solo activos por defecto
+        if not self.request.query_params.get('is_active'):
+            queryset = queryset.filter(is_active=True)
+        
+        return queryset
 
     def perform_destroy(self, instance):
         """
-        No elimina el registro (Soft Delete). Lo desactiva.
+        Desactiva el usuario en lugar de eliminarlo (Soft Delete).
         Validación: No desactivar si tiene turnos futuros.
         """
-        # 1. Verificar turnos activos/futuros
-        # Asumiendo que Turno tiene FK 'profesional' o lo buscas por otro medio. 
-        # Si Yani es la única, esta validación es vital si agregas más staff.
-        
-        # Ejemplo: Turno.objects.filter(profesional=instance, fecha__gte=timezone.now(), estado='confirmado')
-        # Como tu modelo Turno actual no tiene 'profesional' explícito (es Yani), 
-        # esta validación aplica si el usuario a borrar fuera un cliente con deuda o un futuro empleado.
-        
-        # Para cumplir el requisito del enunciado A:
-        # "No se puede eliminar una cuenta de profesional si tiene turnos activos"
+        # Validación: No desactivar si es staff con turnos futuros
         if instance.is_staff:
-             # Simulamos chequeo
-             turnos_pendientes = Turno.objects.filter(fecha__gte=timezone.now().date(), estado='confirmado').exists()
-             if turnos_pendientes:
-                 # En un sistema multi-profesional filtraríamos por profesional=instance
-                 # Como es tesis y Yani es única, protegemos su cuenta.
-                 raise serializers.ValidationError("No se puede desactivar: Hay turnos futuros confirmados en el sistema.")
-
-        # 2. Desactivación (Soft Delete)
+            turnos_pendientes = Turno.objects.filter(
+                fecha__gte=timezone.now().date(), 
+                estado='confirmado'
+            ).exists()
+            if turnos_pendientes:
+                raise serializers.ValidationError(
+                    "No se puede desactivar: Hay turnos futuros confirmados en el sistema."
+                )
+        
+        # Desactivar usuario (Soft Delete)
         instance.is_active = False
         instance.save()
+        
+        # También desactivar el cliente asociado si existe
+        if hasattr(instance, 'cliente'):
+            instance.cliente.activo = False
+            instance.cliente.save()
 
 # ----------------------------------------------------
 # B. CRUD PRODUCTOS
@@ -1874,8 +2021,30 @@ class ProductoViewSet(viewsets.ModelViewSet):
 # D. CRUD TIPO EQUIPAMIENTO
 # ----------------------------------------------------
 class TipoEquipamientoViewSet(viewsets.ModelViewSet):
-    queryset = TipoEquipamiento.objects.all()
+    """
+    ViewSet para tipos de equipamiento.
+    
+    Devuelve solo tipos que tienen al menos un equipamiento activo en el sistema.
+    Esto evita asignar a servicios tipos de equipamiento sin instancias reales.
+    """
     serializer_class = TipoEquipamientoSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        """
+        Filtra tipos de equipamiento que tengan al menos un equipamiento activo.
+        """
+        # Obtener IDs de tipos que tienen equipos activos
+        tipos_con_equipos = Equipamiento.objects.filter(
+            is_active=True
+        ).values_list('tipo_id', flat=True).distinct()
+        
+        # Devolver solo los tipos que tienen equipos activos
+        queryset = TipoEquipamiento.objects.filter(id__in=tipos_con_equipos).order_by('nombre')
+        
+        logger.info(f"TiposEquipamiento disponibles para servicios: {queryset.count()}")
+        
+        return queryset
 
 
 # ----------------------------------------------------
@@ -2252,6 +2421,10 @@ class RequisitoServicioViewSet(viewsets.ModelViewSet):
     """
     ViewSet para gestionar los requisitos de equipamiento por servicio.
     Solo administradores pueden ver/crear/editar/eliminar.
+    
+    Validaciones:
+    - El tipo_equipamiento debe existir en la BD antes de asignarlo
+    - Se valida automáticamente en el serializer y en el modelo
     """
     queryset = RequisitoServicio.objects.all()
     serializer_class = RequisitoServicioSerializer
@@ -2267,6 +2440,42 @@ class RequisitoServicioViewSet(viewsets.ModelViewSet):
         if servicio_id:
             queryset = queryset.filter(servicio_id=servicio_id)
         return queryset
+    
+    def perform_create(self, serializer):
+        """
+        Crear un requisito de servicio con validaciones.
+        """
+        try:
+            # Ejecutar validaciones del modelo
+            if hasattr(serializer.validated_data['tipo_equipamiento'], 'clean'):
+                serializer.validated_data['tipo_equipamiento'].clean()
+            serializer.save()
+            logger.info(
+                f"Requisito de equipamiento creado: "
+                f"Servicio {serializer.validated_data['servicio'].nombre} "
+                f"requiere {serializer.validated_data['tipo_equipamiento'].nombre}"
+            )
+        except Exception as e:
+            logger.error(f"Error al crear requisito de equipamiento: {str(e)}")
+            raise
+    
+    def perform_update(self, serializer):
+        """
+        Actualizar un requisito de servicio con validaciones.
+        """
+        try:
+            # Ejecutar validaciones del modelo
+            if hasattr(serializer.validated_data.get('tipo_equipamiento'), 'clean'):
+                serializer.validated_data['tipo_equipamiento'].clean()
+            serializer.save()
+            logger.info(
+                f"Requisito de equipamiento actualizado: "
+                f"Servicio {serializer.validated_data['servicio'].nombre} "
+                f"requiere {serializer.validated_data['tipo_equipamiento'].nombre}"
+            )
+        except Exception as e:
+            logger.error(f"Error al actualizar requisito de equipamiento: {str(e)}")
+            raise
 
 
 class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
@@ -2654,3 +2863,968 @@ class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
             import traceback
             traceback.print_exc()
             logger.error(traceback.format_exc())
+
+
+# ============================================
+# VIEWSETS PARA PRODUCTOS
+# ============================================
+
+class CategoriaProductoViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestionar categorías de productos.
+    """
+    queryset = CategoriaProducto.objects.filter(activo=True)
+    serializer_class = CategoriaProductoSerializer
+    permission_classes = [AllowAny]
+    pagination_class = None
+
+
+class ProductoViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestionar productos del catálogo.
+    Incluye acciones personalizadas para alertas de stock y recomendaciones inteligentes.
+    """
+    queryset = Producto.objects.filter(activo=True)
+    serializer_class = ProductoSerializer
+    permission_classes = [AllowAny]
+    pagination_class = None
+
+    # --- 1. ENDPOINT: ALERTA DE STOCK BAJO ---
+    @action(detail=False, methods=['get'])
+    def stock_bajo(self, request):
+        """
+        Devuelve productos cuyo stock es menor o igual al mínimo.
+        Útil para el panel de Yanina para saber qué reabastecer.
+        GET /api/gestion/productos/stock_bajo/
+        """
+        productos = Producto.objects.filter(stock__lte=F('stock_minimo'), activo=True)
+        serializer = self.get_serializer(productos, many=True)
+        return Response({
+            "total_productos_bajo_stock": productos.count(),
+            "productos": serializer.data
+        })
+
+    # --- 2. ENDPOINT: RECOMENDACIONES INTELIGENTES (SMART SELLING) ---
+    @action(detail=False, methods=['get'], url_path='sugeridos-cliente')
+    def sugeridos_por_cliente(self, request):
+        """
+        Sugiere productos basados en el último diagnóstico del cliente autenticado.
+        Solo funciona si el cliente está autenticado.
+        GET /api/gestion/productos/sugeridos-cliente/
+        """
+        if not request.user.is_authenticated:
+            return Response(
+                {"error": "Debes estar autenticado para recibir sugerencias personalizadas."},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        try:
+            cliente = request.user.cliente
+        except:
+            return Response(
+                {"error": "Tu usuario no tiene perfil de cliente."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Buscamos el último diagnóstico del cliente
+            ultimo_diagnostico = DiagnosticoCapilar.objects.filter(
+                cliente=cliente
+            ).latest('fecha_diagnostico')
+            
+            # Mapeo de lógica: Diagnóstico -> Compatibilidad de Producto
+            # Si el pelo está dañado, prioridad productos DANADO
+            if ultimo_diagnostico.estado_general and "Dañado" in ultimo_diagnostico.estado_general.nombre:
+                tag_busqueda = 'DANADO'
+            elif ultimo_diagnostico.cuero_cabelludo and "Graso" in ultimo_diagnostico.cuero_cabelludo.nombre:
+                tag_busqueda = 'GRASO'
+            elif ultimo_diagnostico.cuero_cabelludo and "Seco" in ultimo_diagnostico.cuero_cabelludo.nombre:
+                tag_busqueda = 'SECO'
+            elif ultimo_diagnostico.tipo_cabello and ultimo_diagnostico.tipo_cabello.nombre in ["Rizado", "Afro"]:
+                tag_busqueda = 'RIZADO'
+            elif ultimo_diagnostico.tipo_cabello and "Lacio" in ultimo_diagnostico.tipo_cabello.nombre:
+                tag_busqueda = 'LACIO'
+            else:
+                tag_busqueda = 'TODO'
+
+            # Buscamos productos que coincidan y tengan stock
+            sugeridos = Producto.objects.filter(
+                Q(compatibilidad=tag_busqueda) | Q(compatibilidad='TODO'),
+                stock__gt=0,
+                activo=True
+            ).order_by('nombre')[:5]  # Limitamos a los mejores 5
+
+            serializer = self.get_serializer(sugeridos, many=True)
+            return Response({
+                "motivo_sugerencia": f"Basado en tu diagnóstico: {tag_busqueda}",
+                "diagnostico_id": ultimo_diagnostico.id,
+                "fecha_diagnostico": ultimo_diagnostico.fecha_diagnostico,
+                "productos_sugeridos": serializer.data
+            }, status=status.HTTP_200_OK)
+
+        except DiagnosticoCapilar.DoesNotExist:
+            return Response({
+                "error": "No tienes diagnósticos previos. Realiza un diagnóstico para recibir recomendaciones personalizadas.",
+                "productos": []
+            }, status=status.HTTP_404_NOT_FOUND)
+
+# ============================================
+# VIEWSET PARA PROMOCIONES
+# ============================================
+
+class PromocionViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestionar promociones del sistema.
+    Soporta tres pilares: COMBO, RETOQUE, LAST_MINUTE.
+    
+    Clientes pueden ver promociones activas (list/retrieve).
+    Solo admins pueden crear/actualizar/eliminar.
+    """
+    queryset = Promocion.objects.all()
+    serializer_class = PromocionSerializer
+    pagination_class = None
+    
+    def get_permissions(self):
+        """
+        Permisos dinámicos: 
+        - list/retrieve: AllowAny (clientes pueden ver promociones activas)
+        - create/update/destroy: IsAdminUser (solo admins)
+        """
+        if self.action in ['list', 'retrieve']:
+            permission_classes = [AllowAny]
+        else:
+            permission_classes = [IsAdminUser]
+        return [permission() for permission in permission_classes]
+    
+    def get_queryset(self):
+        """
+        Filtra promociones activas por defecto.
+        Query params: ?activas=true|false
+        
+        Para clientes: solo retorna promociones activas hoy
+        Para admins: retorna todas las promociones
+        """
+        queryset = super().get_queryset()
+        
+        # Si no es admin, solo mostrar promociones activas
+        if not self.request.user.is_staff:
+            hoy = timezone.now().date()
+            queryset = queryset.filter(
+                is_active=True,
+                fecha_inicio__lte=hoy,
+                fecha_fin__gte=hoy
+            )
+        else:
+            # Para admins, permitir filtrar por ?activas=true|false
+            activas_only = self.request.query_params.get('activas', 'false').lower() == 'true'
+            if activas_only:
+                hoy = timezone.now().date()
+                queryset = queryset.filter(
+                    is_active=True,
+                    fecha_inicio__lte=hoy,
+                    fecha_fin__gte=hoy
+                )
+        
+        return queryset.order_by('-fecha_inicio')
+    
+    @action(detail=False, methods=['post'], url_path='escanear-huecos')
+    def escanear_huecos(self, request):
+        """
+        Escanea la agenda de los próximos 3 días buscando huecos > 3 horas
+        y genera promociones automáticas Last Minute.
+        
+        POST /api/gestion/promociones/escanear-huecos/
+        """
+        logger = logging.getLogger(__name__)
+        hoy = date.today()
+        proximos_dias = [hoy + timedelta(days=i) for i in range(1, 4)]
+        promos_creadas = 0
+        
+        try:
+            # 1. Iteramos por cada profesional activo
+            profesionales = Personal.objects.filter(activo=True)
+            
+            for profe in profesionales:
+                for fecha in proximos_dias:
+                    # 2. Obtenemos su horario laboral para ese día
+                    dia_semana = fecha.weekday()
+                    horario = HorarioLaboral.objects.filter(
+                        personal=profe, 
+                        dia_semana=dia_semana, 
+                        activo=True
+                    ).first()
+                    
+                    if not horario:
+                        continue  # No trabaja ese día
+
+                    # 3. Obtenemos sus turnos ocupados
+                    turnos = Turno.objects.filter(
+                        profesional=profe, 
+                        fecha=fecha, 
+                        estado__in=['confirmado', 'esperando_sena', 'solicitado']
+                    ).order_by('hora_inicio').prefetch_related('detalles')
+
+                    # 4. Calculamos los huecos entre turnos
+                    huecos = self._calcular_huecos(horario, turnos, fecha)
+                    
+                    for h_ini, h_fin, duracion in huecos:
+                        # REGLA: Si el hueco es mayor a 180 minutos (3 horas)
+                        if duracion >= 180:
+                            nombre_promo = f"Flash Sale: {profe.nombre} - {fecha.strftime('%d/%m')}"
+                            # Evitamos duplicados para el mismo hueco
+                            if not Promocion.objects.filter(
+                                nombre=nombre_promo, 
+                                fecha_especifica=fecha
+                            ).exists():
+                                self._crear_promocion_last_minute(profe, fecha, h_ini, h_fin)
+                                promos_creadas += 1
+                                logger.info(f"Promo creada: {nombre_promo}")
+            
+            return Response({
+                "status": "Escaneo completado",
+                "promociones_generadas": promos_creadas,
+                "dias_escaneados": len(proximos_dias)
+            }, status=status.HTTP_201_CREATED)
+        
+        except Exception as e:
+            logger.error(f"Error en escanear_huecos: {str(e)}", exc_info=True)
+            return Response({
+                "error": f"Error al escanear huecos: {str(e)}"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _calcular_huecos(self, horario, turnos, fecha):
+        """
+        Lógica auxiliar para encontrar intervalos de tiempo libre en la jornada.
+        Retorna lista de tuplas: (hora_inicio, hora_fin, duracion_minutos)
+        """
+        huecos = []
+        
+        # El día empieza en horario.hora_inicio
+        ultimo_fin = datetime.combine(fecha, horario.hora_inicio)
+        final_jornada = datetime.combine(fecha, horario.hora_fin)
+
+        for t in turnos:
+            t_inicio = datetime.combine(fecha, t.hora_inicio)
+            
+            # Calculamos el hueco antes del turno
+            if t_inicio > ultimo_fin:
+                dif_minutos = int((t_inicio - ultimo_fin).total_seconds() / 60)
+                huecos.append((ultimo_fin.time(), t_inicio.time(), dif_minutos))
+            
+            # Actualizamos el fin según la duración del turno
+            duracion_t = sum(d.duracion_minutos for d in t.detalles.all()) or 60
+            ultimo_fin = t_inicio + timedelta(minutes=duracion_t)
+
+        # Hueco final (después del último turno hasta cierre de jornada)
+        if final_jornada > ultimo_fin:
+            dif_minutos = int((final_jornada - ultimo_fin).total_seconds() / 60)
+            huecos.append((ultimo_fin.time(), final_jornada.time(), dif_minutos))
+            
+        return huecos
+    
+    def _crear_promocion_last_minute(self, profesional, fecha, hora_inicio, hora_fin):
+        """
+        Crea una promoción Last Minute para un hueco específico en la agenda.
+        """
+        logger = logging.getLogger(__name__)
+        
+        try:
+            nombre_promo = f"¡Oportunidad Last-Minute con {profesional.nombre}!"
+            
+            promo = Promocion.objects.create(
+                nombre=nombre_promo,
+                descripcion=f"Tenemos un espacio libre {fecha.strftime('%d/%m')}. ¡Aprovéchalo con 30% OFF!",
+                tipo='LAST_MINUTE',
+                descuento_porcentaje=30,
+                fecha_inicio=date.today(),
+                fecha_fin=fecha,
+                fecha_especifica=fecha,
+                hora_inicio_promo=hora_inicio,
+                hora_fin_promo=hora_fin,
+                is_active=True
+            )
+            
+            # Agregar servicios que queremos incentivar (especialmente servicios de Color)
+            servicios_complejos = Servicio.objects.filter(
+                categoria__nombre__icontains="Color",
+                activo=True
+            )[:2]
+            
+            if servicios_complejos.exists():
+                promo.servicios.set(servicios_complejos)
+            else:
+                # Si no hay servicios de Color, asignamos los primeros 2 disponibles
+                servicios_fallback = Servicio.objects.filter(activo=True).order_by('?')[:2]
+                promo.servicios.set(servicios_fallback)
+            
+            # Registro de notificación masiva
+            logger.info(f"NOTIFICACIÓN: Promoción Last Minute publicada para el {fecha.strftime('%d/%m/%Y')} de {hora_inicio} a {hora_fin}")
+            logger.info(f"Servicios incluidos: {', '.join([s.nombre for s in promo.servicios.all()])}")
+            
+            return promo
+        
+        except Exception as e:
+            logger.error(f"Error al crear promo last minute: {str(e)}", exc_info=True)
+            return None
+
+
+# ============================================================================
+# SECCIÓN CARRITO DE COMPRAS
+# ============================================================================
+
+class CarritoViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestionar el carrito de compras del cliente.
+    Cada cliente tiene UN ÚNICO carrito (OneToOneField).
+    
+    Endpoints disponibles:
+    - GET /api/carrito/ - Lista el carrito del usuario actual
+    - POST /api/carrito/agregar_producto/ - Agrega/actualiza producto
+    - POST /api/carrito/eliminar_producto/ - Elimina un producto
+    - DELETE /api/carrito/vaciar/ - Vacía todo el carrito
+    - POST /api/carrito/finalizar_compra/ - Procesa la compra
+    """
+    serializer_class = CarritoSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        """Cada cliente solo ve su propio carrito."""
+        try:
+            cliente = Cliente.objects.get(usuario=self.request.user)
+            return Carrito.objects.filter(cliente=cliente)
+        except Cliente.DoesNotExist:
+            return Carrito.objects.none()
+
+    def get_carrito_cliente(self):
+        """Helper: obtiene el carrito del cliente autenticado."""
+        try:
+            cliente = Cliente.objects.get(usuario=self.request.user)
+            carrito, created = Carrito.objects.get_or_create(cliente=cliente)
+            return carrito
+        except Cliente.DoesNotExist:
+            raise ValidationError('El usuario no es cliente del sistema')
+
+    @action(detail=False, methods=['post'])
+    def agregar_producto(self, request):
+        """
+        POST /api/carrito/agregar_producto/
+        Body: {
+            "producto_id": 5,
+            "cantidad": 2
+        }
+        Agrega o actualiza un producto en el carrito.
+        """
+        try:
+            producto_id = request.data.get('producto_id')
+            cantidad = int(request.data.get('cantidad', 1))
+            
+            # Validaciones
+            if not producto_id:
+                return Response(
+                    {'error': 'producto_id es requerido'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if cantidad < 1:
+                return Response(
+                    {'error': 'cantidad debe ser mayor a 0'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Obtener producto
+            producto = Producto.objects.get(id=producto_id, activo=True)
+            
+            # Validar stock
+            if producto.stock < cantidad:
+                return Response(
+                    {'error': f'Stock insuficiente. Disponible: {producto.stock}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Obtener carrito
+            carrito = self.get_carrito_cliente()
+            
+            # Agregar o actualizar item
+            from gestion.models import CarritoItem
+            item, created = CarritoItem.objects.get_or_create(
+                carrito=carrito,
+                producto=producto
+            )
+            
+            if created:
+                item.cantidad = cantidad
+            else:
+                item.cantidad += cantidad
+            
+            item.save()
+            
+            logger.info(f"Producto {producto.id} agregado al carrito de {self.request.user.email}")
+            
+            serializer = CarritoSerializer(carrito)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        
+        except Producto.DoesNotExist:
+            return Response(
+                {'error': 'Producto no encontrado o inactivo'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except ValidationError as e:
+            return Response(
+                {'error': str(e.detail[0])},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except Exception as e:
+            logger.error(f"Error agregando producto: {str(e)}")
+            return Response(
+                {'error': 'Error al agregar producto'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['post'])
+    def eliminar_producto(self, request):
+        """
+        POST /api/carrito/eliminar_producto/
+        Body: {"carrito_item_id": 10}
+        Elimina un producto específico del carrito.
+        """
+        try:
+            item_id = request.data.get('carrito_item_id')
+            if not item_id:
+                return Response(
+                    {'error': 'carrito_item_id es requerido'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            carrito = self.get_carrito_cliente()
+            
+            from gestion.models import CarritoItem
+            item = CarritoItem.objects.get(id=item_id, carrito=carrito)
+            item.delete()
+            
+            logger.info(f"Item {item_id} eliminado del carrito de {self.request.user.email}")
+            
+            serializer = CarritoSerializer(carrito)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        
+        except CarritoItem.DoesNotExist:
+            return Response(
+                {'error': 'Item no encontrado en el carrito'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Error eliminando producto: {str(e)}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['delete'])
+    def vaciar(self, request):
+        """
+        DELETE /api/carrito/vaciar/
+        Vacía todos los items del carrito.
+        """
+        try:
+            carrito = self.get_carrito_cliente()
+            carrito.items.all().delete()
+            
+            logger.info(f"Carrito vaciado para {self.request.user.email}")
+            
+            serializer = CarritoSerializer(carrito)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        
+        except Exception as e:
+            logger.error(f"Error vaciando carrito: {str(e)}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['post'])
+    def finalizar_compra(self, request):
+        """
+        POST /api/carrito/finalizar_compra/
+        Procesa la compra: valida stock, resta inventario y limpia el carrito.
+        
+        Cumple con REQ-11: Auditoría de Stock
+        """
+        try:
+            carrito = self.get_carrito_cliente()
+            
+            if not carrito.items.exists():
+                return Response(
+                    {'error': 'El carrito está vacío'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # 1. VALIDAR STOCK de todos los productos ANTES de procesar
+            items_carrito = carrito.items.all()
+            for item in items_carrito:
+                if item.producto.stock < item.cantidad:
+                    return Response(
+                        {
+                            'error': f'Stock insuficiente de {item.producto.nombre}',
+                            'disponible': item.producto.stock,
+                            'solicitado': item.cantidad
+                        },
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            # 2. PROCESAR COMPRA (Lógica de Negocio) - Dentro de transacción atómica
+            with transaction.atomic():
+                total_venta = 0
+                
+                # Restar stock y calcular total
+                for item in items_carrito:
+                    producto = item.producto
+                    cantidad = item.cantidad
+                    precio_unitario = producto.precio
+                    subtotal = cantidad * precio_unitario
+                    
+                    # Actualizar stock (REQ-11 - Auditoría)
+                    producto.stock -= cantidad
+                    producto.save()
+                    
+                    total_venta += subtotal
+                    
+                    logger.info(
+                        f"Stock actualizado: {producto.nombre} | "
+                        f"Cantidad: {cantidad} | Nuevo stock: {producto.stock}"
+                    )
+                
+                # 3. LIMPIAR CARRITO
+                carrito.items.all().delete()
+                
+                # 4. CREAR NOTIFICACIÓN DE COMPRA EXITOSA
+                cliente = carrito.cliente
+                Notificacion.objects.create(
+                    usuario=cliente.usuario,
+                    tipo='alerta',
+                    titulo='✅ Compra Realizada',
+                    mensaje=f'Tu compra por ${total_venta:.2f} ha sido procesada exitosamente.',
+                    datos_extra={
+                        'total': float(total_venta),
+                        'cantidad_items': items_carrito.count(),
+                        'contexto': 'compra_exitosa'
+                    },
+                    canales=['app', 'email'],
+                    estado='pendiente'
+                )
+            
+            logger.info(
+                f"Compra completada por {self.request.user.email} | "
+                f"Total: ${total_venta:.2f} | Items: {items_carrito.count()}"
+            )
+            
+            serializer = CarritoSerializer(carrito)
+            return Response(
+                {
+                    'status': 'Compra realizada con éxito',
+                    'total': f'${total_venta:.2f}',
+                    'carrito': serializer.data
+                },
+                status=status.HTTP_200_OK
+            )
+        
+        except ValidationError as e:
+            return Response(
+                {'error': str(e.detail[0])},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except Exception as e:
+            logger.error(f"Error al finalizar compra: {str(e)}", exc_info=True)
+            return Response(
+                {'error': 'Error procesando la compra'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['get'])
+    def sugerencias_inteligentes(self, request):
+        """
+        GET /api/carrito/sugerencias_inteligentes/
+        
+        Analiza el diagnóstico del cliente y los productos en su carrito
+        para sugerir productos complementarios basados en su tipo de cabello.
+        
+        Implementa lógica de recomendación inteligente (IRQ-09).
+        """
+        try:
+            # 1. Obtener cliente
+            cliente = Cliente.objects.get(usuario=request.user)
+            
+            # 2. Obtener carrito actual (si existe)
+            carrito = Carrito.objects.filter(cliente=cliente).first()
+            productos_en_carrito = set(
+                carrito.items.values_list('producto_id', flat=True)
+            ) if carrito else set()
+            
+            # 3. Obtener último diagnóstico
+            ultimo_diag = DiagnosticoCapilar.objects.filter(
+                cliente=cliente
+            ).latest('fecha_diagnostico')
+            
+            if not ultimo_diag:
+                return Response({
+                    "sugerencias": [],
+                    "mensaje": "No hay diagnóstico disponible. Realiza un diagnóstico para obtener recomendaciones."
+                })
+            
+            # 4. Mapear diagnóstico a compatibilidad de producto
+            tag_busqueda = 'TODO'
+            razon = 'general'
+            
+            if ultimo_diag.estado_general:
+                estado = ultimo_diag.estado_general.nombre.lower()
+                if 'dañado' in estado or 'seco' in estado:
+                    tag_busqueda = 'DANADO'
+                    razon = f'cabello {estado}'
+                elif 'graso' in estado:
+                    tag_busqueda = 'GRASO'
+                    razon = 'cuero cabelludo graso'
+            
+            if ultimo_diag.cuero_cabelludo and 'graso' in ultimo_diag.cuero_cabelludo.nombre.lower():
+                tag_busqueda = 'GRASO'
+                razon = 'cuero cabelludo graso'
+            
+            # 5. Buscar productos sugeridos
+            sugeridos = Producto.objects.filter(
+                compatibilidad=tag_busqueda,
+                stock__gt=0,
+                activo=True
+            ).exclude(
+                id__in=productos_en_carrito
+            )[:5]  # Top 5 sugerencias
+            
+            if not sugeridos.exists():
+                return Response({
+                    "sugerencias": [],
+                    "mensaje": f"No hay productos disponibles para tu tipo de {razon}."
+                })
+            
+            from gestion.serializers import ProductoSerializer
+            serializer = ProductoSerializer(sugeridos, many=True)
+            
+            logger.info(
+                f"Sugerencias generadas para {request.user.email} | "
+                f"Razón: {razon} | Productos: {sugeridos.count()}"
+            )
+            
+            return Response({
+                "mensaje_marketing": f"Basado en tu diagnóstico ({razon}), estos productos potenciarán tus resultados:",
+                "sugerencias": serializer.data,
+                "diagnostico_fecha": ultimo_diag.fecha_diagnostico
+            }, status=status.HTTP_200_OK)
+        
+        except Cliente.DoesNotExist:
+            return Response(
+                {'error': 'Usuario no es cliente del sistema'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except DiagnosticoCapilar.DoesNotExist:
+            return Response({
+                "sugerencias": [],
+                "mensaje": "No hay diagnóstico disponible. Realiza un diagnóstico para obtener recomendaciones."
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Error generando sugerencias: {str(e)}", exc_info=True)
+            return Response(
+                {'error': 'Error al generar sugerencias'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+# ============================================================
+# VIEWSETS PARA CONTENIDO EDUCATIVO
+# ============================================================
+
+class ContenidoEducativoViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestionar contenido educativo.
+    - Profesionales: CRUD completo de su contenido
+    - Clientes: Listar publicado, like, guardar
+    """
+    serializer_class = ContenidoEducativoSerializer
+    permission_classes = [IsAuthenticated]
+    filterset_fields = ['estado', 'tipo', 'autor', 'tags']
+    search_fields = ['titulo', 'descripcion', 'contenido_texto']
+    ordering_fields = ['fecha_publicacion', 'total_likes']
+    ordering = ['-fecha_publicacion']
+
+    def get_queryset(self):
+        """
+        Filtro basado en rol del usuario:
+        - Profesionales ven TODO (borradores, publicado, archivado)
+        - Clientes ven solo PUBLICADO
+        """
+        user = self.request.user
+        
+        # Verificar si es profesional
+        try:
+            personal = user.perfil_profesional
+            # Profesional ve todo lo activo
+            return ContenidoEducativo.objects.filter(
+                activo=True
+            ).select_related('autor').prefetch_related('me_gusta_recibidos', 'guardados_recibidos')
+        except AttributeError:
+            # No es profesional - solo contenido publicado
+            return ContenidoEducativo.objects.filter(
+                estado='PUBLICADO',
+                activo=True
+            ).select_related('autor').prefetch_related('me_gusta_recibidos', 'guardados_recibidos')
+
+    def perform_create(self, serializer):
+        """Solo profesionales pueden crear contenido."""
+        try:
+            personal = self.request.user.perfil_profesional
+            serializer.save(autor=personal)
+            logger.info(f"Contenido creado por {personal.nombre}")
+        except AttributeError:
+            raise PermissionDenied("Solo profesionales pueden crear contenido")
+
+    def perform_update(self, serializer):
+        """Solo el autor puede editar su contenido."""
+        contenido = self.get_object()
+        if contenido.autor.usuario != self.request.user:
+            raise PermissionDenied("Solo el autor puede editar este contenido")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        """Soft delete - marcar como inactivo."""
+        instance.activo = False
+        instance.save()
+        logger.info(f"Contenido {instance.id} marcado como inactivo")
+
+    # === ENDPOINTS DE INTERACCIÓN ===
+
+    @action(detail=True, methods=['post'], url_path='like', permission_classes=[IsAuthenticated])
+    def toggle_like(self, request, pk=None):
+        """
+        Toggle: agregar/quitar me gusta
+        POST /api/contenido-educativo/{id}/like/
+        """
+        contenido = self.get_object()
+        
+        try:
+            cliente = request.user.cliente
+        except AttributeError:
+            return Response(
+                {'error': 'Solo clientes pueden dar like'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        with transaction.atomic():
+            like_existente = MeGusta.objects.filter(
+                contenido=contenido, 
+                cliente=cliente
+            ).first()
+            
+            if like_existente:
+                like_existente.delete()
+                logger.info(f"Like removido: {cliente.usuario.email} -> {contenido.id}")
+                return Response({
+                    'status': 'disliked',
+                    'total_likes': contenido.total_likes
+                }, status=status.HTTP_200_OK)
+            else:
+                MeGusta.objects.create(contenido=contenido, cliente=cliente)
+                logger.info(f"Like agregado: {cliente.usuario.email} -> {contenido.id}")
+                return Response({
+                    'status': 'liked',
+                    'total_likes': contenido.total_likes
+                }, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='guardar', permission_classes=[IsAuthenticated])
+    def toggle_guardar(self, request, pk=None):
+        """
+        Toggle: guardar/quitar de favoritos
+        POST /api/contenido-educativo/{id}/guardar/
+        """
+        contenido = self.get_object()
+        
+        try:
+            cliente = request.user.cliente
+        except AttributeError:
+            return Response(
+                {'error': 'Solo clientes pueden guardar contenido'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        with transaction.atomic():
+            guardado_existente = ContenidoGuardado.objects.filter(
+                contenido=contenido, 
+                cliente=cliente
+            ).first()
+            
+            if guardado_existente:
+                guardado_existente.delete()
+                logger.info(f"Contenido no guardado: {cliente.usuario.email} -> {contenido.id}")
+                return Response(
+                    {'status': 'unbooked'}, 
+                    status=status.HTTP_200_OK
+                )
+            else:
+                ContenidoGuardado.objects.create(contenido=contenido, cliente=cliente)
+                logger.info(f"Contenido guardado: {cliente.usuario.email} -> {contenido.id}")
+                return Response(
+                    {'status': 'bookmarked'}, 
+                    status=status.HTTP_201_CREATED
+                )
+
+    @action(detail=False, methods=['get'], url_path='mis-guardados', permission_classes=[IsAuthenticated])
+    def mis_guardados(self, request):
+        """
+        Lista contenido guardado por el cliente actual
+        GET /api/contenido-educativo/mis-guardados/
+        """
+        try:
+            cliente = request.user.cliente
+        except AttributeError:
+            return Response(
+                {'error': 'Solo clientes pueden ver guardados'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        guardados = ContenidoEducativo.objects.filter(
+            guardados_recibidos__cliente=cliente,
+            activo=True
+        ).select_related('autor').prefetch_related('me_gusta_recibidos').distinct()
+
+        page = self.paginate_queryset(guardados)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = self.get_serializer(guardados, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], url_path='recomendados', permission_classes=[IsAuthenticated])
+    def recomendados_por_diagnostico(self, request):
+        """
+        Contenido recomendado basado en el último diagnóstico del cliente
+        GET /api/contenido-educativo/recomendados/
+        """
+        try:
+            cliente = request.user.cliente
+        except AttributeError:
+            return Response(
+                {'error': 'Solo clientes pueden ver recomendaciones'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        try:
+            # Obtener último diagnóstico
+            ultimo_diag = DiagnosticoCapilar.objects.filter(
+                cliente=cliente
+            ).select_related('estado_general', 'tipo_cabello').latest('fecha_diagnostico')
+            
+            # Construir tags desde el diagnóstico
+            tags_diagnostico = []
+            
+            if ultimo_diag.estado_general:
+                tags_diagnostico.append(ultimo_diag.estado_general.nombre.lower())
+            if ultimo_diag.tipo_cabello:
+                tags_diagnostico.append(ultimo_diag.tipo_cabello.nombre.lower())
+            
+            if not tags_diagnostico:
+                # Si no hay tags, retornar contenido más reciente
+                recomendados = ContenidoEducativo.objects.filter(
+                    estado='PUBLICADO',
+                    activo=True
+                ).select_related('autor').prefetch_related('me_gusta_recibidos')[:10]
+            else:
+                # Buscar contenido con tags similares
+                filtros = Q()
+                for tag in tags_diagnostico:
+                    filtros |= Q(tags__icontains=tag)
+                
+                recomendados = ContenidoEducativo.objects.filter(
+                    filtros,
+                    estado='PUBLICADO',
+                    activo=True
+                ).select_related('autor').prefetch_related('me_gusta_recibidos').distinct()
+            
+            # Paginar
+            page = self.paginate_queryset(recomendados)
+            if page is not None:
+                serializer = self.get_serializer(page, many=True)
+                return self.get_paginated_response(serializer.data)
+            
+            serializer = self.get_serializer(recomendados, many=True)
+            return Response(serializer.data)
+            
+        except DiagnosticoCapilar.DoesNotExist:
+            # Sin diagnóstico, retornar contenido más reciente
+            recomendados = ContenidoEducativo.objects.filter(
+                estado='PUBLICADO',
+                activo=True
+            ).select_related('autor').prefetch_related('me_gusta_recibidos')[:10]
+            
+            serializer = self.get_serializer(recomendados, many=True)
+            return Response(serializer.data)
+        except Exception as e:
+            logger.error(f"Error generando recomendaciones: {str(e)}", exc_info=True)
+            return Response(
+                {'error': 'Error al generar recomendaciones'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class MeGustaViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestionar los 'me gusta' en contenido educativo.
+    Permite listar, crear y eliminar likes.
+    """
+    serializer_class = MeGustaSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'post', 'delete', 'head', 'options']
+
+    def get_queryset(self):
+        """Cada usuario solo ve sus propios likes."""
+        user = self.request.user
+        try:
+            cliente = user.cliente
+            return MeGusta.objects.filter(cliente=cliente).select_related('contenido')
+        except Cliente.DoesNotExist:
+            return MeGusta.objects.none()
+
+    def perform_create(self, serializer):
+        """
+        Al crear un like, asigna automáticamente el cliente actual.
+        """
+        try:
+            cliente = self.request.user.cliente
+            serializer.save(cliente=cliente)
+        except Cliente.DoesNotExist:
+            raise PermissionDenied("Solo clientes pueden dar like")
+
+
+class ContenidoGuardadoViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para contenido guardado por clientes.
+    Permite ver el historial de favoritos y agregarlos/eliminarlos.
+    """
+    serializer_class = ContenidoGuardadoSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'post', 'delete', 'head', 'options']
+
+    def get_queryset(self):
+        """Cada cliente solo ve sus propios guardados."""
+        user = self.request.user
+        try:
+            cliente = user.cliente
+            return ContenidoGuardado.objects.filter(cliente=cliente).select_related('contenido')
+        except Cliente.DoesNotExist:
+            return ContenidoGuardado.objects.none()
+
+    def perform_create(self, serializer):
+        """
+        Al guardar un contenido, asigna automáticamente el cliente actual.
+        """
+        try:
+            cliente = self.request.user.cliente
+            serializer.save(cliente=cliente)
+        except Cliente.DoesNotExist:
+            raise PermissionDenied("Solo clientes pueden guardar contenido")
+
+
+

@@ -7,7 +7,11 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework import viewsets
-from django.core.mail import send_mail
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import SearchFilter, OrderingFilter
+from django.core.mail import send_mail, EmailMultiAlternatives
+from django.template.loader import render_to_string
+from django.utils.html import strip_tags
 from django.conf import settings
 from django.shortcuts import redirect
 from django.contrib.auth.tokens import default_token_generator
@@ -15,15 +19,17 @@ from django.utils.http import urlsafe_base64_encode
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_decode
 from django.utils.encoding import force_str
-from .serializers import RegistroSerializer, ClienteListSerializer
-from .serializers import SetNewPasswordSerializer
+
+
 from django.db.models import Min
 from .serializers import (
-    UsuarioPerfilReadSerializer,
-    UsuarioPerfilUpdateSerializer
+    UsuarioPerfilReadSerializer, UsuarioPerfilUpdateSerializer, RegistroSerializer, ClienteListSerializer, SetNewPasswordSerializer
 )
-from .models import Usuario
-from .models import Cliente
+from .cliente_filters import ClienteFilter
+
+from .models import (
+    Usuario,  Cliente
+) 
 
 from gestion.models import (
     ReglaDiagnostico, TipoCabello, GrosorCabello, 
@@ -169,28 +175,35 @@ class PasswordResetRequestView(APIView):
             frontend_url = 'http://localhost:3000' 
             reset_link = f'{frontend_url}/resetear-clave/{uid}/{token}/'
             
-            # 4. Enviar el correo (¡con el enlace, no con la clave!)
+            # 4. Enviar el correo con HTML (EmailMultiAlternatives)
             asunto = 'Recuperación de contraseña - Bohemia Hair'
-            mensaje = f"""
-                Hola {usuario.first_name},
-
-                Haz clic en el siguiente enlace para crear una nueva contraseña:
-
-                {reset_link}
-
-                Si no solicitaste esto, ignora este correo.
-
-                Saludos,
-                Bohemia Hair
-                """
             
-            send_mail(
+            # Contexto para el template HTML
+            context = {
+                'usuario': usuario,
+                'reset_link': reset_link,
+                'frontend_url': frontend_url,
+            }
+            
+            # Renderizar el template HTML
+            html_content = render_to_string('emails/password_reset_email.html', context)
+            
+            # Crear versión de texto plano (fallback)
+            text_content = strip_tags(html_content)
+            
+            # Crear email con alternativas
+            email_message = EmailMultiAlternatives(
                 asunto,
-                mensaje,
+                text_content,
                 settings.DEFAULT_FROM_EMAIL,
-                [email],
-                fail_silently=False,
+                [email]
             )
+            
+            # Agregar versión HTML
+            email_message.attach_alternative(html_content, "text/html")
+            
+            # Enviar el email
+            email_message.send(fail_silently=False)
             
             # 5. La respuesta segura (¡igual que la suya!)
             return Response(
@@ -397,9 +410,24 @@ class ClienteViewSet(viewsets.ReadOnlyModelViewSet):
     """
     ViewSet para que el admin pueda listar todos los clientes.
     Solo lectura (GET).
+    Incluye filtrado, búsqueda y ordenamiento.
     """
     queryset = Cliente.objects.all().select_related('usuario')
     serializer_class = ClienteListSerializer
     permission_classes = [permissions.IsAdminUser]
     pagination_class = None
     
+    # Configurar filtros, búsqueda y ordenamiento
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = ClienteFilter
+    search_fields = ['usuario__first_name', 'usuario__last_name', 'usuario__email']
+    ordering_fields = ['usuario__first_name', 'usuario__last_name', 'usuario__date_joined', 'activo']
+    ordering = ['-usuario__date_joined']  # Por defecto, mostrar primero los más nuevos
+    
+    def get_queryset(self):
+        """
+        Solo traer clientes cuyo usuario asociado esté activo.
+        Esto previene desincronización cuando se "desactivan" usuarios.
+        """
+        return Cliente.objects.filter(usuario__is_active=True).select_related('usuario')
+

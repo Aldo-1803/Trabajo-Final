@@ -6,6 +6,8 @@ from .views import (
     PorosidadCabelloViewSet, CueroCabelludoViewSet, EstadoGeneralViewSet, CategoriaServicioViewSet, ServicioViewSet,
     ServiciosQuimicosViewSet, TurnoViewSet, RutinaViewSet, ReglaDiagnosticoViewSet, NotificacionViewSet, SeleccionarRutinaView,
     RutinaClienteViewSet, TipoEquipamientoViewSet, FichaTecnicaViewSet, RequisitoServicioViewSet, DiagnosticoCapilarViewSet,
+    CategoriaProductoViewSet, ProductoViewSet, PromocionViewSet, ConfiguracionViewSet, CarritoViewSet,
+    ContenidoEducativoViewSet, MeGustaViewSet, ContenidoGuardadoViewSet, upload_imagen,
     #ListaEsperaCreateView,
     # ViewSets
     #PasoRutinaViewSet,
@@ -36,6 +38,7 @@ router.register(r'rutinas', RutinaViewSet, basename='rutina')
 router.register(r'reglas-diagnostico', ReglaDiagnosticoViewSet, basename='reglas-diagnostico')
 router.register(r'rutinas-cliente', RutinaClienteViewSet, basename='rutina-cliente')
 router.register(r'admin/usuarios', views.AdminUsuarioViewSet, basename='admin-usuarios')
+router.register(r'categorias-productos', views.CategoriaProductoViewSet, basename='categoria-producto')
 router.register(r'productos', views.ProductoViewSet, basename='productos')
 router.register(r'personal', views.PersonalViewSet, basename='personal')
 router.register(r'tipo-equipamiento', TipoEquipamientoViewSet, basename='tipo-equipamiento')
@@ -43,10 +46,19 @@ router.register(r'equipamiento', views.EquipamientoViewSet, basename='equipamien
 router.register(r'fichas-tecnicas', FichaTecnicaViewSet, basename='ficha-tecnica')
 router.register(r'requisitos-servicio', RequisitoServicioViewSet, basename='requisito-servicio')
 router.register(r'diagnosticos-capilares', DiagnosticoCapilarViewSet, basename='diagnostico-capilar')
+router.register(r'promociones', PromocionViewSet, basename='promocion')
+router.register(r'configuracion', ConfiguracionViewSet, basename='configuracion')
+router.register(r'carrito', CarritoViewSet, basename='carrito')
+router.register(r'contenido-educativo', ContenidoEducativoViewSet, basename='contenido-educativo')
+router.register(r'me-gusta', MeGustaViewSet, basename='me-gusta')
+router.register(r'contenido-guardado', ContenidoGuardadoViewSet, basename='contenido-guardado')
 
 # Las URLs se generan automáticamente
 urlpatterns = [
     path('', include(router.urls)),
+    
+    # Upload de imágenes
+    path('upload-imagen/', upload_imagen, name='upload-imagen'),
     
     # Endpoints personalizados (fuera del router)
     path('disponibilidad/', DisponibilidadTurnosView.as_view(), name='disponibilidad-turnos'),

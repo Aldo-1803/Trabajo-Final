@@ -18,10 +18,8 @@ const Login = () => {
             const token = localStorage.getItem('access_token');
             if (token) {
                 try {
-                    // Verificar si el token es válido
-                    const response = await axios.get('http://127.0.0.1:8000/api/usuarios/perfil/', {
-                        headers: { 'Authorization': `Bearer ${token}` }
-                    });
+                    // Verificar si el token es válido - El interceptor lo mantendrá válido
+                    const response = await axios.get('http://127.0.0.1:8000/api/usuarios/perfil/');
                     
                     const usuario = response.data;
                     setCurrentUser(usuario);
@@ -69,19 +67,21 @@ const Login = () => {
 
             const { access, refresh } = response.data;
 
+            console.log('Login response:', { access: access?.substring(0, 20) + '...', refresh: refresh?.substring(0, 20) + '...' });
+
             // 2. GUARDADO: Persistimos sesión
             localStorage.setItem('access_token', access);
             localStorage.setItem('refresh_token', refresh);
             axios.defaults.headers.common['Authorization'] = `Bearer ${access}`;
 
-            // 3. VERIFICACIÓN DE ROL (El paso nuevo)
-            try {
-                // Usamos el token recién obtenido para pedir el perfil
-                const perfilResponse = await axios.get('http://127.0.0.1:8000/api/usuarios/perfil/', {
-                    headers: { 'Authorization': `Bearer ${access}` }
-                });
+            console.log('Tokens saved to localStorage');
 
+            // 3. OBTENER PERFIL - El interceptor mantendrá el token válido
+            try {
+                const perfilResponse = await axios.get('http://127.0.0.1:8000/api/usuarios/perfil/');
                 const usuario = perfilResponse.data;
+
+                console.log('Profile loaded successfully:', usuario);
 
                 // 4. REDIRECCIÓN INTELIGENTE
                 if (usuario.is_staff) {

@@ -1,19 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { notify, confirmarAccion } from '../../utils/notificaciones';
 
 const ReservaCliente = () => {
     const navigate = useNavigate();
+    const location = useLocation();
 
     // Estados
     const [servicios, setServicios] = useState([]);
     const [servicioSeleccionado, setServicioSeleccionado] = useState('');
     const [disponibilidad, setDisponibilidad] = useState([]);
     const [fechaSeleccionada, setFechaSeleccionada] = useState(null);
+    const [fechaSugerida, setFechaSugerida] = useState(null); // Para marcar la fecha sugerida
     const [profesionalSeleccionado, setProfesionalSeleccionado] = useState(null);
     const [horariosDelDia, setHorariosDelDia] = useState([]);
     const [horarioSeleccionado, setHorarioSeleccionado] = useState(null);
+    const [horarioSugerido, setHorarioSugerido] = useState(null); // Para marcar el horario sugerido
     
     // UI States
     const [loadingServicios, setLoadingServicios] = useState(false);
@@ -22,6 +25,7 @@ const ReservaCliente = () => {
     const [error, setError] = useState('');
     const [paso, setPaso] = useState(1); // 1: Servicio, 2: Fecha, 3: Horario
     const [servicioInfo, setServicioInfo] = useState(null); // Guardar nombre y duración del servicio seleccionado
+    const [esDesdeRecomendacion, setEsDesdeRecomendacion] = useState(false); // Rastrear si viene de sugerencia
 
     // Cargar Servicios al iniciar
     useEffect(() => {
@@ -29,7 +33,45 @@ const ReservaCliente = () => {
             try {
                 setLoadingServicios(true);
                 const res = await axios.get('http://127.0.0.1:8000/api/gestion/servicios/');
-                setServicios(res.data);
+                
+                // Filtrar solo servicios que tengan equipamiento configurado
+                const serviciosConEquipamiento = res.data.filter(s => 
+                    s.requisitos_equipamiento && s.requisitos_equipamiento.length > 0
+                );
+                
+                setServicios(serviciosConEquipamiento);
+                
+                // Manejo de datos desde notificación (location.state)
+                const stateData = location.state || {};
+                
+                // Si viene desde una notificación con servicio preseleccionado
+                if (stateData.servicioPreseleccionado) {
+                    setEsDesdeRecomendacion(true);
+                    setServicioSeleccionado(stateData.servicioPreseleccionado);
+                    
+                    // Guardar sugerencias para marcar visualmente después
+                    if (stateData.fechaSugerida) {
+                        setFechaSugerida(stateData.fechaSugerida);
+                    }
+                    if (stateData.horaSugerida) {
+                        setHorarioSugerido(stateData.horaSugerida);
+                    }
+                    if (stateData.profesionalId) {
+                        setProfesionalSeleccionado(stateData.profesionalId);
+                    }
+                }
+                // Fallback a formato antiguo de FichaRecomendacion
+                else if (stateData.servicio_id) {
+                    setEsDesdeRecomendacion(true);
+                    setServicioSeleccionado(stateData.servicio_id);
+                    
+                    if (stateData.fecha) {
+                        setFechaSugerida(stateData.fecha);
+                    }
+                    if (stateData.hora) {
+                        setHorarioSugerido(stateData.hora);
+                    }
+                }
             } catch (err) {
                 console.error(err);
                 notify.error('No pudimos cargar los servicios. Intenta luego.');
@@ -38,14 +80,7 @@ const ReservaCliente = () => {
             }
         };
         fetchServicios();
-    }, []);
-
-    // DISPARADOR AUTOMÁTICO: Consultar disponibilidad cuando selecciona servicio
-    useEffect(() => {
-        if (servicioSeleccionado) {
-            consultarDisponibilidad(servicioSeleccionado);
-        }
-    }, [servicioSeleccionado]);
+    }, [location]);
 
     // Consultar disponibilidad para un servicio
     const consultarDisponibilidad = async (servicioId) => {
@@ -71,6 +106,17 @@ const ReservaCliente = () => {
             
             if (res.data.disponibilidad && res.data.disponibilidad.length > 0) {
                 setPaso(2); // Avanzamos a seleccionar fecha
+                
+                // Si viene de una recomendación y hay fecha sugerida, intentar auto-seleccionarla
+                if (esDesdeRecomendacion && fechaSugerida) {
+                    const diaConFecha = res.data.disponibilidad.find(d => d.fecha === fechaSugerida);
+                    if (diaConFecha) {
+                        setTimeout(() => {
+                            seleccionarFecha(diaConFecha);
+                            notify.info('💡 Hemos pre-cargado la fecha sugerida. Puedes cambiarla si lo deseas.');
+                        }, 500);
+                    }
+                }
             } else {
                 // Si no hay disponibilidad, mostrar mensaje
                 const mensaje = res.data.mensaje || 'No hay disponibilidad en este momento.';
@@ -85,6 +131,13 @@ const ReservaCliente = () => {
         }
     };
 
+    // DISPARADOR AUTOMÁTICO: Consultar disponibilidad cuando selecciona servicio
+    useEffect(() => {
+        if (servicioSeleccionado) {
+            consultarDisponibilidad(servicioSeleccionado);
+        }
+    }, [servicioSeleccionado]);
+
     // Cuando selecciona una fecha, mostrar profesionales y horarios disponibles
     const seleccionarFecha = (fechaDisponible) => {
         setFechaSeleccionada(fechaDisponible);
@@ -95,6 +148,17 @@ const ReservaCliente = () => {
             const prof = fechaDisponible.profesionales[0];
             setProfesionalSeleccionado(prof);
             setHorariosDelDia(prof.slots);
+            
+            // Si viene de recomendación y hay horario sugerido, intentar auto-seleccionarlo
+            if (esDesdeRecomendacion && horarioSugerido) {
+                const slotSugerido = prof.slots.find(s => s.hora === horarioSugerido);
+                if (slotSugerido) {
+                    setTimeout(() => {
+                        setHorarioSeleccionado(slotSugerido);
+                        notify.info('💡 También pre-cargamos la hora sugerida. Puedes cambiarla cuando quieras.');
+                    }, 500);
+                }
+            }
         } else {
             // Múltiples profesionales, resetear selección
             setProfesionalSeleccionado(null);
@@ -109,6 +173,16 @@ const ReservaCliente = () => {
         setProfesionalSeleccionado(profesional);
         setHorariosDelDia(profesional.slots);
         setHorarioSeleccionado(null);
+        
+        // Si viene de recomendación y hay horario sugerido, intentar auto-seleccionarlo
+        if (esDesdeRecomendacion && horarioSugerido) {
+            const slotSugerido = profesional.slots.find(s => s.hora === horarioSugerido);
+            if (slotSugerido) {
+                setTimeout(() => {
+                    setHorarioSeleccionado(slotSugerido);
+                }, 300);
+            }
+        }
     };
 
     const solicitarTurno = async () => {
@@ -196,12 +270,30 @@ const ReservaCliente = () => {
             {/* PASO 1: SELECCIÓN DE SERVICIO */}
             {paso === 1 && (
                 <div className="animate-fade-in">
+                    {esDesdeRecomendacion && (
+                        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg flex items-center gap-2">
+                            <span className="text-blue-600 font-bold text-lg">💡</span>
+                            <p className="text-blue-800 text-sm">
+                                <strong>Venes de una recomendación:</strong> El servicio ya está pre-seleccionado. Puedes cambiar si lo prefieres.
+                            </p>
+                        </div>
+                    )}
                     <label className="block text-sm font-medium text-gray-700 mb-2">¿Qué te gustaría hacerte?</label>
+                    
+                    {!loadingServicios && servicios.length === 0 && (
+                        <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                            <p className="text-amber-800 text-sm">
+                                <strong>⚠️ Servicios no disponibles</strong><br/>
+                                Por el momento no hay servicios disponibles para reservar. Por favor, contáctanos para más información.
+                            </p>
+                        </div>
+                    )}
+                    
                     <select 
                         className="w-full p-3 border border-gray-300 rounded-lg mb-6 focus:ring-2 focus:ring-rose-500 outline-none"
                         value={servicioSeleccionado}
                         onChange={(e) => setServicioSeleccionado(e.target.value)}
-                        disabled={loadingServicios}
+                        disabled={loadingServicios || servicios.length === 0}
                     >
                         <option value="">-- Selecciona un servicio --</option>
                         {servicios.map(s => (
@@ -259,13 +351,19 @@ const ReservaCliente = () => {
                                 <button
                                     key={idx}
                                     onClick={() => seleccionarFecha(dia)}
-                                    className={`p-3 rounded-lg text-sm font-medium border transition
+                                    className={`p-3 rounded-lg text-sm font-medium border transition relative
                                         ${fechaSeleccionada?.fecha === dia.fecha 
                                             ? 'bg-rose-500 text-white border-rose-600 ring-2 ring-rose-300' 
                                             : 'bg-white text-gray-600 border-gray-200 hover:border-rose-300'}`}
                                 >
                                     <div className="font-bold">{dia.dia_semana}</div>
                                     <div className="text-xs">{dia.fecha}</div>
+                                    {/* Badge de sugerencia */}
+                                    {esDesdeRecomendacion && fechaSugerida === dia.fecha && (
+                                        <div className="absolute top-0 right-0 bg-yellow-400 text-yellow-900 text-xs px-2 py-1 rounded-bl-lg rounded-tr-lg font-bold">
+                                            ✓ Sugerida
+                                        </div>
+                                    )}
                                 </button>
                             ))}
                         </div>
@@ -331,12 +429,18 @@ const ReservaCliente = () => {
                                         <button
                                             key={idx}
                                             onClick={() => setHorarioSeleccionado(slot)}
-                                            className={`py-2 rounded-lg text-sm font-medium border transition
+                                            className={`py-2 rounded-lg text-sm font-medium border transition relative
                                                 ${horarioSeleccionado?.hora === slot.hora 
                                                     ? 'bg-rose-500 text-white border-rose-600 ring-2 ring-rose-300' 
                                                     : 'bg-white text-gray-600 border-gray-200 hover:border-rose-300'}`}
                                         >
                                             {slot.hora}
+                                            {/* Badge de sugerencia */}
+                                            {esDesdeRecomendacion && horarioSugerido === slot.hora && (
+                                                <div className="absolute -top-2 -right-2 bg-yellow-400 text-yellow-900 text-xs px-1 py-0 rounded-full font-bold flex items-center justify-center w-5 h-5">
+                                                    ✓
+                                                </div>
+                                            )}
                                         </button>
                                     ))}
                                 </div>

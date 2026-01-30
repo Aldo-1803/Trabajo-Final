@@ -1,9 +1,11 @@
 from django.contrib import admin
+from django.utils.html import format_html
 from .models import (
     TipoCabello, GrosorCabello, PorosidadCabello, CueroCabelludo, EstadoGeneral,
     CategoriaServicio, Servicio, ReglaDiagnostico, Rutina, RutinaCliente,
     Notificacion, Configuracion, Personal, HorarioLaboral, BloqueoAgenda, DiasSemana, Equipamiento,
-    TipoEquipamiento, RequisitoServicio, FichaTecnica, DiagnosticoCapilar
+    TipoEquipamiento, RequisitoServicio, FichaTecnica, DiagnosticoCapilar,
+    ContenidoEducativo, MeGusta, ContenidoGuardado
     #PasoRutinaCliente, #PasoRutina,
 )
 
@@ -448,3 +450,127 @@ class DiagnosticoCapilarAdmin(admin.ModelAdmin):
         }),
     )
     ordering = ('-fecha_diagnostico',)
+
+
+# ============================================
+# ADMIN PARA CONTENIDO EDUCATIVO
+# ============================================
+@admin.register(ContenidoEducativo)
+class ContenidoEducativoAdmin(admin.ModelAdmin):
+    """
+    Admin mejorado para gestionar contenido educativo.
+    Permite edición rápida de estado y visualización clara de métricas.
+    """
+    # Qué columnas se ven en la lista principal
+    list_display = ('titulo', 'autor', 'tipo_badge', 'estado', 'fecha_publicacion', 'get_likes', 'get_guardados')
+    
+    # Filtros laterales para encontrar rápido lo que busca
+    list_filter = ('estado', 'tipo', 'autor', 'fecha_publicacion')
+    
+    # Buscador por título, etiquetas o descripción
+    search_fields = ('titulo', 'tags', 'descripcion')
+    
+    # Para que pueda editar el estado rápido sin entrar al post
+    list_editable = ('estado',)
+    
+    # Orden cronológico inverso (lo más nuevo arriba)
+    date_hierarchy = 'fecha_publicacion'
+    
+    # Campos de solo lectura
+    readonly_fields = ('fecha_publicacion', 'fecha_actualizacion', 'total_likes', 'total_guardados')
+    
+    # Organizar el formulario de edición
+    fieldsets = (
+        ('Información Principal', {
+            'fields': ('titulo', 'descripcion', 'tipo', 'autor')
+        }),
+        ('Contenido y Etiquetas', {
+            'fields': ('contenido', 'imagen', 'tags'),
+            'classes': ('wide',)
+        }),
+        ('Publicación y Estado', {
+            'fields': ('estado', 'fecha_publicacion', 'fecha_actualizacion')
+        }),
+        ('Métricas (Solo Lectura)', {
+            'fields': ('total_likes', 'total_guardados'),
+            'classes': ('collapse',)
+        }),
+    )
+
+    def tipo_badge(self, obj):
+        """Muestra el tipo con badge de color"""
+        colores = {
+            'articulo': '#3498db',      # Azul
+            'video': '#e74c3c',          # Rojo
+            'tutorial': '#2ecc71',       # Verde
+            'consejo': '#f39c12',        # Naranja
+        }
+        color = colores.get(obj.tipo, '#95a5a6')  # Gris por defecto
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 3px 8px; border-radius: 3px; font-size: 11px;">{}</span>',
+            color,
+            obj.get_tipo_display()
+        )
+    tipo_badge.short_description = 'Tipo'
+
+    def get_likes(self, obj):
+        """Muestra la cantidad de likes con emoji"""
+        return format_html('❤️ <strong>{}</strong>', obj.total_likes)
+    get_likes.short_description = 'Likes'
+
+    def get_guardados(self, obj):
+        """Muestra la cantidad de guardados con emoji"""
+        return format_html('💾 <strong>{}</strong>', obj.total_guardados)
+    get_guardados.short_description = 'Guardados'
+
+
+@admin.register(MeGusta)
+class MeGustaAdmin(admin.ModelAdmin):
+    """
+    Admin para visualizar todas las reacciones "Me Gusta".
+    Los likes se crean automáticamente, no deberían editarse manualmente.
+    """
+    list_display = ('cliente', 'contenido', 'fecha_badge')
+    list_filter = ('fecha',)
+    search_fields = ('cliente__usuario__email', 'contenido__titulo')
+    readonly_fields = ('cliente', 'contenido', 'fecha')
+    ordering = ('-fecha',)
+    
+    def fecha_badge(self, obj):
+        """Muestra la fecha formateada"""
+        return obj.fecha.strftime('%d/%m/%Y %H:%M')
+    fecha_badge.short_description = 'Fecha'
+    
+    def has_add_permission(self, request):
+        """Los likes se crean automáticamente desde el frontend"""
+        return False
+    
+    def has_delete_permission(self, request, obj=None):
+        """No se pueden eliminar likes manualmente (auditoría)"""
+        return False
+
+
+@admin.register(ContenidoGuardado)
+class ContenidoGuardadoAdmin(admin.ModelAdmin):
+    """
+    Admin para ver qué contenido han guardado los clientes.
+    Los guardados se crean automáticamente, no deberían editarse manualmente.
+    """
+    list_display = ('cliente', 'contenido', 'fecha_badge')
+    list_filter = ('fecha',)
+    search_fields = ('cliente__usuario__email', 'contenido__titulo')
+    readonly_fields = ('cliente', 'contenido', 'fecha')
+    ordering = ('-fecha',)
+    
+    def fecha_badge(self, obj):
+        """Muestra la fecha formateada"""
+        return obj.fecha.strftime('%d/%m/%Y %H:%M')
+    fecha_badge.short_description = 'Fecha'
+    
+    def has_add_permission(self, request):
+        """Los guardados se crean automáticamente desde el frontend"""
+        return False
+    
+    def has_delete_permission(self, request, obj=None):
+        """No se pueden eliminar guardados manualmente (auditoría)"""
+        return False

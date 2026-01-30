@@ -115,12 +115,18 @@ class Cliente(models.Model):
         null=True, 
         verbose_name="Productos Actuales"
     )
+    
+    activo = models.BooleanField(
+        default=True,
+        verbose_name="¿Cliente Activo?"
+    )
 
     @property
     def historial_completo(self):
         # Importación local para evitar importación circular
         return Turno.objects.filter(cliente=self, estado='realizado').order_by('-fecha')
 
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
     fecha_actualizacion = models.DateTimeField(auto_now=True)
 
     class Meta:

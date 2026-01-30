@@ -1,8 +1,8 @@
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.utils import timezone
-from datetime import timedelta
-from .models import Turno, ReglaCuidado, AgendaCuidados, RutinaCliente #PasoRutinaCliente
+from datetime import timedelta, date
+from .models import Turno, ReglaCuidado, AgendaCuidados, RutinaCliente, Producto, Promocion #PasoRutinaCliente
 from usuarios.models import Usuario
 from .models import Notificacion
 
@@ -240,3 +240,33 @@ def automatizacion_post_servicio(sender, instance, created, **kwargs):
         if nuevos_items:
             AgendaCuidados.objects.bulk_create(nuevos_items)
             print(f" Se generaron {len(nuevos_items)} items en la agenda.")
+
+
+#----------------------------------------------------
+# 3. SISTEMA DE COMBOS AUTOMÁTICOS POR PRODUCTOS
+#----------------------------------------------------
+
+@receiver(post_save, sender=Producto)
+def crear_combo_automatico(sender, instance, created, **kwargs):
+    """
+    Crea automáticamente un combo de lanzamiento cuando se agrega un nuevo producto.
+    Busca otros productos de la misma categoría y genera un pack promocional.
+    """
+    if created:  # Solo si es un producto nuevo
+        # Buscamos 2 productos de la misma categoría para armar un combo
+        otros = Producto.objects.filter(
+            categoria=instance.categoria
+        ).exclude(id=instance.id)[:2]
+        
+        if otros.count() >= 1:
+            promo = Promocion.objects.create(
+                nombre=f"Combo Lanzamiento: {instance.nombre}",
+                descripcion=f"Pack especial de {instance.categoria.nombre}",
+                tipo='COMBO',
+                descuento_porcentaje=15,
+                fecha_inicio=date.today(),
+                fecha_fin=date.today() + timedelta(days=15)
+            )
+            promo.productos.add(instance, *otros)
+            # Aquí podrías disparar la notificación a las clientas interesadas
+            print(f"DEBUG: Combo creado automáticamente para {instance.nombre}")

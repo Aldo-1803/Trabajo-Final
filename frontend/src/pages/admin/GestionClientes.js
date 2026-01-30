@@ -44,84 +44,92 @@ const GestionClientes = () => {
 
     // --- RENDERIZADO ---
     return (
-        <div className="max-w-7xl mx-auto p-6 mt-8">
-            <div className="flex justify-between items-center mb-6">
-                <div>
-                    <h1 className="text-3xl font-bold text-gray-800">Cartera de Clientes</h1>
-                    <p className="text-gray-500">Visualización de perfiles registrados</p>
+        <div className="min-h-screen p-8" style={{ backgroundColor: '#F5F0EB' }}>
+            <div className="max-w-7xl mx-auto">
+                <div className="flex justify-between items-center mb-6">
+                    <div>
+                        <h1 className="text-3xl font-bold text-gray-800">Cartera de Clientes</h1>
+                        <p className="text-gray-500">Visualización de perfiles registrados</p>
+                    </div>
+                    <button 
+                        onClick={() => navigate('/admin-dashboard')}
+                        className="px-4 py-2 rounded-lg font-medium transition-all"
+                        style={{ color: '#817773', borderColor: '#C1B4A4', border: '1px solid' }}
+                        onMouseEnter={(e) => e.target.style.backgroundColor = '#F5F0EB'}
+                        onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
+                    >
+                        ← Volver al Dashboard
+                    </button>
                 </div>
-                <button 
-                    onClick={() => navigate('/admin-dashboard')}
-                    className="text-gray-500 hover:underline"
-                >
-                    ← Volver al Dashboard
-                </button>
-            </div>
 
-            {error && (
-                <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-4">
-                    {error}
-                </div>
-            )}
-
-            <div className="bg-white shadow-lg rounded-lg overflow-hidden border border-gray-200">
-                {loading ? (
-                    <div className="p-8 text-center text-gray-500">Cargando datos...</div>
-                ) : clientes.length === 0 ? (
-                    <div className="p-8 text-center text-gray-400">No hay clientes registrados aún.</div>
-                ) : (
-                    <div className="overflow-x-auto">
-                        <table className="min-w-full divide-y divide-gray-200">
-                            <thead className="bg-gray-50">
-                                <tr>
-                                    <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Cliente</th>
-                                    <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Contacto</th>
-                                    <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Ubicación</th>
-                                    <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Registro</th>
-                                    <th className="px-6 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider">Acciones</th>
-                                </tr>
-                            </thead>
-                            <tbody className="bg-white divide-y divide-gray-200">
-                                {clientes.map((cliente) => (
-                                    <tr key={cliente.id} className="hover:bg-gray-50 transition-colors">
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <div className="flex items-center">
-                                                <div className="flex-shrink-0 h-10 w-10 rounded-full bg-pink-100 flex items-center justify-center text-pink-600 font-bold">
-                                                    {cliente.first_name?.[0] || 'U'}
-                                                </div>
-                                                <div className="ml-4">
-                                                    <div className="text-sm font-bold text-gray-900">
-                                                        {cliente.first_name} {cliente.last_name}
-                                                    </div>
-                                                    <div className="text-xs text-gray-500">{cliente.email}</div>
-                                                </div>
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <div className="text-sm text-gray-900">{cliente.numero || '-'}</div>
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">
-                                                {cliente.zona || 'No especificada'}
-                                            </span>
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                            {cliente.date_joined ? new Date(cliente.date_joined).toLocaleDateString() : '-'}
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                            <button 
-                                                className="text-pink-600 hover:text-pink-900 font-bold hover:underline"
-                                                onClick={() => alert(`Ver historial de ${cliente.first_name} (Próximamente)`)}
-                                            >
-                                                Ver Ficha
-                                            </button>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
+                {error && (
+                    <div className="p-4 mb-4 rounded-lg font-medium text-red-700" style={{ backgroundColor: '#FEE2E2', borderLeft: '4px solid #DC2626' }}>
+                        {error}
                     </div>
                 )}
+
+                <div className="bg-white shadow-lg rounded-lg overflow-hidden border" style={{ borderColor: '#E8DCC4' }}>
+                    {loading ? (
+                        <div className="p-8 text-center text-gray-500">Cargando datos...</div>
+                    ) : clientes.length === 0 ? (
+                        <div className="p-8 text-center text-gray-400">No hay clientes registrados aún.</div>
+                    ) : (
+                        <div className="overflow-x-auto">
+                            <table className="min-w-full divide-y divide-gray-200">
+                                <thead className="border-b" style={{ backgroundColor: '#E8DCC4' }}>
+                                    <tr>
+                                        <th className="px-6 py-3 text-left text-xs font-bold text-gray-800 uppercase tracking-wider">Cliente</th>
+                                        <th className="px-6 py-3 text-left text-xs font-bold text-gray-800 uppercase tracking-wider">Contacto</th>
+                                        <th className="px-6 py-3 text-left text-xs font-bold text-gray-800 uppercase tracking-wider">Ubicación</th>
+                                        <th className="px-6 py-3 text-left text-xs font-bold text-gray-800 uppercase tracking-wider">Registro</th>
+                                        <th className="px-6 py-3 text-right text-xs font-bold text-gray-800 uppercase tracking-wider">Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="bg-white divide-y divide-gray-200">
+                                    {clientes.map((cliente) => (
+                                        <tr key={cliente.id} className="hover:bg-gray-50 transition-colors">
+                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                <div className="flex items-center">
+                                                    <div className="flex-shrink-0 h-10 w-10 rounded-full flex items-center justify-center text-white font-bold" style={{ backgroundColor: '#817773' }}>
+                                                        {cliente.first_name?.[0] || 'U'}
+                                                    </div>
+                                                    <div className="ml-4">
+                                                        <div className="text-sm font-bold text-gray-900">
+                                                            {cliente.first_name} {cliente.last_name}
+                                                        </div>
+                                                        <div className="text-xs text-gray-500">{cliente.email}</div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                <div className="text-sm text-gray-900">{cliente.numero || '-'}</div>
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                <span className="px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full text-white" style={{ backgroundColor: '#C1B4A4' }}>
+                                                    {cliente.zona || 'No especificada'}
+                                                </span>
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                {cliente.date_joined ? new Date(cliente.date_joined).toLocaleDateString() : '-'}
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                                <button 
+                                                    className="font-semibold transition-all"
+                                                    style={{ color: '#817773' }}
+                                                    onMouseEnter={(e) => e.target.style.color = '#6B5F5B'}
+                                                    onMouseLeave={(e) => e.target.style.color = '#817773'}
+                                                    onClick={() => alert(`Ver historial de ${cliente.first_name} (Próximamente)`)}
+                                                >
+                                                    Ver Ficha
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </div>
             </div>
         </div>
     );

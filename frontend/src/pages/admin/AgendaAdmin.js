@@ -144,7 +144,7 @@ const AgendaAdmin = () => {
             textColor = "#C73E3E";
             contenido = <span className="text-xs font-bold block truncate" style={{color: textColor}}>{bloqueo.motivo}</span>;
         } else if (!horario) {
-            bgColor = "#F5EBE0";
+            bgColor = "#F5F5EB";
             borderColor = "#D5BDAF";
             cursor = "cursor-not-allowed";
             textColor = "#AB9A91";
@@ -194,14 +194,14 @@ const AgendaAdmin = () => {
 
     if (loading) {
         return (
-            <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#F5EBE0' }}>
+            <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#F5F5EB' }}>
                 <div className="animate-spin rounded-full h-16 w-16 border-4" style={{ borderColor: '#E3D5CA', borderTopColor: '#817773' }}></div>
             </div>
         );
     }
 
     return (
-        <div className="min-h-screen p-6" style={{ backgroundColor: '#F5EBE0' }}>
+        <div className="min-h-screen p-6" style={{ backgroundColor: '#F5F5EB' }}>
             <div className="max-w-6xl mx-auto">
                 {/* HEADER */}
                 <div className="mb-8">
@@ -239,7 +239,7 @@ const AgendaAdmin = () => {
                 {/* ERROR ALERT */}
                 {error && (
                     <div className="mb-6 p-4 rounded-lg border-l-4" style={{ backgroundColor: '#FFE8E8', borderColor: '#C73E3E' }}>
-                        <p style={{ color: '#C73E3E' }} className="font-medium">⚠️ {error}</p>
+                        <p style={{ color: '#C73E3E' }} className="font-medium">{error}</p>
                     </div>
                 )}
 
@@ -299,7 +299,7 @@ const AgendaAdmin = () => {
                                 <span style={{ color: '#817773' }}>Día laboral</span>
                             </div>
                             <div className="flex items-center gap-2">
-                                <div className="w-6 h-6 rounded" style={{ backgroundColor: '#F5EBE0', border: '2px solid #AB9A91' }}></div>
+                                <div className="w-6 h-6 rounded" style={{ backgroundColor: '#F5F5EB', border: '2px solid #AB9A91' }}></div>
                                 <span style={{ color: '#817773' }}>Cerrado</span>
                             </div>
                             <div className="flex items-center gap-2">
