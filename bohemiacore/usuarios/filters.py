@@ -23,6 +23,16 @@ class UsuarioFilter(django_filters.FilterSet):
     )
     
     # Filtro por Rol (basado en si es staff)
+    is_staff = django_filters.ChoiceFilter(
+        choices=[
+            ('false', 'Cliente'),
+            ('true', 'Personal/Staff'),
+        ], 
+        method='filter_by_staff',
+        label="Rol del usuario"
+    )
+    
+    # Mantener 'rol' para retrocompatibilidad
     rol = django_filters.ChoiceFilter(
         choices=[
             ('cliente', 'Cliente'),
@@ -60,6 +70,18 @@ class UsuarioFilter(django_filters.FilterSet):
             return queryset.filter(is_active=True)
         elif value.lower() == 'false':
             return queryset.filter(is_active=False)
+        
+        return queryset
+
+    def filter_by_staff(self, queryset, name, value):
+        """Filtra por rol usando is_staff: 'true' para staff, 'false' para clientes"""
+        if not value:
+            return queryset
+        
+        if value.lower() == 'true':
+            return queryset.filter(is_staff=True)
+        elif value.lower() == 'false':
+            return queryset.filter(is_staff=False)
         
         return queryset
 

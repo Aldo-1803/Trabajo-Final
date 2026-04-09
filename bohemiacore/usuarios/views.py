@@ -32,9 +32,11 @@ from .models import (
 ) 
 
 from gestion.models import (
-    ReglaDiagnostico, TipoCabello, GrosorCabello, 
-    PorosidadCabello, CueroCabelludo, EstadoGeneral, Servicio
+    ReglaDiagnostico, TipoCabello, GrosorCabello,
+    PorosidadCabello, CueroCabelludo, EstadoGeneral, Servicio,
+    DiagnosticoCapilar
 )
+from gestion.serializers import DiagnosticoCapilarSerializer
 
 # Vista para redirigir a la pantalla de registro
 def home(request):
@@ -288,121 +290,18 @@ class DiagnosticoView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        # --- VARIABLES UNIFICADAS (Inicialización) ---
-        # Definimos esto al principio para usarlas en Nivel 1 y Nivel 2
-        rutina_id = None
-        rutina_nombre = None
-        
-        # --- 1. NIVEL 1: REGLAS DE EXCEPCIÓN (Prioridad Alta) ---
-        # Ejemplo: Desequilibrio de pH
-        reglas_nivel_1 = ReglaDiagnostico.objects.all().order_by('prioridad')
-        
-        for regla in reglas_nivel_1:
-            match = True 
-            if regla.tipo_cabello and regla.tipo_cabello != perfil.tipo_cabello:
-                match = False
-            if match and regla.grosor_cabello and regla.grosor_cabello != perfil.grosor_cabello:
-                match = False
-            if match and regla.porosidad_cabello and regla.porosidad_cabello != perfil.porosidad_cabello:
-                match = False
-            if match and regla.cuero_cabelludo and regla.cuero_cabelludo != perfil.cuero_cabelludo:
-                match = False
-            if match and regla.estado_general and regla.estado_general != perfil.estado_general:
-                match = False
-            
-            if match:
-                # ¡COINCIDENCIA DE NIVEL 1 ENCONTRADA!
-                if regla.rutina_sugerida:
-                    rutina_id = regla.rutina_sugerida.id
-                    rutina_nombre = regla.rutina_sugerida.nombre
+        diagnostico = DiagnosticoCapilar.objects.filter(
+            cliente=perfil
+        ).order_by('-fecha_diagnostico').first()
 
-                return Response({
-                    'mensaje_diagnostico': regla.mensaje_resultado,
-                    'accion': regla.accion_resultado,
-                    'puntaje_final': 0,
-                    'fuente': f"Análisis Directo (Regla: {regla.mensaje_resultado[:30]}...)",
-                    'rutina_id': rutina_id,          # Variable unificada
-                    'rutina_nombre': rutina_nombre,  # Variable unificada
-                }, status=status.HTTP_200_OK)
-
-        # --- 2. NIVEL 2: LÓGICA DE MATRIZ (Si no hubo coincidencia arriba) ---
-        puntaje_salud_total = 0
-        reglas_activadas = []
-        fuente_principal = "Análisis Estándar (Matriz de Perfil)"
-
-        try:
-            if perfil.estado_general:
-                puntaje_salud_total += perfil.estado_general.puntaje_base
-                reglas_activadas.append(f"Estado({perfil.estado_general.puntaje_base})")
-            if perfil.cuero_cabelludo:
-                puntaje_salud_total += perfil.cuero_cabelludo.puntaje_base
-                reglas_activadas.append(f"Cuero({perfil.cuero_cabelludo.puntaje_base})")
-            if perfil.tipo_cabello:
-                puntaje_salud_total += perfil.tipo_cabello.puntaje_base
-                reglas_activadas.append(f"Tipo({perfil.tipo_cabello.puntaje_base})")
-            if perfil.grosor_cabello:
-                puntaje_salud_total += perfil.grosor_cabello.puntaje_base
-                reglas_activadas.append(f"Grosor({perfil.grosor_cabello.puntaje_base})")
-            if perfil.porosidad_cabello:
-                puntaje_salud_total += perfil.porosidad_cabello.puntaje_base
-                reglas_activadas.append(f"Porosidad({perfil.porosidad_cabello.puntaje_base})")
-                
-        except AttributeError as e:
+        if not diagnostico:
             return Response(
-                {"error": f"Error de configuración en modelos: {str(e)}"}, 
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                {"error": "No hay diagnósticos registrados para este cliente."},
+                status=status.HTTP_404_NOT_FOUND
             )
-        
-        # --- 3. GENERACIÓN DE MENSAJE NIVEL 2 ---
-        mensaje_diagnostico = ""
-        accion_recomendada = ""
-        
-        if puntaje_salud_total <= 3: 
-            mensaje_diagnostico = "Cabello dañado. Requiere reparación intensiva."
-            accion_recomendada = "Reparación Intensiva"
-            # AQUÍ PODRÍAS ASIGNAR UNA RUTINA POR DEFECTO SI QUISIERAS:
-            # rutina_id = 1 (ID de rutina de reparación)
-        elif puntaje_salud_total <= 7:
-            mensaje_diagnostico = "Estado regular. Requiere mantenimiento."
-            accion_recomendada = "Hidratación y Nutrición"
-        else:
-            mensaje_diagnostico = "Estado saludable. Mantener cuidado preventivo."
-            accion_recomendada = "Cuidado Preventivo"
 
-        # --- 4. RESPUESTA FINAL ---
-        # Buscamos si hay una notificación de recomendación de turno
-        turno_recomendado = None
-        try:
-            from gestion.models import Notificacion
-            notif = Notificacion.objects.filter(
-                usuario=request.user,
-                tipo='alerta',
-                titulo__icontains='Recomendación'
-            ).order_by('-fecha_envio').first()
-            
-            if notif and notif.datos_extra:
-                turno_recomendado = {
-                    'fecha': notif.datos_extra.get('fecha'),
-                    'hora': notif.datos_extra.get('hora'),
-                    'servicio_id': notif.datos_extra.get('servicio_id')
-                }
-        except:
-            pass
-        
-        response_data = {
-            'mensaje_diagnostico': mensaje_diagnostico,
-            'accion': accion_recomendada,
-            'puntaje_final': puntaje_salud_total,
-            'fuente': f"{fuente_principal} - Pts: {puntaje_salud_total}",
-            'rutina_id': rutina_id,
-            'rutina_nombre': rutina_nombre,
-        }
-        
-        # Agregamos el turno recomendado si existe
-        if turno_recomendado:
-            response_data['turno_recomendado'] = turno_recomendado
-        
-        return Response(response_data, status=status.HTTP_200_OK)
+        serializer = DiagnosticoCapilarSerializer(diagnostico, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 # --- VIEWSET PARA LISTAR CLIENTES (ADMIN) ---
