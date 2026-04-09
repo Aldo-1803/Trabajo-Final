@@ -5,7 +5,8 @@ from .models import (
     CategoriaServicio, Servicio, ReglaDiagnostico, Rutina, RutinaCliente,
     Notificacion, Configuracion, Personal, HorarioLaboral, BloqueoAgenda, DiasSemana, Equipamiento,
     TipoEquipamiento, RequisitoServicio, FichaTecnica, DiagnosticoCapilar,
-    ContenidoEducativo, MeGusta, ContenidoGuardado
+    ContenidoEducativo, MeGusta, ContenidoGuardado, Auditoria, Producto, ImagenProducto,
+    OrdenPendiente
     #PasoRutinaCliente, #PasoRutina,
 )
 
@@ -280,7 +281,7 @@ class ConfiguracionAdmin(admin.ModelAdmin):
     """
     Controla que solo exista una configuración en el sistema.
     """
-    list_display = ('__str__', 'monto_sena', 'max_dias_anticipacion')
+    list_display = ('__str__', 'monto_sena', 'max_dias_anticipacion', 'whatsapp_numero')
     fieldsets = (
         ('Reglas Generales', {
             'fields': ('intervalo_turnos', 'max_dias_anticipacion')
@@ -292,6 +293,16 @@ class ConfiguracionAdmin(admin.ModelAdmin):
         ('Cancelaciones y Reprogramaciones', {
             'fields': ('max_reprogramaciones', 'horas_limite_cancelacion'),
             'description': 'Reglas para evitar huecos en la agenda a último momento.'
+        }),
+        ('Contacto - WhatsApp para Pedidos', {
+            'fields': ('whatsapp_numero',),
+            'description': 'Número de WhatsApp donde llegan los pedidos de clientes. Formato: 549112233445 (con código de país, sin espacios ni símbolos).',
+            'classes': ('collapse',)
+        }),
+        ('Formato del Mensaje de WhatsApp', {
+            'fields': ('whatsapp_saludo', 'whatsapp_formato_producto', 'whatsapp_cierre'),
+            'description': 'Personaliza cómo se ven los mensajes que llegan a WhatsApp. Variables disponibles: {nombre}, {cantidad}, {precio}, {subtotal}, {total}',
+            'classes': ('collapse',)
         }),
     )
 
@@ -573,4 +584,308 @@ class ContenidoGuardadoAdmin(admin.ModelAdmin):
     
     def has_delete_permission(self, request, obj=None):
         """No se pueden eliminar guardados manualmente (auditoría)"""
+        return False
+
+# ============================================================
+# AUDITORÍA - Log de cambios en el sistema
+# ============================================================
+
+@admin.register(Auditoria)
+class AuditoriaAdmin(admin.ModelAdmin):
+    """
+    Panel de auditoría para ver todos los cambios realizados en el sistema.
+    Registra ALTA, MODIFICACION y BAJA de registros.
+    """
+    list_display = (
+        'accion_badge', 
+        'tabla', 
+        'registro_id', 
+        'usuario_badge',
+        'fecha_hora_badge',
+        'cambios_detectados'
+    )
+    list_filter = (
+        'accion',
+        'tabla',
+        'fecha_hora',
+        'usuario'
+    )
+    search_fields = (
+        'tabla',
+        'usuario__first_name',
+        'usuario__last_name',
+        'usuario__email',
+        'ip_address'
+    )
+    readonly_fields = (
+        'tabla',
+        'registro_id',
+        'usuario',
+        'fecha_hora',
+        'accion',
+        'valor_anterior_display',
+        'valor_nuevo_display',
+        'cambios_detectados_detail',
+        'ip_address'
+    )
+    ordering = ('-fecha_hora',)
+    
+    fieldsets = (
+        ('Información de la Acción', {
+            'fields': ('accion_badge_detail', 'tabla', 'registro_id', 'usuario_badge_detail', 'fecha_hora')
+        }),
+        ('Ubicación', {
+            'fields': ('ip_address',),
+            'classes': ('collapse',)
+        }),
+        ('Cambios Realizados', {
+            'fields': ('cambios_detectados_detail', 'valor_anterior_display', 'valor_nuevo_display'),
+            'classes': ('wide',)
+        }),
+    )
+    
+    def accion_badge(self, obj):
+        """Muestra la acción con color según el tipo"""
+        colores = {
+            'ALTA': '#28a745',  # Verde
+            'MODIFICACION': '#ffc107',  # Amarillo
+            'BAJA': '#dc3545',  # Rojo
+        }
+        color = colores.get(obj.accion, '#6c757d')
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 5px 10px; border-radius: 3px; font-weight: bold;">{}</span>',
+            color,
+            obj.accion
+        )
+    accion_badge.short_description = 'Acción'
+    
+    def accion_badge_detail(self, obj):
+        """Para usar en detail view"""
+        return self.accion_badge(obj)
+    accion_badge_detail.short_description = 'Acción'
+    
+    def usuario_badge(self, obj):
+        """Muestra el usuario que realizó la acción"""
+        if obj.usuario:
+            return f"{obj.usuario.get_full_name()} ({obj.usuario.email})"
+        return "Sistema/Anónimo"
+    usuario_badge.short_description = 'Usuario'
+    
+    def usuario_badge_detail(self, obj):
+        """Para usar en detail view"""
+        if obj.usuario:
+            return format_html(
+                '<strong>{}</strong><br/><small>{}</small>',
+                obj.usuario.get_full_name(),
+                obj.usuario.email
+            )
+        return "Sistema/Anónimo"
+    usuario_badge_detail.short_description = 'Usuario'
+    
+    def fecha_hora_badge(self, obj):
+        """Muestra la fecha y hora formateada"""
+        return obj.fecha_hora.strftime('%d/%m/%Y %H:%M:%S')
+    fecha_hora_badge.short_description = 'Fecha y Hora'
+    
+    def cambios_detectados(self, obj):
+        """Muestra un resumen de los cambios en la lista"""
+        diferencias = obj.obtener_diferencias()
+        
+        if not diferencias:
+            return "—"
+        
+        if obj.accion == 'MODIFICACION':
+            campos = list(diferencias.keys())
+            resumen = ", ".join(campos[:3])  # Mostrar primeros 3 campos
+            if len(campos) > 3:
+                resumen += f" (+{len(campos) - 3} más)"
+            return format_html(
+                '<small style="color: #666;">{}</small>',
+                resumen
+            )
+        
+        if obj.accion == 'ALTA':
+            cantidad = len(diferencias.get('valores', {}))
+            return format_html(
+                '<small style="color: #28a745;"><strong>+{} campos</strong></small>',
+                cantidad
+            )
+        
+        if obj.accion == 'BAJA':
+            cantidad = len(diferencias.get('valores', {}))
+            return format_html(
+                '<small style="color: #dc3545;"><strong>-{} campos</strong></small>',
+                cantidad
+            )
+        
+        return "—"
+    cambios_detectados.short_description = 'Cambios'
+    
+    def cambios_detectados_detail(self, obj):
+        """Detalle completo de cambios para el detail view"""
+        diferencias = obj.obtener_diferencias()
+        
+        if not diferencias:
+            return "Sin cambios detectados"
+        
+        if obj.accion == 'MODIFICACION':
+            html = '<table style="width: 100%; border-collapse: collapse;">'
+            html += '<tr style="background-color: #f5f5f5;"><th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Campo</th><th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Antes</th><th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Ahora</th></tr>'
+            
+            for campo, cambio in diferencias.items():
+                html += f'<tr>'
+                html += f'<td style="border: 1px solid #ddd; padding: 8px;"><strong>{campo}</strong></td>'
+                html += f'<td style="border: 1px solid #ddd; padding: 8px; background-color: #ffe8e8;"><code>{cambio["antes"]}</code></td>'
+                html += f'<td style="border: 1px solid #ddd; padding: 8px; background-color: #e8f5e9;"><code>{cambio["ahora"]}</code></td>'
+                html += f'</tr>'
+            
+            html += '</table>'
+            return format_html(html)
+        
+        return format_html('<small>N/A</small>')
+    cambios_detectados_detail.short_description = 'Cambios Detectados'
+    
+    def valor_anterior_display(self, obj):
+        """Muestra los valores anteriores en formato legible"""
+        import json
+        if obj.valor_anterior:
+            return format_html(
+                '<pre style="background-color: #ffe8e8; padding: 10px; border-radius: 5px; overflow-x: auto; border-left: 4px solid #dc3545;">{}</pre>',
+                json.dumps(obj.valor_anterior, ensure_ascii=False, indent=2)
+            )
+        return "N/A"
+    valor_anterior_display.short_description = 'Todos los Valores Anteriores'
+    
+    def valor_nuevo_display(self, obj):
+        """Muestra los valores nuevos en formato legible"""
+        import json
+        if obj.valor_nuevo:
+            return format_html(
+                '<pre style="background-color: #e8f5e9; padding: 10px; border-radius: 5px; overflow-x: auto; border-left: 4px solid #28a745;">{}</pre>',
+                json.dumps(obj.valor_nuevo, ensure_ascii=False, indent=2)
+            )
+        return "N/A"
+    valor_nuevo_display.short_description = 'Todos los Valores Nuevos'
+    
+    def has_add_permission(self, request):
+        """No se pueden crear auditorías manualmente"""
+        return False
+    
+    def has_delete_permission(self, request, obj=None):
+        """No se pueden eliminar registros de auditoría (son inmutables)"""
+        return False
+    
+    def has_change_permission(self, request, obj=None):
+        """No se pueden modificar registros de auditoría"""
+        return False
+
+
+# ============================================================
+# PRODUCTO E IMAGEN DE PRODUCTO
+# ============================================================
+
+class ImagenProductoInline(admin.TabularInline):
+    """
+    Inline para manejar múltiples imágenes de un producto
+    """
+    model = ImagenProducto
+    extra = 1
+    fields = ('imagen', 'orden', 'fecha_creacion')
+    readonly_fields = ('fecha_creacion',)
+
+
+@admin.register(Producto)
+class ProductoAdmin(admin.ModelAdmin):
+    """
+    Panel de administración para productos
+    """
+    list_display = ('sku', 'nombre', 'marca', 'categoria', 'precio', 'stock_real', 'stock_disponible', 'activo')
+    list_filter = ('activo', 'categoria', 'marca')
+    search_fields = ('sku', 'nombre', 'marca', 'descripcion')
+    inlines = [ImagenProductoInline]
+    readonly_fields = ('stock_disponible', 'stock_comprometido')
+    
+    fieldsets = (
+        ('Información General', {
+            'fields': ('sku', 'nombre', 'marca', 'categoria', 'descripcion')
+        }),
+        ('Precios y Stock', {
+            'fields': ('precio', 'stock_real', 'stock_comprometido', 'stock_disponible', 'stock_minimo'),
+            'description': 'Stock Real: Lo que hay físicamente. Stock Comprometido: Lo que está pedido por WhatsApp. Stock Disponible: Calculado automáticamente (Real - Comprometido).'
+        }),
+        ('Imágenes', {
+            'fields': ('imagen',),
+            'description': 'Imagen principal (para compatibilidad). Usa el panel de imágenes abajo para múltiples imágenes.'
+        }),
+        ('Detalles Técnicos', {
+            'fields': ('compatibilidad',),
+            'classes': ('collapse',)
+        }),
+        ('Publicación', {
+            'fields': ('estado_publicacion', 'activo')
+        }),
+    )
+    
+    def stock_disponible(self, obj):
+        return obj.stock_disponible
+    stock_disponible.short_description = "Stock Disponible"
+
+
+@admin.register(ImagenProducto)
+class ImagenProductoAdmin(admin.ModelAdmin):
+    """
+    Panel de administración para imágenes de productos
+    """
+    list_display = ('producto', 'imagen', 'orden')
+    list_filter = ('producto',)
+    search_fields = ('producto__nombre', 'producto__sku')
+    ordering = ('producto', 'orden')
+
+
+@admin.register(OrdenPendiente)
+class OrdenPendienteAdmin(admin.ModelAdmin):
+    """
+    Auditoría de órdenes pendientes (intenciones de compra por WhatsApp)
+    """
+    list_display = ('id', 'cliente_nombre', 'estado', 'monto_total', 'fecha_creacion', 'items_count')
+    list_filter = ('estado', 'fecha_creacion', 'cliente')
+    search_fields = ('cliente__usuario__first_name', 'cliente__usuario__last_name', 'cliente__usuario__email')
+    readonly_fields = ('id', 'items_json', 'fecha_creacion', 'fecha_confirmacion', 'fecha_completacion')
+    
+    fieldsets = (
+        ('Información de la Orden', {
+            'fields': ('id', 'cliente', 'estado', 'fecha_creacion')
+        }),
+        ('Detalles del Pedido', {
+            'fields': ('items_json', 'monto_total'),
+            'classes': ('wide',)
+        }),
+        ('Seguimiento', {
+            'fields': ('fecha_confirmacion', 'fecha_completacion'),
+            'classes': ('collapse',)
+        }),
+        ('Notas', {
+            'fields': ('nota_cliente',)
+        }),
+    )
+    
+    def cliente_nombre(self, obj):
+        if obj.cliente:
+            return f"{obj.cliente.usuario.get_full_name()} ({obj.cliente.usuario.email})"
+        return "Anónimo"
+    cliente_nombre.short_description = "Cliente"
+    
+    def items_count(self, obj):
+        try:
+            return len(obj.items_json) if obj.items_json else 0
+        except:
+            return 0
+    items_count.short_description = "Cantidad de Items"
+    
+    def has_add_permission(self, request):
+        # Las órdenes se crean desde el frontend, no se agregan manualmente
+        return False
+    
+    def has_delete_permission(self, request, obj=None):
+        # Conservar las órdenes para auditoría
         return False

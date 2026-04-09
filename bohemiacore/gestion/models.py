@@ -4,6 +4,7 @@ from django.utils import timezone
 from django.conf import settings
 from django.core.exceptions import ValidationError
 import logging
+from simple_history.models import HistoricalRecords
 
 # ============================================================
 # SECCIÓN 1: USUARIOS Y PERSONAL
@@ -54,6 +55,8 @@ class Personal(models.Model):
     
     activo = models.BooleanField(default=True)
     color_calendario = models.CharField(max_length=7, default="#E11D48", help_text="Color Hex para identificarlo en la agenda")
+
+    history = HistoricalRecords()
 
     class Meta:
         verbose_name = "Personal / Staff"
@@ -166,6 +169,8 @@ class Servicio(models.Model):
     puntaje_base = models.IntegerField(default=0)
     fecha_creacion = models.DateTimeField(auto_now_add=True)
 
+    history = HistoricalRecords()
+
     class Meta:
         verbose_name = "Servicio"
         verbose_name_plural = "Servicios"
@@ -191,7 +196,12 @@ class CategoriaProducto(models.Model):
 
 class Producto(models.Model):
     # Atributos Básicos y de Diagrama
-    sku = models.CharField(max_length=20, unique=True, help_text="Código único de inventario")
+    sku = models.CharField(
+        max_length=20,
+        unique=True,
+        blank=True,
+        help_text="Código único de inventario (se genera automáticamente si está vacío)"
+    )
     nombre = models.CharField(max_length=100)
     marca = models.CharField(max_length=50, blank=True, null=True)
     categoria = models.ForeignKey(
@@ -202,14 +212,89 @@ class Producto(models.Model):
         related_name='productos'
     )
     descripcion = models.TextField(blank=True)
+
+    MATERIAL_PRINCIPAL_CHOICES = [
+        ('SATEN', 'Satén'),
+        ('MICROFIBRA', 'Microfibra'),
+        ('MADERA', 'Madera'),
+        ('PLASTICO', 'Plástico'),
+    ]
+    PROPOSITO_USO_CHOICES = [
+        ('DORMIR', 'Dormir'),
+        ('STYLING', 'Styling (Peinado)'),
+        ('HIGIENE', 'Higiene'),
+        ('SECADO', 'Secado'),
+    ]
+    material_principal = models.CharField(
+        max_length=20,
+        choices=MATERIAL_PRINCIPAL_CHOICES,
+        null=True,
+        blank=True
+    )
+    proposito_uso = models.CharField(
+        max_length=20,
+        choices=PROPOSITO_USO_CHOICES,
+        null=True,
+        blank=True
+    )
     
     # Precios y Stock (Auditoría REQ-11)
     precio = models.DecimalField(max_digits=10, decimal_places=2)
-    stock = models.IntegerField(default=0)
-    stock_minimo = models.IntegerField(default=3, help_text="Mínimo para alerta de reposición")
+
+    # Parámetros de promoción (combos)
+    promo_descuento_x2 = models.IntegerField(
+        default=10,
+        help_text="Descuento porcentual para combos de 2 productos"
+    )
+    promo_descuento_x3 = models.IntegerField(
+        default=15,
+        help_text="Descuento porcentual para combos de 3 productos"
+    )
     
+    # Gestión de Stock: Real vs Comprometido
+    stock_real = models.PositiveIntegerField(
+        default=0,
+        help_text="Stock físico disponible en almacén"
+    )
+    stock_comprometido = models.PositiveIntegerField(
+        default=0,
+        help_text="Stock reservado por órdenes pendientes de WhatsApp"
+    )
+    stock_minimo = models.IntegerField(
+        default=5,
+        help_text="Mínimo para alerta de reposición"
+    )
+
+    def save(self, *args, **kwargs):
+        if not self.sku:
+            siguiente = 1
+            ultimo = Producto.objects.order_by('-id').first()
+            if ultimo and ultimo.id:
+                siguiente = ultimo.id + 1
+            sku_generado = f"PROD-{siguiente:06d}"
+            while Producto.objects.filter(sku=sku_generado).exists():
+                siguiente += 1
+                sku_generado = f"PROD-{siguiente:06d}"
+            self.sku = sku_generado
+
+        super().save(*args, **kwargs)
+    
+    @property
+    def stock_disponible(self):
+        """Calcula lo que realmente se puede vender ahora mismo"""
+        return max(0, self.stock_real - self.stock_comprometido)
+    
+    def necesita_reposicion(self):
+        """Devuelve True si el stock disponible está por debajo del mínimo"""
+        return self.stock_disponible <= self.stock_minimo
+
     # Atributos Visuales y de Estado (Diagrama)
-    imagen_url = models.URLField(max_length=500, blank=True, null=True)
+    imagen = models.ImageField(
+        upload_to='productos/',
+        blank=True,
+        null=True,
+        help_text="Imagen del producto"
+    )
     estado_publicacion = models.CharField(
         max_length=20, 
         choices=[('BORRADOR', 'Borrador'), ('PUBLICADO', 'Publicado')],
@@ -233,11 +318,74 @@ class Producto(models.Model):
         default='TODO'
     )
 
+    history = HistoricalRecords()
+
     class Meta:
         ordering = ['nombre']
 
     def __str__(self):
-        return f"{self.marca} - {self.nombre} ({self.stock} ud.)"
+        return f"{self.marca} - {self.nombre} ({self.stock_disponible} ud.)"
+
+
+class ImagenProducto(models.Model):
+    """
+    Modelo para gestionar múltiples imágenes por producto.
+    Permite que un producto tenga varias imágenes.
+    Redimensiona automáticamente las imágenes para optimizar espacio.
+    """
+    # Tamaño máximo de imagen redimensionada
+    TAMAÑO_THUMBNAIL = (400, 400)  # Para thumbnails
+    TAMAÑO_DISPLAY = (800, 800)    # Para display en galería
+    
+    producto = models.ForeignKey(
+        'Producto',
+        on_delete=models.CASCADE,
+        related_name='imagenes',
+        help_text="Producto al que pertenece esta imagen"
+    )
+    imagen = models.ImageField(
+        upload_to='productos/',
+        help_text="Imagen del producto"
+    )
+    orden = models.PositiveIntegerField(
+        default=0,
+        help_text="Orden de visualización (0 = principal)"
+    )
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        ordering = ['orden', 'fecha_creacion']
+        verbose_name_plural = "Imágenes de Productos"
+    
+    def __str__(self):
+        return f"{self.producto.nombre} - Imagen {self.orden}"
+    
+    def save(self, *args, **kwargs):
+        """Redimensiona la imagen antes de guardar para optimizar espacio"""
+        super().save(*args, **kwargs)
+        
+        if self.imagen:
+            from PIL import Image
+            import os
+            
+            try:
+                # Abrir la imagen
+                img = Image.open(self.imagen.path)
+                
+                # Convertir RGBA a RGB si es necesario
+                if img.mode in ('RGBA', 'LA', 'P'):
+                    rgb_img = Image.new('RGB', img.size, (255, 255, 255))
+                    rgb_img.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
+                    img = rgb_img
+                
+                # Redimensionar manteniendo proporción (máximo 800x800)
+                img.thumbnail(self.TAMAÑO_DISPLAY, Image.Resampling.LANCZOS)
+                
+                # Guardar con compresión (calidad 85 para balance entre calidad y tamaño)
+                img.save(self.imagen.path, 'JPEG', quality=85, optimize=True)
+                
+            except Exception as e:
+                print(f"Error al redimensionar imagen: {e}")
 
 
 class Promocion(models.Model):
@@ -269,6 +417,11 @@ class Promocion(models.Model):
         default=10,
         help_text="Porcentaje de descuento aplicado"
     )
+    stock_combo = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Stock disponible para combos (cantidad de combos armables)"
+    )
     fecha_inicio = models.DateField(
         help_text="Fecha de inicio de la promoción"
     )
@@ -278,6 +431,24 @@ class Promocion(models.Model):
     is_active = models.BooleanField(
         default=True,
         help_text="Si está activa la promoción"
+    )
+
+    ES_SUGERENCIA_ESTADOS = [
+        ('PENDIENTE', 'Pendiente'),
+        ('ACEPTADA', 'Aceptada'),
+        ('RECHAZADA', 'Rechazada'),
+    ]
+
+    es_sugerencia_automatica = models.BooleanField(
+        default=False,
+        help_text="Indica si la promoción fue sugerida automáticamente"
+    )
+
+    estado_sugerencia = models.CharField(
+        max_length=20,
+        choices=ES_SUGERENCIA_ESTADOS,
+        default='ACEPTADA',
+        help_text="Estado de revisión para sugerencias automáticas"
     )
     
     # Horario y Fecha Específica para promociones time-sensitive
@@ -333,6 +504,8 @@ class Promocion(models.Model):
     )
     
     fecha_creacion = models.DateTimeField(auto_now_add=True)
+
+    history = HistoricalRecords()
 
     class Meta:
         verbose_name = "Promoción"
@@ -566,11 +739,95 @@ class ReglaDiagnostico(models.Model):
         help_text="Servicio específico para este diagnóstico técnico."
     )
 
+    history = HistoricalRecords()
+
     class Meta:
         ordering = ['-prioridad']
 
     def __str__(self):
         return f"Regla (P:{self.prioridad}) -> {self.accion_resultado}"
+
+
+class ConfiguracionDiagnostico(models.Model):
+    """
+    Configuracion global para mensajes y umbrales del nivel 2 del diagnostico.
+    """
+    umbral_critico = models.IntegerField(default=2)
+    umbral_alerta = models.IntegerField(default=6)
+
+    mensaje_critico = models.TextField(
+        default=(
+            "🔴 Diagnóstico Profesional: Tu cabello presenta un nivel de daño crítico. "
+            "Con un score de {score}, la fibra capilar necesita atención inmediata."
+        )
+    )
+    mensaje_alerta = models.TextField(
+        default=(
+            "🟡 Diagnóstico Profesional: Tu cabello requiere cuidado preventivo especializado. "
+            "Con un score de {score}, está en estado de alerta."
+        )
+    )
+    mensaje_saludable = models.TextField(
+        default=(
+            "🟢 Diagnóstico Profesional: ¡Buenas noticias! Tu cabello se encuentra en buen estado general. "
+            "Con un score de {score}, te sugerimos mantener tu rutina actual."
+        )
+    )
+
+    rutina_critico = models.ForeignKey(
+        'Rutina',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='config_diagnostico_critico'
+    )
+    rutina_alerta = models.ForeignKey(
+        'Rutina',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='config_diagnostico_alerta'
+    )
+    rutina_saludable = models.ForeignKey(
+        'Rutina',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='config_diagnostico_saludable'
+    )
+
+    servicio_critico = models.ForeignKey(
+        'Servicio',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='config_diagnostico_critico'
+    )
+    servicio_alerta = models.ForeignKey(
+        'Servicio',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='config_diagnostico_alerta'
+    )
+    servicio_saludable = models.ForeignKey(
+        'Servicio',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='config_diagnostico_saludable'
+    )
+
+    history = HistoricalRecords()
+
+    class Meta:
+        verbose_name = "Configuración de Diagnóstico"
+        verbose_name_plural = "Configuraciones de Diagnóstico"
+
+    @classmethod
+    def get_singleton(cls):
+        config, _ = cls.objects.get_or_create(pk=1)
+        return config
 
 
 class Rutina(models.Model):
@@ -611,6 +868,8 @@ class Rutina(models.Model):
 
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     fecha_obsoleta = models.DateTimeField(null=True, blank=True)
+
+    history = HistoricalRecords()
 
     class Meta:
         verbose_name = "Rutina"
@@ -690,6 +949,8 @@ class RutinaCliente(models.Model):
     
     descargar_notificacion = models.BooleanField(default=False)
     fecha_ultima_notificacion = models.DateTimeField(null=True, blank=True)
+
+    history = HistoricalRecords()
 
     class Meta:
         verbose_name = "Rutina del Cliente"
@@ -805,6 +1066,128 @@ class Configuracion(models.Model):
         help_text="Horas antes del turno donde YA NO se puede cancelar."
     )
 
+    # Adelanto automático de turnos cancelados
+    adelanto_min_horas_anticipacion = models.IntegerField(
+        default=24,
+        help_text="Horas mínimas de anticipación para disparar la búsqueda de adelantos"
+    )
+    adelanto_rango_dias_busqueda = models.IntegerField(
+        default=7,
+        help_text="Días posteriores a considerar al buscar candidatos"
+    )
+    adelanto_max_candidatos = models.IntegerField(
+        default=5,
+        help_text="Máximo de clientes a notificar por cada cancelación"
+    )
+    adelanto_expira_horas = models.IntegerField(
+        default=6,
+        help_text="Horas de validez de la oferta de adelanto"
+    )
+
+    # WhatsApp - Contacto para Pedidos
+    whatsapp_numero = models.CharField(
+        max_length=20,
+        default="5491122334455",
+        verbose_name="Número de WhatsApp",
+        help_text="Número completo con código de país (ej: 549112233445). Este es el número que recibe los pedidos."
+    )
+
+    # Identidad de la empresa
+    empresa_nombre = models.CharField(
+        max_length=150,
+        default="Bohemia Hair",
+        verbose_name="Nombre de la Empresa",
+        help_text="Nombre comercial que se mostrará en reportes y comprobantes"
+    )
+
+    # Datos fiscales para comprobantes
+    comprobante_razon_social = models.CharField(
+        max_length=150,
+        blank=True,
+        default="",
+        verbose_name="Razón Social",
+        help_text="Razón social que se imprimirá en los comprobantes de pago"
+    )
+    comprobante_cuil = models.CharField(
+        max_length=20,
+        blank=True,
+        default="",
+        verbose_name="CUIL",
+        help_text="CUIL que se imprimirá en los comprobantes de pago"
+    )
+    comprobante_fecha_inicio_actividad = models.DateField(
+        null=True,
+        blank=True,
+        verbose_name="Fecha de Inicio de Actividad",
+        help_text="Fecha de inicio de actividad para comprobantes"
+    )
+
+    # Promociones - Combos
+    promo_descuento_combo_x2 = models.IntegerField(
+        default=10,
+        help_text="Descuento porcentual para combos de 2 productos"
+    )
+    promo_descuento_combo_x3 = models.IntegerField(
+        default=15,
+        help_text="Descuento porcentual para combos de 3 productos"
+    )
+
+    combo_auto_activo = models.BooleanField(
+        default=True,
+        help_text="Habilita la creación automática de combos al cargar productos"
+    )
+    combo_min_similitud = models.IntegerField(
+        default=2,
+        help_text="Cantidad mínima de criterios coincidentes para armar un combo"
+    )
+    combo_max_productos = models.IntegerField(
+        default=3,
+        help_text="Máximo de productos por combo automático"
+    )
+    combo_min_stock = models.IntegerField(
+        default=1,
+        help_text="Stock mínimo disponible por producto para crear combos"
+    )
+    combo_dias_vigencia = models.IntegerField(
+        default=15,
+        help_text="Días de vigencia de un combo automático"
+    )
+    combo_usar_marca = models.BooleanField(
+        default=True,
+        help_text="Considerar marca para similitud"
+    )
+    combo_usar_proposito = models.BooleanField(
+        default=True,
+        help_text="Considerar propósito de uso para similitud"
+    )
+    combo_usar_material = models.BooleanField(
+        default=False,
+        help_text="Considerar material principal para similitud"
+    )
+    combo_usar_compatibilidad = models.BooleanField(
+        default=True,
+        help_text="Considerar compatibilidad capilar para similitud"
+    )
+    
+    # Formato del Mensaje de WhatsApp
+    whatsapp_saludo = models.CharField(
+        max_length=200,
+        default="¡Hola Bohemia Hair! 👋 Quiero realizar el siguiente pedido:",
+        verbose_name="Saludo Inicial del Mensaje",
+        help_text="Texto que aparece al inicio del mensaje de WhatsApp"
+    )
+    whatsapp_cierre = models.TextField(
+        default="\n💰 *Total estimado: ${total}*\n\n¿Me confirman la disponibilidad y los detalles del envío?",
+        verbose_name="Cierre del Mensaje",
+        help_text="Texto final del mensaje. Usa {total} como variable para el monto"
+    )
+    whatsapp_formato_producto = models.CharField(
+        max_length=300,
+        default="• {nombre}\n  Cantidad: {cantidad} x ${precio:.2f} = ${subtotal:.2f}",
+        verbose_name="Formato de Cada Producto",
+        help_text="Cómo aparece cada producto. Variables disponibles: {nombre}, {cantidad}, {precio}, {subtotal}"
+    )
+
     class Meta:
         verbose_name = "Configuración del Sistema"
         verbose_name_plural = "Configuración"
@@ -818,7 +1201,7 @@ class Configuracion(models.Model):
         self.pk = 1
         super().save(*args, **kwargs)
         logger_config = logging.getLogger(__name__)
-        logger_config.info(f"Configuración actualizada: intervalo={self.intervalo_turnos}, max_dias={self.max_dias_anticipacion}")
+        logger_config.info(f"Configuración actualizada: intervalo={self.intervalo_turnos}, max_dias={self.max_dias_anticipacion}, whatsapp={self.whatsapp_numero}")
 
     def __str__(self):
         return "Configuración General de Bohemia Hair"
@@ -864,6 +1247,8 @@ class HorarioLaboral(models.Model):
     )
     activo = models.BooleanField(default=True)
 
+    history = HistoricalRecords()
+
 
 class BloqueoAgenda(models.Model):
     """
@@ -882,6 +1267,8 @@ class BloqueoAgenda(models.Model):
     fecha_fin = models.DateTimeField()
     motivo = models.CharField(max_length=200)
     bloquea_todo_el_dia = models.BooleanField(default=False)
+
+    history = HistoricalRecords()
 
     class Meta:
         verbose_name = "Bloqueo / Excepción de Agenda"
@@ -906,6 +1293,7 @@ class Turno(models.Model):
         SOLICITADO = 'solicitado', 'Solicitado (Requiere Análisis)'
         ESPERANDO_SENA = 'esperando_sena', 'Aprobado (Esperando Seña)'
         CONFIRMADO = 'confirmado', 'Confirmado (Seña OK)'
+        SUGERIDO = 'sugerido', 'Sugerido (Recomendación)'
         REALIZADO = 'realizado', 'Realizado'
         CANCELADO = 'cancelado', 'Cancelado / Rechazado'
         AUSENTE = 'ausente', 'Ausente (No vino)'
@@ -920,15 +1308,15 @@ class Turno(models.Model):
     )
     profesional = models.ForeignKey(
         'gestion.Personal', 
-        on_delete=models.PROTECT,
-        related_name='turnos_asignados',
+        on_delete=models.SET_NULL,
         null=True,
-        blank=True
+        blank=True,
+        related_name='turnos_asignados'
     )
     equipamiento = models.ForeignKey(
         'gestion.Equipamiento', 
-        on_delete=models.SET_NULL, 
-        null=True, 
+        on_delete=models.SET_NULL,
+        null=True,
         blank=True
     )
     
@@ -954,6 +1342,19 @@ class Turno(models.Model):
     # Auditoría
     comprobante_pago = models.FileField(upload_to='comprobantes/', null=True, blank=True)
     cambios_realizados = models.IntegerField(default=0)
+    
+    # Información de cancelación
+    cancelado_por = models.ForeignKey(
+        'usuarios.Usuario',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='turnos_cancelados',
+        help_text="Usuario que canceló el turno (cliente o profesional)"
+    )
+    motivo_cancelacion = models.TextField(blank=True, null=True, help_text="Motivo de la cancelación")
+
+    history = HistoricalRecords()
 
     class Meta:
         verbose_name = "Turno"
@@ -978,6 +1379,8 @@ class DetalleTurno(models.Model):
     # Mantenemos tus nombres: son claros y profesionales
     precio_historico = models.DecimalField(max_digits=10, decimal_places=2)
     duracion_minutos = models.PositiveIntegerField()
+
+    history = HistoricalRecords()
 
     class Meta:
         verbose_name = "Detalle del Turno"
@@ -1007,8 +1410,16 @@ class FichaTecnica(models.Model):
     )
     
     # NUEVO: Campos granulares según tu análisis
-    formula = models.TextField()  # Aquí se guarda la fórmula ajustada
+    formula = models.TextField(blank=True, null=True)  # Aquí se guarda la fórmula ajustada
     observaciones_proceso = models.TextField(blank=True, null=True)
+    comentario_cliente = models.TextField(blank=True, null=True)
+    rutina_recomendada = models.ForeignKey(
+        Rutina,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='fichas_tecnicas_recomendadas'
+    )
     
     # NUEVO: Estado final basado en IRQ-02
     # Relaciones a las tablas maestras de diagnóstico
@@ -1447,6 +1858,15 @@ class DiagnosticoCapilar(models.Model):
         related_name='diagnosticos_urgentes',
         help_text="Servicio recomendado urgentemente si score ≤5"
     )
+
+    turno_sugerido = models.ForeignKey(
+        'Turno',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='diagnosticos_con_turno_sugerido',
+        help_text="Turno sugerido generado por el motor de diagnostico"
+    )
     
     # Rutina asignada al cliente (registro de quién ejecutó el motor)
     rutina_asignada = models.ForeignKey(
@@ -1459,6 +1879,8 @@ class DiagnosticoCapilar(models.Model):
     )
     
     fecha_diagnostico = models.DateTimeField(auto_now_add=True)
+
+    history = HistoricalRecords()
     
     class Meta:
         verbose_name = "Diagnóstico Capilar"
@@ -1518,3 +1940,285 @@ class Notificacion(models.Model):
 
     def __str__(self):
         return f"[{self.canal}] {self.titulo} -> {self.usuario}"
+
+
+# ============================================================
+# SECCIÓN 15: AUDITORÍA
+# ============================================================
+
+class Auditoria(models.Model):
+    """
+    Registro de auditoría para todas las operaciones CRUD en el sistema.
+    Mantiene un log de todas las modificaciones en las tablas principales.
+    """
+    ACCION_CHOICES = [
+        ('ALTA', 'Alta / Creación'),
+        ('MODIFICACION', 'Modificación'),
+        ('BAJA', 'Baja / Eliminación'),
+    ]
+    
+    tabla = models.CharField(
+        max_length=100,
+        help_text="Nombre de la tabla modificada"
+    )
+    registro_id = models.PositiveIntegerField(
+        help_text="ID del registro modificado"
+    )
+    usuario = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='auditorias',
+        help_text="Usuario que realizó la acción"
+    )
+    fecha_hora = models.DateTimeField(
+        auto_now_add=True,
+        help_text="Fecha y hora de la acción"
+    )
+    accion = models.CharField(
+        max_length=20,
+        choices=ACCION_CHOICES,
+        help_text="Tipo de acción realizada"
+    )
+    valor_anterior = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="Valores anteriores (en caso de modificación)"
+    )
+    valor_nuevo = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="Valores nuevos"
+    )
+    
+    # Campo para distinguir entre usuario autenticado y anonimo
+    ip_address = models.GenericIPAddressField(
+        null=True,
+        blank=True,
+        help_text="IP desde donde se realizó la acción"
+    )
+    
+    class Meta:
+        verbose_name = "Auditoría"
+        verbose_name_plural = "Auditorías"
+        ordering = ['-fecha_hora']
+        indexes = [
+            models.Index(fields=['tabla', '-fecha_hora']),
+            models.Index(fields=['usuario', '-fecha_hora']),
+        ]
+
+    def __str__(self):
+        return f"{self.accion} en {self.tabla} (ID: {self.registro_id}) - {self.fecha_hora.strftime('%d/%m/%Y %H:%M')}"
+    
+    def obtener_diferencias(self):
+        """
+        Calcula y retorna solo los campos que cambiaron.
+        Retorna: {campo: {'antes': valor_anterior, 'ahora': valor_nuevo}}
+        """
+        if self.accion == 'MODIFICACION' and self.valor_anterior and self.valor_nuevo:
+            diferencias = {}
+            
+            for campo, valor_nuevo in self.valor_nuevo.items():
+                valor_anterior = self.valor_anterior.get(campo)
+                
+                # Solo incluir campos que efectivamente cambiaron
+                if valor_anterior != valor_nuevo:
+                    diferencias[campo] = {
+                        'antes': valor_anterior,
+                        'ahora': valor_nuevo
+                    }
+            
+            return diferencias
+        
+        elif self.accion == 'ALTA':
+            # Para ALTA, retornar todos los valores nuevos
+            return {
+                'accion': 'CREACIÓN',
+                'valores': self.valor_nuevo or {}
+            }
+        
+        elif self.accion == 'BAJA':
+            # Para BAJA, retornar todos los valores eliminados
+            return {
+                'accion': 'ELIMINACIÓN',
+                'valores': self.valor_anterior or {}
+            }
+        
+        return {}
+    
+    def obtener_diferencias_texto(self):
+        """
+        Retorna un texto formateado de los cambios.
+        Ejemplo: "nombre: 'Juan' → 'Carlos', estado: 'activo' → 'inactivo'"
+        """
+        diferencias = self.obtener_diferencias()
+        
+        if not diferencias:
+            return "Sin cambios"
+        
+        if self.accion == 'MODIFICACION':
+            return ", ".join([
+                f"<strong>{k}</strong>: '{v['antes']}' → '{v['ahora']}'"
+                for k, v in diferencias.items()
+            ])
+        
+        return "N/A"
+
+
+class OrdenCompra(models.Model):
+    ESTADOS = (
+        ('PENDIENTE', 'Pendiente'),
+        ('COMPLETADO', 'Completado'),
+        ('CANCELADO', 'Cancelado'),
+    )
+    
+    codigo = models.CharField(max_length=20, unique=True)
+    cliente = models.ForeignKey(
+        'usuarios.Cliente',
+        on_delete=models.PROTECT,
+        related_name='ordenes_compra'
+    )
+    estado = models.CharField(max_length=20, choices=ESTADOS, default='PENDIENTE')
+    total = models.DecimalField(max_digits=10, decimal_places=2)
+    notas = models.TextField(blank=True, null=True)
+    creado_at = models.DateTimeField(auto_now_add=True)
+    actualizado_at = models.DateTimeField(auto_now=True)
+
+    history = HistoricalRecords()
+    
+    class Meta:
+        verbose_name = "Orden de Compra"
+        verbose_name_plural = "Órdenes de Compra"
+        ordering = ['-creado_at']
+    
+    def __str__(self):
+        return f"{self.codigo} - {self.cliente} - ${self.total}"
+
+
+class Pago(models.Model):
+    METODO_PAGO_CHOICES = (
+        ('EFECTIVO', 'Efectivo'),
+        ('TRANSFERENCIA', 'Transferencia'),
+    )
+
+    orden = models.ForeignKey(
+        OrdenCompra,
+        on_delete=models.CASCADE,
+        related_name='pagos',
+        null=True,
+        blank=True
+    )
+    turno = models.ForeignKey(
+        'Turno',
+        on_delete=models.CASCADE,
+        related_name='pagos',
+        null=True,
+        blank=True
+    )
+    monto = models.DecimalField(max_digits=10, decimal_places=2)
+    metodo_pago = models.CharField(max_length=20, choices=METODO_PAGO_CHOICES)
+    fecha_pago = models.DateTimeField(default=timezone.now)
+    comprobante_foto = models.ImageField(
+        upload_to='pagos/comprobantes/',
+        blank=True,
+        null=True
+    )
+    es_sena = models.BooleanField(default=False)
+
+    history = HistoricalRecords()
+
+    class Meta:
+        verbose_name = "Pago"
+        verbose_name_plural = "Pagos"
+        ordering = ['-fecha_pago']
+
+    def __str__(self):
+        return f"Pago {self.id} - {self.orden.codigo} - ${self.monto}"
+
+
+class OrdenItem(models.Model):
+    orden = models.ForeignKey(
+        OrdenCompra,
+        related_name='items',
+        on_delete=models.CASCADE
+    )
+    producto = models.ForeignKey(
+        Producto,
+        on_delete=models.PROTECT
+    )
+    cantidad = models.PositiveIntegerField()
+    precio_historico = models.DecimalField(max_digits=10, decimal_places=2)
+
+    history = HistoricalRecords()
+    
+    class Meta:
+        verbose_name = "Item de Orden"
+        verbose_name_plural = "Items de Órdenes"
+    
+    def __str__(self):
+        return f"{self.orden.codigo} - {self.producto.nombre} x{self.cantidad}"
+    
+    @property
+    def subtotal(self):
+        return self.cantidad * self.precio_historico
+
+
+class OrdenPendiente(models.Model):
+    """
+    Registra cada intención de compra enviada por WhatsApp.
+    Usada para auditoría y análisis de ventas.
+    """
+    ESTADOS = [
+        ('PENDIENTE', 'Pendiente - Abierta en WhatsApp'),
+        ('CONFIRMADA', 'Confirmada por Cliente'),
+        ('COMPLETADA', 'Pedido Completado'),
+        ('CANCELADA', 'Cancelada'),
+    ]
+    
+    cliente = models.ForeignKey(
+        'usuarios.Cliente',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='ordenes_pendientes'
+    )
+    
+    estado = models.CharField(
+        max_length=20,
+        choices=ESTADOS,
+        default='PENDIENTE',
+        help_text="Estado de la orden"
+    )
+    
+    # Datos de la Orden
+    items_json = models.JSONField(
+        help_text="Detalles de productos: [{'nombre': 'X', 'cantidad': N, 'precio': P, 'subtotal': S}]"
+    )
+    monto_total = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        help_text="Monto total de la orden"
+    )
+    
+    # Auditoría
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    fecha_confirmacion = models.DateTimeField(null=True, blank=True)
+    fecha_completacion = models.DateTimeField(null=True, blank=True)
+    
+    # Nota del cliente
+    nota_cliente = models.TextField(
+        blank=True,
+        help_text="Notas adicionales del cliente sobre la orden"
+    )
+    
+    class Meta:
+        verbose_name = "Orden Pendiente (WhatsApp)"
+        verbose_name_plural = "Órdenes Pendientes"
+        ordering = ['-fecha_creacion']
+    
+    def __str__(self):
+        cliente_nombre = self.cliente.usuario.get_full_name() if self.cliente else "Anónimo"
+        return f"Orden {self.id} - {cliente_nombre} - ${self.monto_total}"
+
+

@@ -1,12 +1,13 @@
 from rest_framework import serializers
 from .models import (
     TipoCabello, GrosorCabello, PorosidadCabello, CueroCabelludo,
-    EstadoGeneral, Equipamiento, Producto, ReglaDiagnostico,
+    EstadoGeneral, Equipamiento, Producto, ImagenProducto, ReglaDiagnostico,
     Notificacion, Rutina, AgendaCuidados, RutinaCliente, Servicio,
     CategoriaServicio, Turno, DetalleTurno, HorarioLaboral, BloqueoAgenda, Personal,
     TipoEquipamiento, FichaTecnica, DiagnosticoCapilar, RequisitoServicio,
     CategoriaProducto, Promocion, Configuracion, ConfiguracionRetoque,
     Carrito, CarritoItem, ContenidoEducativo, MeGusta, ContenidoGuardado,
+    OrdenPendiente, OrdenCompra, OrdenItem, Pago, ConfiguracionDiagnostico,
     #PasoRutina, #PasoRutinaCliente,
 )
 
@@ -77,11 +78,25 @@ class ServicioSerializer(serializers.ModelSerializer):
    
 class DetalleTurnoSerializer(serializers.ModelSerializer):
     servicio_nombre = serializers.CharField(source='servicio.nombre', read_only=True)
+    servicio_plantilla_formula = serializers.CharField(source='servicio.plantilla_formula', read_only=True)
+    servicio_impacto_porosidad = serializers.IntegerField(source='servicio.impacto_porosidad.id', read_only=True)
+    servicio_impacto_porosidad_nombre = serializers.CharField(source='servicio.impacto_porosidad.nombre', read_only=True)
+    servicio_impacto_estado = serializers.IntegerField(source='servicio.impacto_estado.id', read_only=True)
+    servicio_impacto_estado_nombre = serializers.CharField(source='servicio.impacto_estado.nombre', read_only=True)
     
     class Meta:
         model = DetalleTurno
-        fields = ['id', 'servicio', 'servicio_nombre', 'precio_historico', 'duracion_minutos']
-        read_only_fields = ['id', 'servicio_nombre']
+        fields = [
+            'id', 'servicio', 'servicio_nombre', 'servicio_plantilla_formula',
+            'servicio_impacto_porosidad', 'servicio_impacto_porosidad_nombre',
+            'servicio_impacto_estado', 'servicio_impacto_estado_nombre',
+            'precio_historico', 'duracion_minutos'
+        ]
+        read_only_fields = [
+            'id', 'servicio_nombre', 'servicio_plantilla_formula',
+            'servicio_impacto_porosidad', 'servicio_impacto_porosidad_nombre',
+            'servicio_impacto_estado', 'servicio_impacto_estado_nombre'
+        ]
 
 
 class TurnoSerializer(serializers.ModelSerializer):
@@ -93,6 +108,7 @@ class TurnoSerializer(serializers.ModelSerializer):
     cliente_nombre = serializers.SerializerMethodField(read_only=True)
     servicio_nombre = serializers.SerializerMethodField(read_only=True)
     profesional_nombre = serializers.SerializerMethodField(read_only=True)
+    cancelado_por_nombre = serializers.SerializerMethodField(read_only=True)
     # ✅ NUEVO: Campos para verificar expiración
     expired = serializers.SerializerMethodField(read_only=True)
     horas_transcurridas = serializers.SerializerMethodField(read_only=True)
@@ -103,9 +119,10 @@ class TurnoSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'cliente', 'cliente_nombre', 'profesional', 'profesional_nombre', 
             'equipamiento', 'fecha', 'hora_inicio', 'estado', 'detalles', 'servicio', 
-            'servicio_nombre', 'comprobante_pago', 'expired', 'horas_transcurridas', 'puede_modificar'
+            'servicio_nombre', 'comprobante_pago', 'expired', 'horas_transcurridas', 'puede_modificar',
+            'cancelado_por', 'cancelado_por_nombre', 'motivo_cancelacion'
         ]
-        read_only_fields = ['cliente', 'expired', 'horas_transcurridas', 'puede_modificar']
+        read_only_fields = ['cliente', 'expired', 'horas_transcurridas', 'puede_modificar', 'cancelado_por', 'cancelado_por_nombre']
     
     def get_cliente_nombre(self, obj):
         """Retorna el nombre completo del cliente"""
@@ -123,6 +140,12 @@ class TurnoSerializer(serializers.ModelSerializer):
         if obj.profesional:
             return obj.profesional.nombre
         return "No asignado"
+    
+    def get_cancelado_por_nombre(self, obj):
+        """Retorna el nombre de quién canceló"""
+        if obj.cancelado_por:
+            return obj.cancelado_por.get_full_name()
+        return None
 
     def get_expired(self, obj):
         """✅ NUEVO: Verifica si el turno ya pasó su fecha"""
@@ -246,7 +269,14 @@ class FichaTecnicaSerializer(serializers.ModelSerializer):
     """Serializador para el registro técnico del profesional"""
     detalle_turno_id = serializers.IntegerField(source='detalle_turno.id', read_only=True)
     servicio_nombre = serializers.CharField(source='detalle_turno.servicio.nombre', read_only=True)
+    servicio_id = serializers.IntegerField(source='detalle_turno.servicio.id', read_only=True)
     profesional_nombre = serializers.CharField(source='profesional_autor.get_full_name', read_only=True)
+    cliente_id = serializers.IntegerField(source='detalle_turno.turno.cliente.id', read_only=True)
+    cliente_nombre = serializers.CharField(source='detalle_turno.turno.cliente.usuario.get_full_name', read_only=True)
+    turno_id = serializers.IntegerField(source='detalle_turno.turno.id', read_only=True)
+    turno_fecha = serializers.DateField(source='detalle_turno.turno.fecha', read_only=True)
+    turno_hora = serializers.TimeField(source='detalle_turno.turno.hora_inicio', read_only=True)
+    rutina_recomendada_nombre = serializers.CharField(source='rutina_recomendada.nombre', read_only=True)
     
     # Campo extra para enviar la plantilla al frontend (Lógica de Inicio)
     formula_base_servicio = serializers.CharField(
@@ -265,16 +295,20 @@ class FichaTecnicaSerializer(serializers.ModelSerializer):
         model = FichaTecnica
         fields = [
             'id', 'detalle_turno', 'detalle_turno_id', 'servicio_nombre',
-            'profesional_autor', 'profesional_nombre', 'formula_base_servicio',
-            'formula', 'observaciones_proceso', 
+            'servicio_id', 'profesional_autor', 'profesional_nombre', 'formula_base_servicio',
+            'cliente_id', 'cliente_nombre', 'turno_id', 'turno_fecha', 'turno_hora',
+            'formula', 'observaciones_proceso', 'comentario_cliente',
+            'rutina_recomendada', 'rutina_recomendada_nombre',
             'porosidad_final', 'porosidad_final_nombre',
             'estado_general_final', 'estado_general_final_nombre',
             'resultado_post_servicio', 'foto_resultado', 'fecha_registro'
         ]
         read_only_fields = [
             'id', 'fecha_registro', 'detalle_turno_id', 'servicio_nombre', 
-            'profesional_nombre', 'formula_base_servicio',
-            'porosidad_final_nombre', 'estado_general_final_nombre'
+            'servicio_id', 'profesional_nombre', 'formula_base_servicio',
+            'cliente_id', 'cliente_nombre', 'turno_id', 'turno_fecha', 'turno_hora',
+            'porosidad_final_nombre', 'estado_general_final_nombre',
+            'rutina_recomendada_nombre'
         ]
     
     def validate(self, data):
@@ -301,14 +335,7 @@ class FichaTecnicaSerializer(serializers.ModelSerializer):
             # 1. Asignar autor
             validated_data['profesional_autor'] = self.context['request'].user
             ficha = super().create(validated_data)
-            
-            # 2. Actualizar estado del Turno a 'realizado' automáticamente
-            turno = ficha.detalle_turno.turno
-            turno.estado = 'realizado'
-            turno.save()
-            
-            # 3. (Opcional) Aquí podrías disparar la actualización del Diagnóstico Capilar
-            
+
             return ficha
 
 class TurnoCreateSerializer(serializers.ModelSerializer):
@@ -434,6 +461,19 @@ class PersonalSerializer(serializers.ModelSerializer):
             }
             for h in horarios
         ]
+    
+    def create(self, validated_data):
+        """Crear Personal y marcar el usuario como is_staff=True"""
+        usuario = validated_data.get('usuario')
+        
+        # Marcar el usuario como staff
+        if usuario:
+            usuario.is_staff = True
+            usuario.save()
+        
+        # Crear el Personal normalmente
+        personal = Personal.objects.create(**validated_data)
+        return personal
 
 class AgendaCuidadosSerializer(serializers.ModelSerializer):
     class Meta:
@@ -506,17 +546,83 @@ class CategoriaProductoSerializer(serializers.ModelSerializer):
         model = CategoriaProducto
         fields = '__all__'
 
+
+class ImagenProductoSerializer(serializers.ModelSerializer):
+    imagen_url = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = ImagenProducto
+        fields = ['id', 'imagen', 'imagen_url', 'orden', 'producto']
+    
+    def get_imagen_url(self, obj):
+        """Retorna la URL completa de la imagen"""
+        if obj.imagen:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.imagen.url)
+            return obj.imagen.url
+        return None
+    
+    def validate_producto(self, value):
+        """Valida que el producto exista"""
+        if not value:
+            raise serializers.ValidationError("El producto es requerido.")
+        return value
+    
+    def create(self, validated_data):
+        """Crear la imagen con logging para debuggear"""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Creando ImagenProducto con datos: {validated_data}")
+        return super().create(validated_data)
+
+
 class ProductoSerializer(serializers.ModelSerializer):
     # Esto permite ver el nombre de la categoría en lugar de solo el ID
     categoria_nombre = serializers.ReadOnlyField(source='categoria.nombre')
+    # Incluir las imágenes del producto
+    imagenes = ImagenProductoSerializer(many=True, read_only=True)
+    # URL de la primera imagen (para compatibilidad)
+    imagen_url = serializers.SerializerMethodField()
+    # Stock disponible (propiedad calculada)
+    stock_disponible = serializers.SerializerMethodField()
+    necesita_reposicion = serializers.SerializerMethodField()
 
     class Meta:
         model = Producto
         fields = [
             'id', 'sku', 'nombre', 'marca', 'categoria', 'categoria_nombre',
-            'descripcion', 'precio', 'stock', 'stock_minimo', 
-            'imagen_url', 'estado_publicacion', 'compatibilidad', 'activo'
+            'descripcion', 'precio', 'stock_real', 'stock_comprometido', 'stock_minimo',
+            'stock_disponible', 'necesita_reposicion',
+            'imagen', 'imagen_url', 'imagenes', 'estado_publicacion', 'compatibilidad',
+            'material_principal', 'proposito_uso', 'activo'
         ]
+        read_only_fields = ['id', 'categoria_nombre', 'imagen_url', 'imagenes', 'stock_comprometido', 'stock_disponible', 'necesita_reposicion']
+    
+    def get_stock_disponible(self, obj):
+        """Retorna el stock disponible calculado"""
+        return obj.stock_disponible
+    
+    def get_necesita_reposicion(self, obj):
+        """Indica si necesita reposición"""
+        return obj.necesita_reposicion()
+    
+    def get_imagen_url(self, obj):
+        """Retorna la URL de la primera imagen o la imagen principal"""
+        # Intentar obtener la primera imagen del relacionado
+        primera_imagen = obj.imagenes.first()
+        if primera_imagen and primera_imagen.imagen:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(primera_imagen.imagen.url)
+            return primera_imagen.imagen.url
+        # Si no hay imágenes relacionadas, usar la imagen del modelo (para compatibilidad)
+        if obj.imagen:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.imagen.url)
+            return obj.imagen.url
+        return None
 
 # --- D. SERIALIZER EQUIPAMIENTO ---
 
@@ -692,12 +798,14 @@ class DiagnosticoCapilarSerializer(serializers.ModelSerializer):
     porosidad_cabello_nombre = serializers.CharField(source='porosidad_cabello.nombre', read_only=True)
     cuero_cabelludo_nombre = serializers.CharField(source='cuero_cabelludo.nombre', read_only=True)
     estado_general_nombre = serializers.CharField(source='estado_general.nombre', read_only=True)
+    regla_diagnostico_mensaje = serializers.CharField(source='regla_diagnostico.mensaje_resultado', read_only=True)
     regla_diagnostico_accion = serializers.CharField(source='regla_diagnostico.accion_resultado', read_only=True)
     rutina_sugerida_nombre = serializers.CharField(source='rutina_sugerida.nombre', read_only=True)
     rutina_asignada_nombre = serializers.CharField(source='rutina_asignada.nombre', read_only=True, required=False)
     servicio_urgente_nombre = serializers.CharField(source='servicio_urgente.nombre', read_only=True, required=False)
     servicio_urgente_id = serializers.IntegerField(source='servicio_urgente.id', read_only=True, required=False)
     rutina_asignada_id = serializers.IntegerField(source='rutina_asignada.id', read_only=True, required=False)
+    turno_sugerido_id = serializers.IntegerField(source='turno_sugerido.id', read_only=True, required=False)
     # Campo personalizado: el mensaje profesional guardado en observaciones
     mensaje_diagnostico = serializers.CharField(source='observaciones', read_only=True, required=False)
     
@@ -712,18 +820,21 @@ class DiagnosticoCapilarSerializer(serializers.ModelSerializer):
             'cuero_cabelludo', 'cuero_cabelludo_nombre',
             'estado_general', 'estado_general_nombre',
             'observaciones', 'mensaje_diagnostico', 'recomendaciones',
-            'regla_diagnostico', 'regla_diagnostico_accion',
+            'regla_diagnostico', 'regla_diagnostico_mensaje', 'regla_diagnostico_accion',
             'rutina_sugerida', 'rutina_sugerida_nombre',
             'rutina_asignada', 'rutina_asignada_nombre', 'rutina_asignada_id',
             'servicio_urgente', 'servicio_urgente_nombre', 'servicio_urgente_id',
+            'turno_sugerido', 'turno_sugerido_id',
             'fecha_diagnostico'
         ]
         read_only_fields = [
             'id', 'fecha_diagnostico', 'cliente_email', 'profesional_nombre',
             'tipo_cabello_nombre', 'grosor_cabello_nombre', 'porosidad_cabello_nombre',
             'cuero_cabelludo_nombre', 'estado_general_nombre', 'regla_diagnostico_accion',
+            'regla_diagnostico_mensaje',
             'rutina_sugerida_nombre', 'mensaje_diagnostico', 'rutina_asignada_nombre',
-            'servicio_urgente_nombre', 'servicio_urgente_id', 'rutina_asignada_id'
+            'servicio_urgente_nombre', 'servicio_urgente_id', 'rutina_asignada_id',
+            'turno_sugerido', 'turno_sugerido_id'
         ]
     
     def create(self, validated_data):
@@ -737,6 +848,12 @@ class DiagnosticoCapilarSerializer(serializers.ModelSerializer):
             except Usuario.DoesNotExist:
                 pass
         return super().create(validated_data)
+
+
+class ConfiguracionDiagnosticoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ConfiguracionDiagnostico
+        fields = '__all__'
 
 
 class PromocionSerializer(serializers.ModelSerializer):
@@ -753,7 +870,8 @@ class PromocionSerializer(serializers.ModelSerializer):
             'id', 'nombre', 'descripcion', 'tipo', 
             'descuento_porcentaje', 'fecha_inicio', 'fecha_fin',
             'fecha_especifica', 'hora_inicio_promo', 'hora_fin_promo',
-            'is_active', 'productos', 'servicios',
+            'is_active', 'stock_combo', 'productos', 'servicios',
+            'es_sugerencia_automatica', 'estado_sugerencia',
             'productos_count', 'servicios_count', 'fecha_creacion'
         ]
         read_only_fields = ['id', 'fecha_creacion', 'productos_count', 'servicios_count']
@@ -796,7 +914,30 @@ class ConfiguracionSerializer(serializers.ModelSerializer):
             'monto_sena',
             'tiempo_limite_pago_sena',
             'max_reprogramaciones',
-            'horas_limite_cancelacion'
+            'horas_limite_cancelacion',
+            'adelanto_min_horas_anticipacion',
+            'adelanto_rango_dias_busqueda',
+            'adelanto_max_candidatos',
+            'adelanto_expira_horas',
+            'promo_descuento_combo_x2',
+            'promo_descuento_combo_x3',
+            'combo_auto_activo',
+            'combo_min_similitud',
+            'combo_max_productos',
+            'combo_min_stock',
+            'combo_dias_vigencia',
+            'combo_usar_marca',
+            'combo_usar_proposito',
+            'combo_usar_material',
+            'combo_usar_compatibilidad',
+            'whatsapp_numero',
+            'empresa_nombre',
+            'comprobante_razon_social',
+            'comprobante_cuil',
+            'comprobante_fecha_inicio_actividad',
+            'whatsapp_saludo',
+            'whatsapp_cierre',
+            'whatsapp_formato_producto'
         ]
         read_only_fields = ['id']
 
@@ -804,19 +945,36 @@ class ConfiguracionSerializer(serializers.ModelSerializer):
 class CarritoItemSerializer(serializers.ModelSerializer):
     """
     Serializer para items individuales del carrito.
-    Incluye información del producto y cálculo de subtotal.
+    Incluye información completa del producto y cálculo de subtotal.
     """
     producto_nombre = serializers.ReadOnlyField(source='producto.nombre')
     producto_precio = serializers.ReadOnlyField(source='producto.precio')
+    producto_marca = serializers.ReadOnlyField(source='producto.marca')
+    producto_imagen_url = serializers.SerializerMethodField()
     subtotal = serializers.SerializerMethodField()
 
     class Meta:
         model = CarritoItem
-        fields = ['id', 'producto', 'producto_nombre', 'producto_precio', 'cantidad', 'subtotal']
+        fields = ['id', 'producto', 'producto_nombre', 'producto_marca', 'producto_precio', 'producto_imagen_url', 'cantidad', 'subtotal']
     
     def get_subtotal(self, obj):
         """Retorna el subtotal del item."""
         return obj.subtotal
+    
+    def get_producto_imagen_url(self, obj):
+        """Retorna la URL de la imagen del producto."""
+        request = self.context.get('request')
+        if obj.producto.imagen:
+            if request:
+                return request.build_absolute_uri(obj.producto.imagen.url)
+            return obj.producto.imagen.url
+        # Intenta obtener primera imagen del relacionado
+        primera_imagen = obj.producto.imagenes.first()
+        if primera_imagen and primera_imagen.imagen:
+            if request:
+                return request.build_absolute_uri(primera_imagen.imagen.url)
+            return primera_imagen.imagen.url
+        return None
 
 
 class CarritoSerializer(serializers.ModelSerializer):
@@ -950,6 +1108,151 @@ class ContenidoGuardadoSerializer(serializers.ModelSerializer):
             'contenido_tipo', 'cliente', 'fecha'
         ]
         read_only_fields = ['fecha']
+
+
+class OrdenPendienteSerializer(serializers.ModelSerializer):
+    """
+    Serializer para órdenes pendientes (intenciones de compra por WhatsApp).
+    Registra los items y monto para auditoría.
+    """
+    class Meta:
+        model = OrdenPendiente
+        fields = [
+            'id',
+            'cliente',
+            'estado',
+            'items_json',
+            'monto_total',
+            'fecha_creacion',
+            'fecha_confirmacion',
+            'fecha_completacion',
+            'nota_cliente'
+        ]
+
+
+class OrdenItemSerializer(serializers.ModelSerializer):
+    """
+    Serializer para items individuales de órdenes de compra.
+    """
+    producto_nombre = serializers.CharField(source='producto.nombre', read_only=True)
+    producto_marca = serializers.CharField(source='producto.marca', read_only=True)
+    subtotal = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = OrdenItem
+        fields = [
+            'id',
+            'orden',
+            'producto',
+            'producto_nombre',
+            'producto_marca',
+            'cantidad',
+            'precio_historico',
+            'subtotal'
+        ]
+        read_only_fields = ['id', 'subtotal']
+    
+    def get_subtotal(self, obj):
+        return float(obj.subtotal)
+
+
+class PagoSerializer(serializers.ModelSerializer):
+    orden_codigo = serializers.ReadOnlyField(source='orden.codigo')
+    turno_fecha = serializers.SerializerMethodField()
+    cliente_nombre = serializers.SerializerMethodField()
+    cliente_email = serializers.SerializerMethodField()
+    tipo_origen = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Pago
+        fields = [
+            'id',
+            'orden',
+            'turno',
+            'monto',
+            'metodo_pago',
+            'fecha_pago',
+            'comprobante_foto',
+            'es_sena',
+            'orden_codigo',
+            'turno_fecha',
+            'cliente_nombre',
+            'cliente_email',
+            'tipo_origen'
+        ]
+        read_only_fields = ['id', 'orden', 'turno']
+
+    def validate(self, attrs):
+        metodo = attrs.get('metodo_pago')
+        comprobante = attrs.get('comprobante_foto')
+
+        if metodo == 'TRANSFERENCIA' and not comprobante:
+            raise serializers.ValidationError({
+                'comprobante_foto': 'Se requiere comprobante para pagos por transferencia.'
+            })
+
+        return attrs
+
+    def get_turno_fecha(self, obj):
+        if obj.turno:
+            return obj.turno.fecha
+        return None
+
+    def get_cliente_nombre(self, obj):
+        if obj.orden and obj.orden.cliente and obj.orden.cliente.usuario:
+            return obj.orden.cliente.usuario.get_full_name()
+        if obj.turno and obj.turno.cliente and obj.turno.cliente.usuario:
+            return obj.turno.cliente.usuario.get_full_name()
+        return None
+
+    def get_cliente_email(self, obj):
+        if obj.orden and obj.orden.cliente and obj.orden.cliente.usuario:
+            return obj.orden.cliente.usuario.email
+        if obj.turno and obj.turno.cliente and obj.turno.cliente.usuario:
+            return obj.turno.cliente.usuario.email
+        return None
+
+    def get_tipo_origen(self, obj):
+        if obj.orden_id:
+            return 'ORDEN'
+        if obj.turno_id:
+            return 'TURNO'
+        return None
+
+
+class OrdenCompraSerializer(serializers.ModelSerializer):
+    """
+    Serializer para órdenes de compra completas incluyendo sus items.
+    """
+    items = OrdenItemSerializer(many=True, read_only=True)
+    pagos = PagoSerializer(many=True, read_only=True)
+    cliente_nombre = serializers.CharField(source='cliente.usuario.get_full_name', read_only=True)
+    cliente_email = serializers.CharField(source='cliente.usuario.email', read_only=True)
+    total_items = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = OrdenCompra
+        fields = [
+            'id',
+            'codigo',
+            'cliente',
+            'cliente_nombre',
+            'cliente_email',
+            'estado',
+            'total',
+            'items',
+            'pagos',
+            'total_items',
+            'notas',
+            'creado_at',
+            'actualizado_at'
+        ]
+        read_only_fields = ['id', 'codigo', 'creado_at', 'actualizado_at']
+    
+    def get_total_items(self, obj):
+        return sum(item.cantidad for item in obj.items.all())
+
+
 
 
 

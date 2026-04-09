@@ -6,13 +6,15 @@ from .views import (
     PorosidadCabelloViewSet, CueroCabelludoViewSet, EstadoGeneralViewSet, CategoriaServicioViewSet, ServicioViewSet,
     ServiciosQuimicosViewSet, TurnoViewSet, RutinaViewSet, ReglaDiagnosticoViewSet, NotificacionViewSet, SeleccionarRutinaView,
     RutinaClienteViewSet, TipoEquipamientoViewSet, FichaTecnicaViewSet, RequisitoServicioViewSet, DiagnosticoCapilarViewSet,
-    CategoriaProductoViewSet, ProductoViewSet, PromocionViewSet, ConfiguracionViewSet, CarritoViewSet,
-    ContenidoEducativoViewSet, MeGustaViewSet, ContenidoGuardadoViewSet, upload_imagen,
+    CategoriaProductoViewSet, ProductoViewSet, ImagenProductoViewSet, PromocionViewSet, ConfiguracionViewSet, CarritoViewSet,
+    ContenidoEducativoViewSet, MeGustaViewSet, ContenidoGuardadoViewSet, upload_imagen, OrdenPendienteViewSet, OrdenCompraViewSet,
+    PagoViewSet, ConfiguracionDiagnosticoViewSet,
     #ListaEsperaCreateView,
     # ViewSets
     #PasoRutinaViewSet,
-
 )
+from .views_auditoria import AuditoriaViewSet, HistorialAuditoriaViewSet
+from .stats_views import DashboardStatsViewSet
 
 
 
@@ -40,6 +42,7 @@ router.register(r'rutinas-cliente', RutinaClienteViewSet, basename='rutina-clien
 router.register(r'admin/usuarios', views.AdminUsuarioViewSet, basename='admin-usuarios')
 router.register(r'categorias-productos', views.CategoriaProductoViewSet, basename='categoria-producto')
 router.register(r'productos', views.ProductoViewSet, basename='productos')
+router.register(r'imagenes-productos', views.ImagenProductoViewSet, basename='imagen-producto')
 router.register(r'personal', views.PersonalViewSet, basename='personal')
 router.register(r'tipo-equipamiento', TipoEquipamientoViewSet, basename='tipo-equipamiento')
 router.register(r'equipamiento', views.EquipamientoViewSet, basename='equipamiento')
@@ -48,11 +51,18 @@ router.register(r'requisitos-servicio', RequisitoServicioViewSet, basename='requ
 router.register(r'diagnosticos-capilares', DiagnosticoCapilarViewSet, basename='diagnostico-capilar')
 router.register(r'promociones', PromocionViewSet, basename='promocion')
 router.register(r'configuracion', ConfiguracionViewSet, basename='configuracion')
+router.register(r'configuracion-diagnostico', ConfiguracionDiagnosticoViewSet, basename='configuracion-diagnostico')
 router.register(r'carrito', CarritoViewSet, basename='carrito')
 router.register(r'contenido-educativo', ContenidoEducativoViewSet, basename='contenido-educativo')
 router.register(r'me-gusta', MeGustaViewSet, basename='me-gusta')
 router.register(r'contenido-guardado', ContenidoGuardadoViewSet, basename='contenido-guardado')
-
+router.register(r'ordenes-pendientes', OrdenPendienteViewSet, basename='orden-pendiente')
+router.register(r'ordenes-compra', OrdenCompraViewSet, basename='orden-compra')
+router.register(r'pagos', PagoViewSet, basename='pagos')
+router.register(r'stats', DashboardStatsViewSet, basename='dashboard-stats')
+# --- AUDITORÍA ---
+router.register(r'auditoria', AuditoriaViewSet, basename='auditoria')
+router.register(r'auditoria-historial', HistorialAuditoriaViewSet, basename='auditoria-historial')
 # Las URLs se generan automáticamente
 urlpatterns = [
     path('', include(router.urls)),

@@ -25,9 +25,10 @@ logger = logging.getLogger(__name__)
 
 from .models import (
     TipoCabello, GrosorCabello, PorosidadCabello, CueroCabelludo, EstadoGeneral, CategoriaServicio, Servicio, Turno, DetalleTurno,
-    Configuracion, ListaEspera, Producto, Equipamiento, Rutina, Notificacion, AgendaCuidados, Producto, ReglaDiagnostico,
+    Configuracion, ListaEspera, Producto, ImagenProducto, Equipamiento, Rutina, Notificacion, AgendaCuidados, Producto, ReglaDiagnostico,
     RutinaCliente, HorarioLaboral, BloqueoAgenda, Personal, TipoEquipamiento, FichaTecnica, DiagnosticoCapilar, RequisitoServicio,
     CategoriaProducto, Promocion, ConfiguracionRetoque, DiasSemana, Carrito, CarritoItem, ContenidoEducativo, MeGusta, ContenidoGuardado,
+    OrdenPendiente, OrdenCompra, OrdenItem, Pago, ConfiguracionDiagnostico,
     #PasoRutinaCliente
     #PasoRutina
 )
@@ -35,17 +36,24 @@ from .models import (
 from .serializers import (
     TipoCabelloSerializer, GrosorCabelloSerializer, PorosidadCabelloSerializer, CueroCabelludoSerializer, EstadoGeneralSerializer,
     CategoriaServicioSerializer, ServicioSerializer, TurnoSerializer, RutinaSerializer, RutinaClienteSerializer,
-    RutinaClienteCreateSerializer, ReglaDiagnosticoSerializer, NotificacionSerializer, ProductoSerializer, EquipamientoSerializer,
+    RutinaClienteCreateSerializer, ReglaDiagnosticoSerializer, NotificacionSerializer, ProductoSerializer, ImagenProductoSerializer, EquipamientoSerializer,
     UsuarioAdminSerializer, AgendaCuidadosSerializer, HorarioLaboralSerializer, BloqueoAgendaSerializer, PersonalSerializer,
+    PagoSerializer,
     TipoEquipamientoSerializer, FichaTecnicaSerializer, RequisitoServicioSerializer, DiagnosticoCapilarSerializer,
-    CategoriaProductoSerializer, PromocionSerializer, ConfiguracionSerializer, ConfiguracionRetoqueSummarySerializer, 
+    CategoriaProductoSerializer, PromocionSerializer, ConfiguracionSerializer, ConfiguracionRetoqueSummarySerializer,
     CarritoSerializer, CarritoItemSerializer, ContenidoEducativoSerializer, MeGustaSerializer, ContenidoGuardadoSerializer,
+    OrdenPendienteSerializer, OrdenCompraSerializer, OrdenItemSerializer, ConfiguracionDiagnosticoSerializer,
     #PasoRutinaSerializer,
 )
 
 from .services import DisponibilidadService 
 from usuarios.models import Usuario, Cliente
 from usuarios.filters import UsuarioFilter
+from .filters import (
+    ProductoFilter, TurnoFilter, PersonalFilter, ServicioFilter, 
+    ClienteFilter, RutinaFilter, TipoEquipamientoFilter, EquipamientoFilter, DiagnosticoCapilarFilter,
+    ConfiguracionFilter
+)
 
 # --- UPLOAD DE IMÁGENES ---
 @api_view(['POST'])
@@ -109,6 +117,8 @@ class ConfiguracionViewSet(viewsets.ModelViewSet):
     queryset = Configuracion.objects.all()
     serializer_class = ConfiguracionSerializer
     permission_classes = [IsAdminUser]  # Solo administradores
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = ConfiguracionFilter
     
     def _ensure_singleton_exists(self):
         """
@@ -133,6 +143,30 @@ class ConfiguracionViewSet(viewsets.ModelViewSet):
 
     def retrieve(self, request, *args, **kwargs):
         # Asegurar que existe antes de recuperar
+        self._ensure_singleton_exists()
+        return super().retrieve(request, *args, **kwargs)
+
+    @action(detail=False, methods=['get'], url_path='publica', permission_classes=[AllowAny])
+    def configuracion_publica(self, request):
+        config = self._ensure_singleton_exists()
+        return Response({
+            'empresa_nombre': config.empresa_nombre or 'Bohemia Hair'
+        })
+
+
+class ConfiguracionDiagnosticoViewSet(viewsets.ModelViewSet):
+    queryset = ConfiguracionDiagnostico.objects.all()
+    serializer_class = ConfiguracionDiagnosticoSerializer
+    permission_classes = [IsAdminUser]
+
+    def _ensure_singleton_exists(self):
+        ConfiguracionDiagnostico.get_singleton()
+
+    def get_queryset(self):
+        self._ensure_singleton_exists()
+        return ConfiguracionDiagnostico.objects.filter(pk=1)
+
+    def retrieve(self, request, *args, **kwargs):
         self._ensure_singleton_exists()
         return super().retrieve(request, *args, **kwargs)
 
@@ -192,6 +226,10 @@ class ServicioViewSet(viewsets.ModelViewSet):
     serializer_class = ServicioSerializer
     permission_classes = [AllowAny]
     pagination_class = None
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = ServicioFilter
+    search_fields = ['nombre', 'descripcion']
+    ordering_fields = ['nombre', 'precio_base']
     
     def get_queryset(self):
         return Servicio.objects.all().order_by('nombre')
@@ -229,6 +267,36 @@ class PersonalViewSet(viewsets.ModelViewSet):
     serializer_class = PersonalSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = None
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = PersonalFilter
+    search_fields = ['nombre']
+    ordering_fields = ['nombre']
+    
+    def perform_destroy(self, instance):
+        """
+        Soft Delete o Hard Delete según si tiene Turnos ACTIVOS:
+        - Si tiene Turnos ACTIVOS: Marcar como inactivo (soft delete)
+        - Si solo tiene Turnos finalizados o NINGUNO: Eliminar (hard delete)
+        """
+        # Verificar si tiene Turnos ACTIVOS (solicitado, esperando seña, confirmado, pendiente, en proceso)
+        tiene_turnos_activos = Turno.objects.filter(
+            profesional=instance,
+            estado__in=[
+                Turno.Estado.SOLICITADO,
+                Turno.Estado.ESPERANDO_SENA,
+                Turno.Estado.CONFIRMADO,
+                Turno.Estado.PENDIENTE,
+                Turno.Estado.EN_PROCESO
+            ]
+        ).exists()
+        
+        if tiene_turnos_activos:
+            # Soft Delete: Marcar como inactivo si hay Turnos ACTIVOS
+            instance.activo = False
+            instance.save()
+        else:
+            # Hard Delete: Permitir eliminación si solo hay Turnos finalizados o ninguno
+            instance.delete()
     
 
 class DisponibilidadTurnosView(APIView):
@@ -346,6 +414,10 @@ class TurnoViewSet(viewsets.ModelViewSet):
     serializer_class = TurnoSerializer
     pagination_class = None 
     permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = TurnoFilter
+    search_fields = ['cliente__usuario__first_name', 'cliente__usuario__last_name']
+    ordering_fields = ['fecha', 'hora_inicio', 'estado']
 
     def _auto_cancel_expired_turnos(self):
         """
@@ -432,12 +504,18 @@ class TurnoViewSet(viewsets.ModelViewSet):
                 turno.save()
     
     def perform_update(self, serializer):
-        """Solo admins pueden actualizar turnos"""
+        """
+        Admins pueden actualizar cualquier turno.
+        Clientes pueden actualizar solo sus propios turnos (principalmente para subir comprobante).
+        """
+        turno = serializer.instance
+        
+        # Validar que el cliente solo actualiza sus propios turnos
         if not self.request.user.is_staff:
-            raise PermissionDenied("Solo administradores pueden actualizar turnos.")
+            if turno.cliente.usuario != self.request.user:
+                raise PermissionDenied("No puedes actualizar turnos de otros clientes.")
         
         # Si el turno transiciona a ESPERANDO_SENA, calcular fecha_limite_pago
-        turno = serializer.instance
         nuevo_estado = serializer.validated_data.get('estado', turno.estado)
         
         if nuevo_estado == Turno.Estado.ESPERANDO_SENA and turno.estado != Turno.Estado.ESPERANDO_SENA:
@@ -447,6 +525,32 @@ class TurnoViewSet(viewsets.ModelViewSet):
                 turno.fecha_limite_pago = timezone.now() + timedelta(hours=config.tiempo_limite_pago_sena)
         
         serializer.save()
+
+    @action(detail=True, methods=['post'])
+    def registrar_pago(self, request, pk=None):
+        """
+        POST /api/gestion/turnos/{id}/registrar_pago/
+
+        Permite al profesional registrar un pago asociado a un turno.
+        """
+        if not request.user.is_staff:
+            raise PermissionDenied("No tienes permisos para registrar pagos.")
+
+        turno = self.get_object()
+        serializer = PagoSerializer(data=request.data, context={'request': request})
+
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        pago = serializer.save(turno=turno)
+
+        return Response(
+            {
+                'status': 'Pago registrado',
+                'pago': PagoSerializer(pago, context={'request': request}).data
+            },
+            status=status.HTTP_201_CREATED
+        )
     
     @action(detail=True, methods=['post'])
     def reprogramar_cliente(self, request, pk=None):
@@ -505,7 +609,7 @@ class TurnoViewSet(viewsets.ModelViewSet):
             cliente=turno.cliente,
             fecha=nueva_fecha,
             hora_inicio=nueva_hora,
-            estado__in=['solicitado', 'esperando_sena', 'confirmado']
+            estado__in=['solicitado', 'esperando_sena', 'confirmado', 'sugerido']
         ).exclude(id=turno.id).exists()
         
         if turno_duplicado:
@@ -567,7 +671,7 @@ class TurnoViewSet(viewsets.ModelViewSet):
         turnos_conflicto = Turno.objects.filter(
             fecha=fecha,
             profesional=profesional,
-            estado__in=['confirmado', 'esperando_sena', 'solicitado']
+            estado__in=['confirmado', 'esperando_sena', 'solicitado', 'sugerido']
         ).prefetch_related('detalles')
         
         # Excluir el turno actual si se proporciona un ID
@@ -764,7 +868,7 @@ class TurnoViewSet(viewsets.ModelViewSet):
         turnos_del_dia = Turno.objects.filter(
             fecha=fecha,
             profesional=regla.personal,
-            estado__in=['confirmado', 'esperando_sena', 'solicitado']
+            estado__in=['confirmado', 'esperando_sena', 'solicitado', 'sugerido']
         ).prefetch_related('detalles')
 
         bloqueos_del_dia = BloqueoAgenda.objects.filter(
@@ -904,7 +1008,7 @@ class TurnoViewSet(viewsets.ModelViewSet):
             # Turnos que ya ocupan este recurso en esa fecha
             turnos_competencia = Turno.objects.filter(
                 fecha=fecha,
-                estado__in=['confirmado', 'esperando_sena', 'solicitado'],
+                estado__in=['confirmado', 'esperando_sena', 'solicitado', 'sugerido'],
                 detalles__servicio__requisitos_equipamiento__tipo_equipamiento_id=tipo_id
             ).distinct()
 
@@ -997,9 +1101,12 @@ class TurnoViewSet(viewsets.ModelViewSet):
         turno = self.get_object()
         usuario = request.user
 
-        # Permisos
-        es_cliente = usuario.cliente_set.exists()
-        es_profesional = usuario.personal_set.exists()
+        # Permisos - Verificar si el usuario es cliente o profesional
+        # Cliente: tiene relación OneToOne con Cliente
+        # Profesional: tiene relación OneToOne con Personal
+        es_cliente = hasattr(usuario, 'cliente')
+        es_profesional = hasattr(usuario, 'personal')
+        
         if not (usuario == turno.cliente.usuario or es_profesional or usuario.is_staff):
             raise PermissionDenied("No tienes permiso sobre este turno.")
 
@@ -1026,14 +1133,23 @@ class TurnoViewSet(viewsets.ModelViewSet):
         # - Intenta REPROGRAMAR o CANCELAR dentro de la ventana de seguridad
         es_cliente_only = es_cliente and not es_profesional and not usuario.is_staff
         
-        if es_cliente_only and turno.estado == Turno.Estado.CONFIRMADO:
-            if horas_restantes < horas_limite and accion in ['REPROGRAMAR', 'CANCELAR']:
+        if es_cliente_only:
+            if accion == 'CANCELAR' and horas_restantes < horas_limite:
                 return Response({
-                    "error": f"No puedes {accion.lower()} un turno menos de {horas_limite}hs antes.",
+                    "error": f"No puedes cancelar un turno menos de {horas_limite}hs antes.",
                     "horas_restantes": round(horas_restantes, 2),
                     "horas_limite": horas_limite,
                     "fecha_hora_turno": fecha_hora_turno.isoformat()
                 }, status=400)
+
+            if turno.estado == Turno.Estado.CONFIRMADO and accion == 'REPROGRAMAR':
+                if horas_restantes < horas_limite:
+                    return Response({
+                        "error": f"No puedes reprogramar un turno menos de {horas_limite}hs antes.",
+                        "horas_restantes": round(horas_restantes, 2),
+                        "horas_limite": horas_limite,
+                        "fecha_hora_turno": fecha_hora_turno.isoformat()
+                    }, status=400)
         
         
         # Si es staff/admin, NO hay restricción de tiempo - el código continúa normalmente
@@ -1096,6 +1212,19 @@ class TurnoViewSet(viewsets.ModelViewSet):
                 turno.hora_inicio = nueva_hora
                 # No cambia estado, no suma contador
                 turno.save()
+                
+                # Notificar al profesional del cambio
+                if turno.profesional:
+                    Notificacion.objects.create(
+                        usuario=turno.profesional.usuario,
+                        tipo='turno_reprogramado',
+                        canal='app',
+                        titulo="Turno Reprogramado",
+                        mensaje=f"El turno para {turno.cliente.usuario.get_full_name()} ha sido reprogramado para el {nueva_fecha.strftime('%d/%m/%Y')} a las {nueva_hora.strftime('%H:%M')}",
+                        origen_entidad='Turno',
+                        origen_id=turno.id
+                    )
+                
                 return Response({"mensaje": "Solicitud modificada correctamente."})
 
             # --- LÓGICA ESTADO B (Esperando Seña) ---
@@ -1106,6 +1235,19 @@ class TurnoViewSet(viewsets.ModelViewSet):
                 turno.fecha_limite_pago = None  # Limpiar deadline de pago
                 # No suma contador
                 turno.save()
+                
+                # Notificar al profesional del cambio
+                if turno.profesional:
+                    Notificacion.objects.create(
+                        usuario=turno.profesional.usuario,
+                        tipo='turno_reprogramado',
+                        canal='app',
+                        titulo="Turno Reprogramado",
+                        mensaje=f"El turno para {turno.cliente.usuario.get_full_name()} ha sido reprogramado para el {nueva_fecha.strftime('%d/%m/%Y')} a las {nueva_hora.strftime('%H:%M')}",
+                        origen_entidad='Turno',
+                        origen_id=turno.id
+                    )
+                
                 return Response({"mensaje": "Fecha cambiada. Tu turno espera nueva aprobación."})
 
             # --- LÓGICA ESTADO C (Confirmado) ---
@@ -1118,6 +1260,18 @@ class TurnoViewSet(viewsets.ModelViewSet):
                 turno.cambios_realizados += 1
                 # Mantiene estado Confirmado (Seña se traslada)
                 turno.save()
+                
+                # Notificar al profesional del cambio
+                if turno.profesional:
+                    Notificacion.objects.create(
+                        usuario=turno.profesional.usuario,
+                        tipo='turno_reprogramado',
+                        canal='app',
+                        titulo="Turno Reprogramado",
+                        mensaje=f"El turno para {turno.cliente.usuario.get_full_name()} ha sido reprogramado para el {nueva_fecha.strftime('%d/%m/%Y')} a las {nueva_hora.strftime('%H:%M')}",
+                        origen_entidad='Turno',
+                        origen_id=turno.id
+                    )
                 
                 return Response({"mensaje": "Turno reprogramado. Seña transferida."})
 
@@ -1134,46 +1288,95 @@ class TurnoViewSet(viewsets.ModelViewSet):
             servicios_hueco = [d.servicio for d in detalles_turno]
             cliente_que_cancela = turno.cliente
             
-            # 2. Cambiar estado a CANCELADO
+            # 2. Cambiar estado a CANCELADO y guardar quién canceló
             turno.estado = Turno.Estado.CANCELADO
+            turno.cancelado_por = request.user
+            turno.motivo_cancelacion = request.data.get('motivo', f'Cancelado por {request.user.get_full_name()}')
             turno.save()
+            
+            # 3. Notificar al profesional que el turno fue cancelado
+            if turno.profesional and turno.profesional.usuario:
+                Notificacion.objects.create(
+                    usuario=turno.profesional.usuario,
+                    tipo='turno_cancelado',
+                    canal='app',
+                    titulo="Turno Cancelado",
+                    mensaje=f"El turno para {cliente_que_cancela.usuario.get_full_name()} del {fecha_hueco.strftime('%d/%m/%Y')} a las {hora_hueco.strftime('%H:%M')} ha sido cancelado.",
+                    origen_entidad='Turno',
+                    origen_id=turno.id
+                )
             
             candidatos_adelanto = []
 
             # === MOTOR DE OPTIMIZACIÓN: Buscar candidatos para adelanto ===
-            
-            # Buscar turnos CONFIRMADOS con servicios coincidentes en fechas futuras
-            turnos_futuros = Turno.objects.filter(
-                estado=Turno.Estado.CONFIRMADO,
-                detalles__servicio__in=servicios_hueco,
-                fecha__gt=fecha_hueco
-            ).exclude(cliente=cliente_que_cancela).distinct().order_by('fecha')[:5]
-            
-            # Crear notificaciones para adelanto (máximo 5)
-            for turno_futuro in turnos_futuros:
-                servicios_str = ', '.join([s.nombre for s in servicios_hueco])
-                
-                Notificacion.objects.create(
-                    usuario=turno_futuro.cliente.usuario,
-                    tipo='ADELANTO',
-                    canal='app',
-                    titulo="¡Oportunidad de Adelantar Turno!",
-                    mensaje=f"Se liberó un espacio para {servicios_str} el {fecha_hueco} a las {hora_hueco.strftime('%H:%M')}. ¿Te gustaría adelantar tu turno del {turno_futuro.fecha}?",
-                    origen_entidad='Turno',
-                    origen_id=turno_futuro.id,
-                    datos_extra={
-                        "fecha_oferta": str(fecha_hueco),
-                        "hora_oferta": hora_hueco.strftime('%H:%M'),
-                        "turno_actual_id": turno_futuro.id,
-                        "turno_cancelado_id": turno.id,
-                        "servicio_ids": [s.id for s in servicios_hueco]
-                    }
-                )
-                
-                candidatos_adelanto.append({
-                    "cliente": turno_futuro.cliente.usuario.get_full_name(),
-                    "turno_actual": turno_futuro.fecha.isoformat()
-                })
+            config = Configuracion.objects.first() or Configuracion()
+            horas_minimas = config.adelanto_min_horas_anticipacion
+            rango_dias = config.adelanto_rango_dias_busqueda
+            max_candidatos = config.adelanto_max_candidatos
+            expira_horas = config.adelanto_expira_horas
+
+            fecha_hora_turno = timezone.make_aware(
+                datetime.datetime.combine(turno.fecha, turno.hora_inicio)
+            )
+            horas_restantes = (fecha_hora_turno - timezone.now()).total_seconds() / 3600
+
+            if horas_restantes >= horas_minimas:
+                fecha_max = fecha_hueco + timedelta(days=rango_dias)
+
+                from django.db.models import Sum
+                duracion_hueco = sum(d.duracion_minutos for d in detalles_turno)
+                categorias_hueco = [d.servicio.categoria_id for d in detalles_turno if d.servicio.categoria_id]
+                categorias_hueco = list({c for c in categorias_hueco if c})
+
+                turnos_base = Turno.objects.filter(
+                    estado=Turno.Estado.CONFIRMADO,
+                    fecha__gt=fecha_hueco,
+                    fecha__lte=fecha_max
+                ).exclude(cliente=cliente_que_cancela)
+
+                if categorias_hueco:
+                    turnos_base = turnos_base.filter(
+                        detalles__servicio__categoria_id__in=categorias_hueco
+                    )
+                else:
+                    turnos_base = turnos_base.filter(
+                        detalles__servicio__in=servicios_hueco
+                    )
+
+                # Buscar turnos CONFIRMADOS con misma duración total
+                turnos_futuros = turnos_base.annotate(
+                    total_duracion=Sum('detalles__duracion_minutos')
+                ).filter(
+                    total_duracion=duracion_hueco
+                ).distinct().order_by('fecha')[:max_candidatos]
+
+                # Crear notificaciones para adelanto
+                for turno_futuro in turnos_futuros:
+                    servicios_str = ', '.join([s.nombre for s in servicios_hueco])
+                    vence_en = timezone.now() + timedelta(hours=expira_horas)
+
+                    Notificacion.objects.create(
+                        usuario=turno_futuro.cliente.usuario,
+                        tipo='ADELANTO',
+                        canal='app',
+                        titulo="¡Oportunidad de Adelantar Turno!",
+                        mensaje=f"Se liberó un espacio para {servicios_str} el {fecha_hueco} a las {hora_hueco.strftime('%H:%M')}. ¿Te gustaría adelantar tu turno del {turno_futuro.fecha}?",
+                        origen_entidad='Turno',
+                        origen_id=turno_futuro.id,
+                        datos_extra={
+                            "fecha_oferta": str(fecha_hueco),
+                            "hora_oferta": hora_hueco.strftime('%H:%M'),
+                            "turno_actual_id": turno_futuro.id,
+                            "turno_cancelado_id": turno.id,
+                            "servicio_ids": [s.id for s in servicios_hueco],
+                            "expira_en": vence_en.isoformat()
+                        }
+                    )
+
+                    candidatos_adelanto.append({
+                        "cliente": turno_futuro.cliente.usuario.get_full_name(),
+                        "turno_actual": turno_futuro.fecha.isoformat()
+                    })
 
             return Response({
                 "mensaje": "Turno cancelado correctamente.",
@@ -1185,11 +1388,110 @@ class TurnoViewSet(viewsets.ModelViewSet):
                         "servicios": [s.nombre for s in servicios_hueco]
                     },
                     "notificaciones_enviadas": len(candidatos_adelanto),
-                    "candidatos": candidatos_adelanto
+                    "candidatos": candidatos_adelanto,
+                    "parametros": {
+                        "min_horas_anticipacion": horas_minimas,
+                        "rango_dias_busqueda": rango_dias,
+                        "max_candidatos": max_candidatos,
+                        "expira_horas": expira_horas
+                    }
                 }
             }, status=200)
 
         return Response({"error": "Acción inválida"}, status=400)
+
+    @action(detail=True, methods=['post'], url_path='gestionar-profesional')
+    def gestionar_profesional(self, request, pk=None):
+        """
+        ACCIÓN SOLO PARA PROFESIONALES Y ADMINS: Permite cancelar/reprogramar turnos sin restricción de 48hs.
+        
+        POST /api/gestion/turnos/{id}/gestionar-profesional/
+        Body:
+        {
+            "accion": "REPROGRAMAR" | "CANCELAR",
+            "nueva_fecha": "YYYY-MM-DD" (solo para REPROGRAMAR),
+            "nueva_hora": "HH:MM" (solo para REPROGRAMAR),
+            "motivo": "Motivo de cancelación" (solo para CANCELAR, opcional)
+        }
+        """
+        import datetime
+        
+        turno = self.get_object()
+        usuario = request.user
+        
+        # ✅ VERIFICAR PERMISOS: Solo profesionales y admins pueden usar este endpoint
+        es_profesional = hasattr(usuario, 'profesional')
+        es_admin = usuario.is_staff
+        
+        if not (es_profesional or es_admin):
+            return Response({
+                "error": "Solo los profesionales y administradores pueden usar esta acción."
+            }, status=403)
+        
+        accion = request.data.get('accion', '').upper()
+        
+        if accion == 'REPROGRAMAR':
+            # Validación de datos
+            nueva_fecha_str = request.data.get('nueva_fecha')
+            nueva_hora_str = request.data.get('nueva_hora')
+            if not nueva_fecha_str or not nueva_hora_str:
+                return Response({"error": "Faltan datos (nueva_fecha, nueva_hora)"}, status=400)
+
+            try:
+                nueva_fecha = datetime.datetime.strptime(nueva_fecha_str, '%Y-%m-%d').date()
+                nueva_hora = datetime.datetime.strptime(nueva_hora_str, '%H:%M').time()
+            except ValueError:
+                return Response({"error": "Formato inválido. Use YYYY-MM-DD y HH:MM"}, status=400)
+
+            # Reprogramar sin restricción de tiempo
+            turno.fecha = nueva_fecha
+            turno.hora_inicio = nueva_hora
+            turno.cambios_realizados = turno.cambios_realizados + 1 if turno.estado == Turno.Estado.CONFIRMADO else turno.cambios_realizados
+            turno.save()
+
+            # Notificar al cliente del cambio
+            if turno.cliente:
+                Notificacion.objects.create(
+                    usuario=turno.cliente.usuario,
+                    tipo='turno_reprogramado_profesional',
+                    canal='app',
+                    titulo="Turno Reprogramado por el Salón",
+                    mensaje=f"Tu turno ha sido reprogramado para el {nueva_fecha.strftime('%d/%m/%Y')} a las {nueva_hora.strftime('%H:%M')}",
+                    origen_entidad='Turno',
+                    origen_id=turno.id
+                )
+
+            return Response({
+                "mensaje": "Turno reprogramado correctamente.",
+                "nueva_fecha": nueva_fecha.isoformat(),
+                "nueva_hora": nueva_hora.strftime('%H:%M')
+            }, status=200)
+
+        elif accion == 'CANCELAR':
+            # Cancelar sin restricción de tiempo
+            turno.estado = Turno.Estado.CANCELADO
+            turno.cancelado_por = usuario
+            turno.motivo_cancelacion = request.data.get('motivo', f'Cancelado por profesional {usuario.get_full_name()}')
+            turno.save()
+
+            # Notificar al cliente de la cancelación
+            if turno.cliente:
+                Notificacion.objects.create(
+                    usuario=turno.cliente.usuario,
+                    tipo='turno_cancelado_profesional',
+                    canal='app',
+                    titulo="Turno Cancelado por el Salón",
+                    mensaje=f"Tu turno del {turno.fecha.strftime('%d/%m/%Y')} a las {turno.hora_inicio.strftime('%H:%M')} ha sido cancelado.",
+                    origen_entidad='Turno',
+                    origen_id=turno.id
+                )
+
+            return Response({
+                "mensaje": "Turno cancelado correctamente.",
+                "estado": "CANCELADO"
+            }, status=200)
+
+        return Response({"error": "Acción inválida (REPROGRAMAR o CANCELAR)"}, status=400)
 
     @action(detail=True, methods=['post'])
     def finalizar_turno(self, request, pk=None):
@@ -1224,7 +1526,7 @@ class TurnoViewSet(viewsets.ModelViewSet):
             )
             
             # Ejecutar el motor diagnóstico automáticamente
-            self._ejecutar_motor_diagnostico(diag)
+            DiagnosticoCapilarViewSet()._ejecutar_motor_diagnostico(diag)
 
         # 3. PROCESO AUTOMATIZADO: Aplicar Reglas de Cuidado
         # Buscamos todos los servicios que se hicieron en este turno
@@ -1350,6 +1652,22 @@ class NotificacionViewSet(viewsets.ReadOnlyModelViewSet):
                 {'error': 'Datos incompletos en la notificación'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        expira_en = notificacion.datos_extra.get('expira_en')
+        if expira_en:
+            try:
+                expira_dt = datetime.datetime.fromisoformat(expira_en)
+                if timezone.is_naive(expira_dt):
+                    expira_dt = timezone.make_aware(expira_dt)
+                if timezone.now() > expira_dt:
+                    notificacion.estado = 'leido'
+                    notificacion.save()
+                    return Response(
+                        {'error': 'La oferta de adelanto expiró.'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            except Exception:
+                pass
         
         try:
             # Extraer datos de la notificación
@@ -1361,6 +1679,26 @@ class NotificacionViewSet(viewsets.ReadOnlyModelViewSet):
                 return Response(
                     {'error': 'Datos incompletos en la oferta'},
                     status=status.HTTP_400_BAD_REQUEST
+                )
+
+            oferta_ya_tomada = Notificacion.objects.filter(
+                tipo='ADELANTO',
+                datos_extra__turno_actual_id=turno_actual_id,
+                datos_extra__fecha_oferta=fecha_oferta,
+                datos_extra__hora_oferta=hora_oferta,
+                datos_extra__aceptada=True
+            ).exclude(id=notificacion.id).exists()
+
+            if oferta_ya_tomada:
+                notificacion.estado = 'leido'
+                notificacion.datos_extra = {
+                    **(notificacion.datos_extra or {}),
+                    'oferta_cerrada': True
+                }
+                notificacion.save()
+                return Response(
+                    {'error': 'Esta oferta ya fue aceptada por otro cliente.'},
+                    status=status.HTTP_409_CONFLICT
                 )
             
             # Obtener el turno
@@ -1378,7 +1716,30 @@ class NotificacionViewSet(viewsets.ReadOnlyModelViewSet):
             
             # Marcar la notificación como leída
             notificacion.estado = 'leido'
+            notificacion.datos_extra = {
+                **(notificacion.datos_extra or {}),
+                'aceptada': True
+            }
             notificacion.save()
+
+            # Cerrar ofertas equivalentes para otros clientes
+            otras_notifs = Notificacion.objects.filter(
+                tipo='ADELANTO',
+                estado='pendiente',
+                datos_extra__turno_actual_id=turno_actual_id,
+                datos_extra__fecha_oferta=fecha_oferta,
+                datos_extra__hora_oferta=hora_oferta
+            ).exclude(id=notificacion.id)
+
+            for otra in otras_notifs:
+                otra.estado = 'leido'
+                otra.titulo = 'Oferta tomada'
+                otra.mensaje = 'Otro cliente ya acepto el adelantamiento. La oferta fue cerrada.'
+                otra.datos_extra = {
+                    **(otra.datos_extra or {}),
+                    'oferta_cerrada': True
+                }
+                otra.save()
             
             return Response({
                 'mensaje': 'Turno adelantado correctamente',
@@ -1457,8 +1818,11 @@ class RutinaViewSet(viewsets.ModelViewSet):
     """
     serializer_class = RutinaSerializer
     permission_classes = [IsAuthenticated]
-
     pagination_class = None
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = RutinaFilter
+    search_fields = ['nombre', 'descripcion']
+    ordering_fields = ['nombre']
     
     def get_queryset(self):
         """
@@ -1952,16 +2316,9 @@ class AdminUsuarioViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """
-        Por defecto muestra solo usuarios ACTIVOS.
-        Si se filtra con is_active=false, muestra los INACTIVOS.
+        Retornar todos los usuarios y dejar que django-filter haga el filtrado.
         """
-        queryset = Usuario.objects.all()
-        
-        # Si NO hay filtro de is_active explícito, mostrar solo activos por defecto
-        if not self.request.query_params.get('is_active'):
-            queryset = queryset.filter(is_active=True)
-        
-        return queryset
+        return Usuario.objects.all()
 
     def perform_destroy(self, instance):
         """
@@ -1992,16 +2349,44 @@ class AdminUsuarioViewSet(viewsets.ModelViewSet):
 # B. CRUD PRODUCTOS
 # ----------------------------------------------------
 class ProductoViewSet(viewsets.ModelViewSet):
-    queryset = Producto.objects.filter(activo=True) # Por defecto mostramos solo activos
+    """
+    ViewSet para gestionar productos del catálogo.
+    Incluye validaciones de stock, acciones personalizadas para alertas de stock bajo,
+    y recomendaciones inteligentes basadas en diagnósticos de clientes.
+    """
     serializer_class = ProductoSerializer
-    permission_classes = [IsAdminUser] # Solo staff gestiona productos
     pagination_class = None
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = ProductoFilter
+    search_fields = ['nombre']
+    ordering_fields = ['nombre', 'precio', 'stock_real']
+
+    def get_queryset(self):
+        """Optimiza queries con prefetch_related para imágenes"""
+        return Producto.objects.filter(activo=True).prefetch_related('imagenes')
+
+    def get_permissions(self):
+        """
+        Permisos dinámicos:
+        - list/retrieve: AllowAny (clientes pueden ver productos)
+        - create/update/destroy: IsAdminUser (solo admins gestionan)
+        - stock_bajo/sugeridos_por_cliente: AllowAny (endpoints públicos)
+        """
+        if self.action in ['list', 'retrieve', 'stock_bajo', 'sugeridos_por_cliente']:
+            permission_classes = [AllowAny]
+        else:
+            permission_classes = [IsAdminUser]
+        return [permission() for permission in permission_classes]
+
+    def perform_update(self, serializer):
+        """Asegura que los cambios se guarden correctamente"""
+        serializer.save()
 
     def destroy(self, request, *args, **kwargs):
         producto = self.get_object()
         
         # Validación 1: Stock en inventario
-        if producto.stock > 0:
+        if producto.stock_real > 0:
             return Response(
                 {"error": "No se puede eliminar: El producto tiene stock físico."}, 
                 status=status.HTTP_400_BAD_REQUEST
@@ -2011,11 +2396,106 @@ class ProductoViewSet(viewsets.ModelViewSet):
         # Asumiendo relación ManyToMany en Rutina -> productos
         # if producto.rutina_set.exists(): ...
         
-        # Si pasa validaciones, Soft Delete o Hard Delete según prefieras.
-        # El requisito dice "Retira producto descontinuado".
+        # Si pasa validaciones, eliminar definitivamente.
+        producto.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=['post'], url_path='desactivar')
+    def desactivar(self, request, pk=None):
+        producto = self.get_object()
+        if not producto.activo:
+            return Response(
+                {"error": "El producto ya está desactivado."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         producto.activo = False
         producto.save()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return Response({"mensaje": "Producto desactivado."}, status=status.HTTP_200_OK)
+
+    # --- 1. ENDPOINT: ALERTA DE STOCK BAJO ---
+    @action(detail=False, methods=['get'])
+    def stock_bajo(self, request):
+        """
+        Devuelve productos cuyo stock disponible es menor o igual al mínimo.
+        Útil para el panel de Yanina para saber qué reabastecer.
+        GET /api/gestion/productos/stock_bajo/
+        """
+        # Filtrar: stock_real - stock_comprometido <= stock_minimo
+        from django.db.models import Q
+        productos = Producto.objects.filter(
+            Q(stock_real__lte=F('stock_minimo')),
+            activo=True
+        )
+        serializer = self.get_serializer(productos, many=True)
+        return Response({
+            "total_productos_bajo_stock": productos.count(),
+            "productos": serializer.data
+        })
+
+    # --- 2. ENDPOINT: RECOMENDACIONES INTELIGENTES (SMART SELLING) ---
+    @action(detail=False, methods=['get'], url_path='sugeridos-cliente')
+    def sugeridos_por_cliente(self, request):
+        """
+        Sugiere productos basados en el último diagnóstico del cliente autenticado.
+        Solo funciona si el cliente está autenticado.
+        GET /api/gestion/productos/sugeridos-cliente/
+        """
+        if not request.user.is_authenticated:
+            return Response(
+                {"error": "Debes estar autenticado para recibir sugerencias personalizadas."},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        try:
+            cliente = request.user.cliente
+        except:
+            return Response(
+                {"error": "Tu usuario no tiene perfil de cliente."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Buscamos el último diagnóstico del cliente
+            ultimo_diagnostico = DiagnosticoCapilar.objects.filter(
+                cliente=cliente
+            ).latest('fecha_diagnostico')
+            
+            # Mapeo de lógica: Diagnóstico -> Compatibilidad de Producto
+            # Si el pelo está dañado, prioridad productos DANADO
+            if ultimo_diagnostico.estado_general and "Dañado" in ultimo_diagnostico.estado_general.nombre:
+                tag_busqueda = 'DANADO'
+            elif ultimo_diagnostico.cuero_cabelludo and "Graso" in ultimo_diagnostico.cuero_cabelludo.nombre:
+                tag_busqueda = 'GRASO'
+            elif ultimo_diagnostico.cuero_cabelludo and "Seco" in ultimo_diagnostico.cuero_cabelludo.nombre:
+                tag_busqueda = 'SECO'
+            elif ultimo_diagnostico.tipo_cabello and ultimo_diagnostico.tipo_cabello.nombre in ["Rizado", "Afro"]:
+                tag_busqueda = 'RIZADO'
+            elif ultimo_diagnostico.tipo_cabello and "Lacio" in ultimo_diagnostico.tipo_cabello.nombre:
+                tag_busqueda = 'LACIO'
+            else:
+                tag_busqueda = 'TODO'
+
+            # Buscamos productos que coincidan y tengan stock
+            sugeridos = Producto.objects.filter(
+                Q(compatibilidad=tag_busqueda) | Q(compatibilidad='TODO'),
+                stock_real__gt=0,
+                activo=True
+            ).order_by('nombre')[:5]  # Limitamos a los mejores 5
+
+            serializer = self.get_serializer(sugeridos, many=True)
+            return Response({
+                "motivo_sugerencia": f"Basado en tu diagnóstico: {tag_busqueda}",
+                "diagnostico_id": ultimo_diagnostico.id,
+                "fecha_diagnostico": ultimo_diagnostico.fecha_diagnostico,
+                "productos_sugeridos": serializer.data
+            }, status=status.HTTP_200_OK)
+
+        except DiagnosticoCapilar.DoesNotExist:
+            return Response({
+                "error": "No tienes diagnósticos previos. Realiza un diagnóstico para recibir recomendaciones personalizadas.",
+                "productos": []
+            }, status=status.HTTP_404_NOT_FOUND)
 
 # ----------------------------------------------------
 # D. CRUD TIPO EQUIPAMIENTO
@@ -2024,25 +2504,36 @@ class TipoEquipamientoViewSet(viewsets.ModelViewSet):
     """
     ViewSet para tipos de equipamiento.
     
-    Devuelve solo tipos que tienen al menos un equipamiento activo en el sistema.
-    Esto evita asignar a servicios tipos de equipamiento sin instancias reales.
+    Lógica de filtrado:
+    - ADMINS: Ven TODOS los tipos (para poder crear nuevos y gestionar)
+    - CLIENTES: Solo ven tipos con equipamiento activo (para seleccionar en servicios)
     """
     serializer_class = TipoEquipamientoSerializer
     permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = TipoEquipamientoFilter
+    search_fields = ['nombre']
+    ordering_fields = ['nombre']
 
     def get_queryset(self):
         """
-        Filtra tipos de equipamiento que tengan al menos un equipamiento activo.
+        Lógica inteligente de filtrado según el rol del usuario.
         """
-        # Obtener IDs de tipos que tienen equipos activos
+        # ADMINS/STAFF: Devolver todos los tipos (necesitan crearlos y gestionarlos)
+        if self.request.user.is_staff:
+            return TipoEquipamiento.objects.all().order_by('nombre')
+        
+        # CLIENTES NORMALES: Solo tipos con equipamiento activo
+        # (para no mostrar tipos de equipamiento sin instancias reales)
         tipos_con_equipos = Equipamiento.objects.filter(
             is_active=True
         ).values_list('tipo_id', flat=True).distinct()
         
-        # Devolver solo los tipos que tienen equipos activos
         queryset = TipoEquipamiento.objects.filter(id__in=tipos_con_equipos).order_by('nombre')
         
         logger.info(f"TiposEquipamiento disponibles para servicios: {queryset.count()}")
+        
+        return queryset
         
         return queryset
 
@@ -2053,6 +2544,10 @@ class TipoEquipamientoViewSet(viewsets.ModelViewSet):
 class EquipamientoViewSet(viewsets.ModelViewSet):
     queryset = Equipamiento.objects.filter(is_active=True) # Solo mostramos los activos
     serializer_class = EquipamientoSerializer
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = EquipamientoFilter
+    search_fields = ['nombre']
+    ordering_fields = ['nombre', 'tipo']
 
     def destroy(self, request, *args, **kwargs):
         """Sobrescribimos el borrado para que sea una Baja Lógica"""
@@ -2230,7 +2725,12 @@ def crear_bloqueo(request):
         # Traemos turnos que ocurran en los días involucrados en el bloqueo
         turnos_candidatos = Turno.objects.filter(
             fecha__range=[bloqueo_inicio.date(), bloqueo_fin.date()],
-            estado__in=[Turno.Estado.SOLICITADO, Turno.Estado.ESPERANDO_SENA, Turno.Estado.CONFIRMADO]
+            estado__in=[
+                Turno.Estado.SOLICITADO,
+                Turno.Estado.ESPERANDO_SENA,
+                Turno.Estado.CONFIRMADO,
+                Turno.Estado.SUGERIDO
+            ]
         )
 
         conflictos = []
@@ -2405,6 +2905,23 @@ class FichaTecnicaViewSet(viewsets.ModelViewSet):
                 {"error": "Turno no encontrado"},
                 status=status.HTTP_404_NOT_FOUND
             )
+
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated, IsAdminUser])
+    def por_cliente(self, request):
+        """
+        GET /fichas-tecnicas/por_cliente/?cliente_id=123
+        Obtiene fichas técnicas asociadas a un cliente.
+        """
+        cliente_id = request.query_params.get('cliente_id')
+        if not cliente_id:
+            return Response(
+                {"error": "Se requiere el parámetro cliente_id"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        fichas = FichaTecnica.objects.filter(detalle_turno__turno__cliente_id=cliente_id).order_by('-fecha_registro')
+        serializer = self.get_serializer(fichas, many=True)
+        return Response(serializer.data)
     
     @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated, IsAdminUser])
     def mis_fichas(self, request):
@@ -2424,6 +2941,7 @@ class RequisitoServicioViewSet(viewsets.ModelViewSet):
     
     Validaciones:
     - El tipo_equipamiento debe existir en la BD antes de asignarlo
+    - El tipo_equipamiento DEBE tener al menos una instancia activa
     - Se valida automáticamente en el serializer y en el modelo
     """
     queryset = RequisitoServicio.objects.all()
@@ -2444,7 +2962,26 @@ class RequisitoServicioViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         """
         Crear un requisito de servicio con validaciones.
+        
+        VALIDACIÓN IMPORTANTE:
+        El tipo_equipamiento DEBE tener al menos una instancia activa.
+        No permite asignar tipos sin equipamiento real.
         """
+        tipo_equipamiento = serializer.validated_data.get('tipo_equipamiento')
+        
+        # Validar que el tipo tenga al menos una instancia activa
+        tiene_instancias = Equipamiento.objects.filter(
+            tipo=tipo_equipamiento,
+            is_active=True
+        ).exists()
+        
+        if not tiene_instancias:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError(
+                f"El tipo de equipamiento '{tipo_equipamiento.nombre}' no tiene instancias activas. "
+                f"Crea un equipamiento en la sección 'Gestión de Equipamiento' antes de asignarlo a un servicio."
+            )
+        
         try:
             # Ejecutar validaciones del modelo
             if hasattr(serializer.validated_data['tipo_equipamiento'], 'clean'):
@@ -2482,7 +3019,11 @@ class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
     """
     ViewSet para gestionar diagnósticos capilares.
     - Lectura: Cualquier usuario autenticado puede ver diagnósticos (especialmente clientes sus propios)
-    - Creación/Edición: Solo staff (profesionales) pueden crear y editar
+    - Creación/Edición: Solo staff (profes
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = DiagnosticoCapilarFilter
+    search_fields = ['cliente__usuario__first_name', 'cliente__usuario__last_name']
+    ordering_fields = ['fecha_creacion']ionales) pueden crear y editar
     """
     queryset = DiagnosticoCapilar.objects.all()
     serializer_class = DiagnosticoCapilarSerializer
@@ -2586,47 +3127,42 @@ class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
         servicio_urgente = None
 
         if regla_matcheada:
-            # Si hay regla experta (ej. Desequilibrio de pH), manda la regla
+            # 1. Asignamos la rutina (con seguridad si es None)
             rutina_final = regla_matcheada.rutina_sugerida
-            # Si la regla tiene una acción que indique necesidad de turno
-            if "TURNO" in regla_matcheada.accion_resultado.upper():
-                servicio_urgente = Servicio.objects.filter(
-                    Q(nombre__icontains="Tratamiento") & Q(nombre__icontains="intensivo")).first()
+            
+            # 2. Asignamos el servicio configurado en la regla
+            if regla_matcheada.servicio_sugerido:
+                servicio_urgente = regla_matcheada.servicio_sugerido
+                # Forzamos que el sistema busque turno aunque Yanina no haya escrito "TURNO" en la acción
+                # ya que al elegir un servicio se sobreentiende la intención.
         else:
             # --- NIVEL 2: MATRIZ DE PUNTUACIÓN (SCORING) ---
-            # Mapeo exacto según tus requerimientos técnicos
+            # Suma usando los puntajes configurados en los catalogos
             puntos = 0
-            
-            # 1. Tipo
-            map_tipo = {"Lacio": 2, "Ondulado": 1, "Rizado": 0, "Afro": 0}
-            # 2. Grosor
-            map_grosor = {"Fino": 2, "Medio": 1, "Grueso": 0}
-            # 3. Porosidad
-            map_porosidad = {"Baja": 4, "Media": 2, "Alta": 0}
-            # 4. Cuero Cabelludo
-            map_cuero = {"Seco": 3, "Normal": 2, "Mixto": 1, "Graso": 0}
-            # 5. Estado General
-            map_estado = {"Dañado": 0, "Normal": 1, "Sano": 2}
+            if diagnostico.tipo_cabello:
+                puntos += diagnostico.tipo_cabello.puntaje_base
+            if diagnostico.grosor_cabello:
+                puntos += diagnostico.grosor_cabello.puntaje_base
+            if diagnostico.porosidad_cabello:
+                puntos += diagnostico.porosidad_cabello.puntaje_base
+            if diagnostico.cuero_cabelludo:
+                puntos += diagnostico.cuero_cabelludo.puntaje_base
+            if diagnostico.estado_general:
+                puntos += diagnostico.estado_general.puntaje_base
 
-            # Sumatoria del Score
-            puntos += map_tipo.get(diagnostico.tipo_cabello.nombre if diagnostico.tipo_cabello else "", 0)
-            puntos += map_grosor.get(diagnostico.grosor_cabello.nombre if diagnostico.grosor_cabello else "", 0)
-            puntos += map_porosidad.get(diagnostico.porosidad_cabello.nombre if diagnostico.porosidad_cabello else "", 0)
-            puntos += map_cuero.get(diagnostico.cuero_cabelludo.nombre if diagnostico.cuero_cabelludo else "", 0)
-            puntos += map_estado.get(diagnostico.estado_general.nombre if diagnostico.estado_general else "", 0)
+            config_diag = ConfiguracionDiagnostico.get_singleton()
+            umbral_critico = config_diag.umbral_critico
+            umbral_alerta = config_diag.umbral_alerta
 
-            # --- UMBRALES DE DECISIÓN (Escala 0-13) ---
-            if puntos <= 5:
-                # ESTADO CRÍTICO: Cabello dañado o muy procesado
-                rutina_final = Rutina.objects.filter(nombre__icontains="Recuperación").first()
-                servicio_urgente = Servicio.objects.filter(
-                    Q(nombre__icontains="Tratamiento") & Q(nombre__icontains="intensivo")).first()
-            elif puntos <= 9:
-                # ESTADO DE ALERTA: Requiere cuidado preventivo
-                rutina_final = Rutina.objects.filter(nombre__icontains="Nutrición").first()
+            if puntos <= umbral_critico:
+                rutina_final = config_diag.rutina_critico
+                servicio_urgente = config_diag.servicio_critico
+            elif puntos <= umbral_alerta:
+                rutina_final = config_diag.rutina_alerta
+                servicio_urgente = config_diag.servicio_alerta
             else:
-                # ESTADO SALUDABLE: Mantenimiento básico
-                rutina_final = Rutina.objects.filter(nombre__icontains="Mantenimiento").first()
+                rutina_final = config_diag.rutina_saludable
+                servicio_urgente = config_diag.servicio_saludable
 
         # --- EJECUCIÓN DE ACCIONES ---
         # 1. Asignar Rutina
@@ -2653,13 +3189,17 @@ class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
         diagnostico.servicio_urgente = servicio_urgente
         diagnostico.rutina_asignada = rutina_final
         diagnostico.rutina_sugerida = rutina_final
+        diagnostico.regla_diagnostico = regla_matcheada
         diagnostico.observaciones = mensaje_profesional
         diagnostico.save()
 
         # 4. Recomendar Turno (Si el score es bajo o la regla lo pide)
         if servicio_urgente:
             try:
-                self._recomendar_primer_hueco_disponible(diagnostico, servicio_urgente)
+                turno_sugerido = self._recomendar_primer_hueco_disponible(diagnostico, servicio_urgente)
+                if turno_sugerido:
+                    diagnostico.turno_sugerido = turno_sugerido
+                    diagnostico.save(update_fields=['turno_sugerido'])
             except Exception as e:
                 import logging
                 logger = logging.getLogger(__name__)
@@ -2668,63 +3208,60 @@ class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
 
     def _generar_mensaje_diagnostico(self, diagnostico, puntos, servicio_urgente, regla_matcheada):
         """
-        Genera un mensaje profesional y personalizado basado en el diagnóstico.
-        Incluye: descripción del problema, puntos, servicio recomendado.
+        Genera un mensaje profesional unificado.
+        Prioriza Reglas Expertas (Nivel 1) sobre la Matriz de Puntuación (Nivel 2).
         """
-        # Obtener nombres de atributos
-        tipo = diagnostico.tipo_cabello.nombre if diagnostico.tipo_cabello else "desconocido"
-        grosor = diagnostico.grosor_cabello.nombre if diagnostico.grosor_cabello else "desconocido"
+        # 1. Obtención de datos básicos
+        servicio_nombre = servicio_urgente.nombre if servicio_urgente else "Tratamiento Especializado"
         porosidad = diagnostico.porosidad_cabello.nombre if diagnostico.porosidad_cabello else "desconocida"
+        grosor = diagnostico.grosor_cabello.nombre if diagnostico.grosor_cabello else "desconocido"
         cuero = diagnostico.cuero_cabelludo.nombre if diagnostico.cuero_cabelludo else "desconocido"
         estado = diagnostico.estado_general.nombre if diagnostico.estado_general else "desconocido"
-        servicio_nombre = servicio_urgente.nombre if servicio_urgente else "Tratamiento Especializado"
-        
-        # Describir el problema según los atributos
+
+        # 2. Construcción descriptiva del problema
         descripciones = []
-        
         if estado == "Dañado":
             descripciones.append("daño estructural severo")
-        
         if porosidad == "Alta":
-            descripciones.append("alta porosidad con pérdida acelerada de hidratación")
+            descripciones.append("porosidad alta con pérdida de hidratación")
         elif porosidad == "Baja":
-            descripciones.append("baja porosidad que dificulta la penetración de nutrientes")
-        
+            descripciones.append("porosidad baja que dificulta la nutrición")
         if grosor == "Fino":
-            descripciones.append("cabello frágil propenso al quiebre")
-        
+            descripciones.append("fragilidad capilar")
         if cuero == "Seco":
-            descripciones.append("cuero cabelludo deshidratado")
-        elif cuero == "Graso":
-            descripciones.append("cuero cabelludo con exceso de sebo")
-        
-        # Construir el mensaje
+            descripciones.append("deshidratación en cuero cabelludo")
+
         problema = " debido a " + ", ".join(descripciones) if descripciones else ""
-        
-        # Generar mensaje según nivel crítico
-        if puntos is not None and puntos <= 5:
-            mensaje = (
-                f"🔴 Diagnóstico Profesional: Detectamos que tu cabello presenta un nivel de daño crítico{problema}. "
-                f"Con un score de {puntos}/13 en nuestro análisis profesional, la fibra capilar necesita atención inmediata "
-                f"para evitar mayor deterioro. Te recomendamos nuestro servicio de {servicio_nombre} "
-                f"que está diseñado específicamente para restaurar y proteger tu cabello. "
-                f"Hemos identificado espacios disponibles para brindarte atención prioritaria."
-            )
-        elif puntos is not None and puntos <= 9:
-            mensaje = (
-                f"🟡 Diagnóstico Profesional: Tu cabello requiere cuidado preventivo especializado{problema}. "
-                f"Con un score de {puntos}/13, está en estado de alerta. "
-                f"Recomendamos comenzar con nuestro {servicio_nombre} para estabilizar la salud capilar "
-                f"y prevenir futuros daños."
-            )
-        else:
-            mensaje = (
-                f"🟢 Diagnóstico Profesional: Tu cabello se encuentra en buen estado general. "
-                f"Con un score de {puntos if puntos is not None else '10+'}/13, recomendamos mantener una rutina de cuidado regular "
-                f"con nuestros servicios de mantenimiento."
-            )
-        
-        return mensaje
+
+        # CASO A: REGLA EXPERTA
+        if regla_matcheada:
+            mensaje_regla = (regla_matcheada.mensaje_resultado or "").strip()
+            if not mensaje_regla:
+                mensaje_regla = (regla_matcheada.accion_resultado or "").strip()
+            return mensaje_regla
+
+        config_diag = ConfiguracionDiagnostico.get_singleton()
+        umbral_critico = config_diag.umbral_critico
+        umbral_alerta = config_diag.umbral_alerta
+
+        def render_mensaje(template):
+            if not template:
+                return ""
+            try:
+                return template.format(score=puntos, servicio=servicio_nombre)
+            except Exception:
+                return template
+
+        # CASO B: ESTADO CRÍTICO
+        if puntos is not None and puntos <= umbral_critico:
+            return render_mensaje(config_diag.mensaje_critico)
+
+        # CASO C: ESTADO DE ALERTA
+        if puntos is not None and puntos <= umbral_alerta:
+            return render_mensaje(config_diag.mensaje_alerta)
+
+        # CASO D: ESTADO SALUDABLE
+        return render_mensaje(config_diag.mensaje_saludable)
 
     def _recomendar_primer_hueco_disponible(self, diagnostico, servicio):
         """
@@ -2834,6 +3371,31 @@ class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
                     # Formato correcto: "2025-01-30" y "14:30"
                     fecha_str = slot_encontrado['fecha'].strftime('%Y-%m-%d')
                     hora_str = slot_encontrado['hora']  # Ya viene como string "HH:MM"
+                    hora_inicio = datetime.strptime(hora_str, '%H:%M').time()
+                    hora_fin_dt = datetime.combine(slot_encontrado['fecha'], hora_inicio) + timedelta(minutes=duracion_minutos)
+                    hora_fin = hora_fin_dt.time()
+
+                    turno_sugerido = Turno.objects.filter(
+                        cliente=diagnostico.cliente,
+                        fecha=slot_encontrado['fecha'],
+                        hora_inicio=hora_inicio
+                    ).first()
+
+                    if not turno_sugerido:
+                        turno_sugerido = Turno.objects.create(
+                            cliente=diagnostico.cliente,
+                            profesional=slot_encontrado['profesional'],
+                            fecha=slot_encontrado['fecha'],
+                            hora_inicio=hora_inicio,
+                            hora_fin_calculada=hora_fin,
+                            estado=Turno.Estado.SUGERIDO
+                        )
+                        DetalleTurno.objects.create(
+                            turno=turno_sugerido,
+                            servicio=servicio,
+                            precio_historico=servicio.precio_base or 0,
+                            duracion_minutos=duracion_minutos
+                        )
                     
                     # Usar el mensaje profesional del diagnóstico que ya fue generado
                     mensaje_notificacion = diagnostico.observaciones or "Te recomendamos agendar tu cita"
@@ -2847,22 +3409,26 @@ class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
                             "fecha": fecha_str,
                             "hora": hora_str,
                             "servicio_id": servicio.id,
-                            "profesional_id": slot_encontrado['profesional'].id
+                            "profesional_id": slot_encontrado['profesional'].id,
+                            "turno_id": turno_sugerido.id
                         }
                     )
                     logger.info(f"[DIAGNOSTICO] OK - Notificacion creada (ID: {notif.id})")
+                    return turno_sugerido
                 except Exception as e:
                     logger.error(f"[DIAGNOSTICO] Error creando notificacion: {str(e)}")
                     import traceback
                     traceback.print_exc()
             else:
                 logger.warning(f"[DIAGNOSTICO] AVISO - No se encontro disponibilidad en los proximos 30 dias para {servicio.nombre}")
+                return None
         
         except Exception as e:
             logger.error(f"[DIAGNOSTICO] Error en _recomendar_primer_hueco_disponible: {str(e)}")
             import traceback
             traceback.print_exc()
             logger.error(traceback.format_exc())
+            return None
 
 
 # ============================================
@@ -2879,94 +3445,7 @@ class CategoriaProductoViewSet(viewsets.ModelViewSet):
     pagination_class = None
 
 
-class ProductoViewSet(viewsets.ModelViewSet):
-    """
-    ViewSet para gestionar productos del catálogo.
-    Incluye acciones personalizadas para alertas de stock y recomendaciones inteligentes.
-    """
-    queryset = Producto.objects.filter(activo=True)
-    serializer_class = ProductoSerializer
-    permission_classes = [AllowAny]
-    pagination_class = None
 
-    # --- 1. ENDPOINT: ALERTA DE STOCK BAJO ---
-    @action(detail=False, methods=['get'])
-    def stock_bajo(self, request):
-        """
-        Devuelve productos cuyo stock es menor o igual al mínimo.
-        Útil para el panel de Yanina para saber qué reabastecer.
-        GET /api/gestion/productos/stock_bajo/
-        """
-        productos = Producto.objects.filter(stock__lte=F('stock_minimo'), activo=True)
-        serializer = self.get_serializer(productos, many=True)
-        return Response({
-            "total_productos_bajo_stock": productos.count(),
-            "productos": serializer.data
-        })
-
-    # --- 2. ENDPOINT: RECOMENDACIONES INTELIGENTES (SMART SELLING) ---
-    @action(detail=False, methods=['get'], url_path='sugeridos-cliente')
-    def sugeridos_por_cliente(self, request):
-        """
-        Sugiere productos basados en el último diagnóstico del cliente autenticado.
-        Solo funciona si el cliente está autenticado.
-        GET /api/gestion/productos/sugeridos-cliente/
-        """
-        if not request.user.is_authenticated:
-            return Response(
-                {"error": "Debes estar autenticado para recibir sugerencias personalizadas."},
-                status=status.HTTP_401_UNAUTHORIZED
-            )
-        
-        try:
-            cliente = request.user.cliente
-        except:
-            return Response(
-                {"error": "Tu usuario no tiene perfil de cliente."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        try:
-            # Buscamos el último diagnóstico del cliente
-            ultimo_diagnostico = DiagnosticoCapilar.objects.filter(
-                cliente=cliente
-            ).latest('fecha_diagnostico')
-            
-            # Mapeo de lógica: Diagnóstico -> Compatibilidad de Producto
-            # Si el pelo está dañado, prioridad productos DANADO
-            if ultimo_diagnostico.estado_general and "Dañado" in ultimo_diagnostico.estado_general.nombre:
-                tag_busqueda = 'DANADO'
-            elif ultimo_diagnostico.cuero_cabelludo and "Graso" in ultimo_diagnostico.cuero_cabelludo.nombre:
-                tag_busqueda = 'GRASO'
-            elif ultimo_diagnostico.cuero_cabelludo and "Seco" in ultimo_diagnostico.cuero_cabelludo.nombre:
-                tag_busqueda = 'SECO'
-            elif ultimo_diagnostico.tipo_cabello and ultimo_diagnostico.tipo_cabello.nombre in ["Rizado", "Afro"]:
-                tag_busqueda = 'RIZADO'
-            elif ultimo_diagnostico.tipo_cabello and "Lacio" in ultimo_diagnostico.tipo_cabello.nombre:
-                tag_busqueda = 'LACIO'
-            else:
-                tag_busqueda = 'TODO'
-
-            # Buscamos productos que coincidan y tengan stock
-            sugeridos = Producto.objects.filter(
-                Q(compatibilidad=tag_busqueda) | Q(compatibilidad='TODO'),
-                stock__gt=0,
-                activo=True
-            ).order_by('nombre')[:5]  # Limitamos a los mejores 5
-
-            serializer = self.get_serializer(sugeridos, many=True)
-            return Response({
-                "motivo_sugerencia": f"Basado en tu diagnóstico: {tag_busqueda}",
-                "diagnostico_id": ultimo_diagnostico.id,
-                "fecha_diagnostico": ultimo_diagnostico.fecha_diagnostico,
-                "productos_sugeridos": serializer.data
-            }, status=status.HTTP_200_OK)
-
-        except DiagnosticoCapilar.DoesNotExist:
-            return Response({
-                "error": "No tienes diagnósticos previos. Realiza un diagnóstico para recibir recomendaciones personalizadas.",
-                "productos": []
-            }, status=status.HTTP_404_NOT_FOUND)
 
 # ============================================
 # VIEWSET PARA PROMOCIONES
@@ -3026,6 +3505,76 @@ class PromocionViewSet(viewsets.ModelViewSet):
                 )
         
         return queryset.order_by('-fecha_inicio')
+
+    def perform_create(self, serializer):
+        promocion = serializer.save()
+        if promocion.es_sugerencia_automatica:
+            promocion.estado_sugerencia = 'PENDIENTE'
+            promocion.is_active = False
+        elif not promocion.estado_sugerencia:
+            promocion.estado_sugerencia = 'ACEPTADA'
+        promocion.save()
+
+    @action(detail=False, methods=['get'], url_path='sugerencias')
+    def sugerencias(self, request):
+        """
+        Lista sugerencias automáticas de combos pendientes.
+        GET /api/gestion/promociones/sugerencias/
+        """
+        if not request.user.is_staff:
+            return Response({'error': 'No autorizado'}, status=status.HTTP_403_FORBIDDEN)
+
+        queryset = Promocion.objects.filter(
+            tipo='COMBO',
+            es_sugerencia_automatica=True,
+            estado_sugerencia='PENDIENTE'
+        ).order_by('-fecha_creacion')
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='publicar')
+    def publicar(self, request, pk=None):
+        """
+        Publica una sugerencia de combo.
+        POST /api/gestion/promociones/{id}/publicar/
+        """
+        if not request.user.is_staff:
+            return Response({'error': 'No autorizado'}, status=status.HTTP_403_FORBIDDEN)
+
+        promocion = self.get_object()
+        data = request.data or {}
+
+        if 'nombre' in data:
+            promocion.nombre = data.get('nombre', promocion.nombre)
+        if 'descripcion' in data:
+            promocion.descripcion = data.get('descripcion', promocion.descripcion)
+        if 'descuento_porcentaje' in data:
+            promocion.descuento_porcentaje = data.get('descuento_porcentaje', promocion.descuento_porcentaje)
+
+        promocion.is_active = True
+        promocion.estado_sugerencia = 'ACEPTADA'
+        promocion.save()
+
+        serializer = self.get_serializer(promocion)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='rechazar')
+    def rechazar(self, request, pk=None):
+        """
+        Rechaza una sugerencia de combo.
+        POST /api/gestion/promociones/{id}/rechazar/
+        """
+        if not request.user.is_staff:
+            return Response({'error': 'No autorizado'}, status=status.HTTP_403_FORBIDDEN)
+
+        promocion = self.get_object()
+        promocion.is_active = False
+        promocion.estado_sugerencia = 'RECHAZADA'
+        promocion.save()
+
+        serializer = self.get_serializer(promocion)
+        return Response(serializer.data, status=status.HTTP_200_OK)
     
     @action(detail=False, methods=['post'], url_path='escanear-huecos')
     def escanear_huecos(self, request):
@@ -3169,6 +3718,61 @@ class PromocionViewSet(viewsets.ModelViewSet):
 
 
 # ============================================================================
+# FUNCIONES AUXILIARES - WHATSAPP
+# ============================================================================
+
+def generar_link_whatsapp(carrito_items, total):
+    """
+    Genera un enlace de WhatsApp con los detalles del pedido.
+    Usa el formato configurado en el modelo Configuracion.
+    
+    Args:
+        carrito_items: QuerySet de CarritoItem
+        total: Total del carrito (float)
+    
+    Returns:
+        str: URL de WhatsApp Web con mensaje pre-redactado
+    """
+    import urllib.parse
+    
+    # Obtener configuración
+    from gestion.models import Configuracion
+    config = Configuracion.objects.first()
+    
+    # Valores por defecto
+    telefono = config.whatsapp_numero if config else "5491122334455"
+    saludo = config.whatsapp_saludo if config else "¡Hola Bohemia Hair! 👋 Quiero realizar el siguiente pedido:"
+    cierre = config.whatsapp_cierre if config else "\n💰 *Total estimado: ${total}*\n\n¿Me confirman la disponibilidad y los detalles del envío?"
+    formato_producto = config.whatsapp_formato_producto if config else "• {nombre}\n  Cantidad: {cantidad} x ${precio:.2f} = ${subtotal:.2f}"
+    
+    # Construir mensaje
+    mensaje = saludo + "\n\n"
+    
+    for item in carrito_items:
+        precio_unitario = float(item.producto.precio)
+        subtotal = precio_unitario * item.cantidad
+        
+        linea_producto = formato_producto.format(
+            nombre=item.producto.nombre,
+            cantidad=item.cantidad,
+            precio=precio_unitario,
+            subtotal=subtotal
+        )
+        mensaje += linea_producto + "\n"
+    
+    # Agregar cierre con total formateado
+    mensaje_cierre = cierre.replace("{total}", f"${total:.2f}")
+    mensaje += mensaje_cierre
+    
+    # Codificar para URL
+    mensaje_encoded = urllib.parse.quote(mensaje)
+    
+    logger.info(f"Link de WhatsApp generado. Número: {telefono} | Total: ${total}")
+    
+    return f"https://wa.me/{telefono}?text={mensaje_encoded}"
+
+
+# ============================================================================
 # SECCIÓN CARRITO DE COMPRAS
 # ============================================================================
 
@@ -3191,7 +3795,7 @@ class CarritoViewSet(viewsets.ModelViewSet):
         """Cada cliente solo ve su propio carrito."""
         try:
             cliente = Cliente.objects.get(usuario=self.request.user)
-            return Carrito.objects.filter(cliente=cliente)
+            return Carrito.objects.filter(cliente=cliente).prefetch_related('items', 'items__producto', 'items__producto__imagenes')
         except Cliente.DoesNotExist:
             return Carrito.objects.none()
 
@@ -3202,12 +3806,39 @@ class CarritoViewSet(viewsets.ModelViewSet):
             carrito, created = Carrito.objects.get_or_create(cliente=cliente)
             return carrito
         except Cliente.DoesNotExist:
-            raise ValidationError('El usuario no es cliente del sistema')
+            logger.warning(f"Usuario {self.request.user.email} no tiene perfil de cliente")
+            raise ValidationError('El usuario no tiene perfil de cliente. Por favor, contacta al administrador.')
 
-    @action(detail=False, methods=['post'])
+    @action(detail=False, methods=['get'], url_path='mi-carrito')
+    def mi_carrito(self, request):
+        """
+        GET /api/gestion/carrito/mi-carrito/
+        Retorna el carrito del usuario autenticado.
+        """
+        try:
+            carrito = self.get_carrito_cliente()
+            # Usar prefetch para optimizar
+            carrito = Carrito.objects.filter(id=carrito.id).prefetch_related(
+                'items', 'items__producto', 'items__producto__imagenes'
+            ).first()
+            serializer = CarritoSerializer(carrito, context={'request': request})
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except ValidationError as e:
+            return Response(
+                {'error': str(e.detail[0]) if hasattr(e, 'detail') else str(e)},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except Exception as e:
+            logger.error(f"Error obteniendo carrito: {str(e)}", exc_info=True)
+            return Response(
+                {'error': f'Error al obtener el carrito: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['post'], url_path='agregar-producto')
     def agregar_producto(self, request):
         """
-        POST /api/carrito/agregar_producto/
+        POST /api/gestion/carrito/agregar-producto/
         Body: {
             "producto_id": 5,
             "cantidad": 2
@@ -3234,10 +3865,10 @@ class CarritoViewSet(viewsets.ModelViewSet):
             # Obtener producto
             producto = Producto.objects.get(id=producto_id, activo=True)
             
-            # Validar stock
-            if producto.stock < cantidad:
+            # Validar stock disponible
+            if producto.stock_disponible < cantidad:
                 return Response(
-                    {'error': f'Stock insuficiente. Disponible: {producto.stock}'},
+                    {'error': f'Stock insuficiente. Disponible: {producto.stock_disponible}'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
@@ -3260,7 +3891,7 @@ class CarritoViewSet(viewsets.ModelViewSet):
             
             logger.info(f"Producto {producto.id} agregado al carrito de {self.request.user.email}")
             
-            serializer = CarritoSerializer(carrito)
+            serializer = CarritoSerializer(carrito, context={'request': self.request})
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         
         except Producto.DoesNotExist:
@@ -3270,20 +3901,20 @@ class CarritoViewSet(viewsets.ModelViewSet):
             )
         except ValidationError as e:
             return Response(
-                {'error': str(e.detail[0])},
+                {'error': str(e.detail[0]) if hasattr(e, 'detail') else str(e)},
                 status=status.HTTP_403_FORBIDDEN
             )
         except Exception as e:
-            logger.error(f"Error agregando producto: {str(e)}")
+            logger.error(f"Error agregando producto: {str(e)}", exc_info=True)
             return Response(
-                {'error': 'Error al agregar producto'},
+                {'error': f'Error al agregar producto: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-    @action(detail=False, methods=['post'])
+    @action(detail=False, methods=['post'], url_path='eliminar-producto', url_name='eliminar_producto')
     def eliminar_producto(self, request):
         """
-        POST /api/carrito/eliminar_producto/
+        POST /api/gestion/carrito/eliminar-producto/
         Body: {"carrito_item_id": 10}
         Elimina un producto específico del carrito.
         """
@@ -3318,10 +3949,10 @@ class CarritoViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-    @action(detail=False, methods=['delete'])
+    @action(detail=False, methods=['delete'], url_path='vaciar')
     def vaciar(self, request):
         """
-        DELETE /api/carrito/vaciar/
+        DELETE /api/gestion/carrito/vaciar/
         Vacía todos los items del carrito.
         """
         try:
@@ -3340,10 +3971,10 @@ class CarritoViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-    @action(detail=False, methods=['post'])
+    @action(detail=False, methods=['post'], url_path='finalizar-compra')
     def finalizar_compra(self, request):
         """
-        POST /api/carrito/finalizar_compra/
+        POST /api/gestion/carrito/finalizar-compra/
         Procesa la compra: valida stock, resta inventario y limpia el carrito.
         
         Cumple con REQ-11: Auditoría de Stock
@@ -3358,13 +3989,14 @@ class CarritoViewSet(viewsets.ModelViewSet):
                 )
             
             # 1. VALIDAR STOCK de todos los productos ANTES de procesar
-            items_carrito = carrito.items.all()
+            items_carrito = list(carrito.items.select_related('producto'))
+            items_count = len(items_carrito)
             for item in items_carrito:
-                if item.producto.stock < item.cantidad:
+                if item.producto.stock_disponible < item.cantidad:
                     return Response(
                         {
                             'error': f'Stock insuficiente de {item.producto.nombre}',
-                            'disponible': item.producto.stock,
+                            'disponible': item.producto.stock_disponible,
                             'solicitado': item.cantidad
                         },
                         status=status.HTTP_400_BAD_REQUEST
@@ -3374,29 +4006,50 @@ class CarritoViewSet(viewsets.ModelViewSet):
             with transaction.atomic():
                 total_venta = 0
                 
-                # Restar stock y calcular total
+                # Crear orden y reservar stock
+                cliente = carrito.cliente
+                # Max length is 20; keep code compact but readable.
+                codigo = f"OC{timezone.now().strftime('%y%m%d%H%M%S')}{uuid4().hex[:4].upper()}"
+                orden = OrdenCompra.objects.create(
+                    codigo=codigo,
+                    cliente=cliente,
+                    estado='PENDIENTE',
+                    total=0
+                )
+
                 for item in items_carrito:
                     producto = item.producto
                     cantidad = item.cantidad
                     precio_unitario = producto.precio
                     subtotal = cantidad * precio_unitario
-                    
-                    # Actualizar stock (REQ-11 - Auditoría)
-                    producto.stock -= cantidad
-                    producto.save()
-                    
-                    total_venta += subtotal
-                    
-                    logger.info(
-                        f"Stock actualizado: {producto.nombre} | "
-                        f"Cantidad: {cantidad} | Nuevo stock: {producto.stock}"
+
+                    OrdenItem.objects.create(
+                        orden=orden,
+                        producto=producto,
+                        cantidad=cantidad,
+                        precio_historico=precio_unitario
                     )
-                
+
+                    # Reservar stock comprometido
+                    producto.stock_comprometido = max(0, producto.stock_comprometido + cantidad)
+                    producto.save()
+
+                    total_venta += subtotal
+
+                    logger.info(
+                        f"Stock comprometido: {producto.nombre} | "
+                        f"Cantidad: {cantidad} | Comprometido: {producto.stock_comprometido}"
+                    )
+
+                orden.total = total_venta
+                orden.save(update_fields=['total'])
+
+                whatsapp_link = generar_link_whatsapp(items_carrito, total_venta)
+
                 # 3. LIMPIAR CARRITO
                 carrito.items.all().delete()
-                
+
                 # 4. CREAR NOTIFICACIÓN DE COMPRA EXITOSA
-                cliente = carrito.cliente
                 Notificacion.objects.create(
                     usuario=cliente.usuario,
                     tipo='alerta',
@@ -3404,23 +4057,26 @@ class CarritoViewSet(viewsets.ModelViewSet):
                     mensaje=f'Tu compra por ${total_venta:.2f} ha sido procesada exitosamente.',
                     datos_extra={
                         'total': float(total_venta),
-                        'cantidad_items': items_carrito.count(),
+                        'cantidad_items': items_count,
                         'contexto': 'compra_exitosa'
                     },
-                    canales=['app', 'email'],
+                    canal='app',
                     estado='pendiente'
                 )
             
             logger.info(
                 f"Compra completada por {self.request.user.email} | "
-                f"Total: ${total_venta:.2f} | Items: {items_carrito.count()}"
+                f"Total: ${total_venta:.2f} | Items: {items_count}"
             )
             
             serializer = CarritoSerializer(carrito)
             return Response(
                 {
                     'status': 'Compra realizada con éxito',
-                    'total': f'${total_venta:.2f}',
+                    'orden_id': orden.id,
+                    'total': float(total_venta),
+                    'items_count': items_count,
+                    'whatsapp_link': whatsapp_link,
                     'carrito': serializer.data
                 },
                 status=status.HTTP_200_OK
@@ -3438,10 +4094,198 @@ class CarritoViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['post'])
+    def generar_pedido_whatsapp(self, request):
+        """
+        POST /api/gestion/carrito/generar_pedido_whatsapp/
+        
+        Genera un enlace de WhatsApp con los detalles del pedido.
+        El cliente se redirige a WhatsApp para confirmar el pedido.
+        
+        Response:
+        {
+            "whatsapp_link": "https://wa.me/5491122334455?text=...",
+            "total": 1250.00,
+            "items_count": 3
+        }
+        """
+        try:
+            carrito = self.get_carrito_cliente()
+            
+            if not carrito.items.exists():
+                return Response(
+                    {'error': 'El carrito está vacío'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Obtener items con relaciones
+            items_carrito = carrito.items.select_related('producto').all()
+            
+            # Calcular total
+            total_pedido = sum(
+                float(item.producto.precio) * item.cantidad 
+                for item in items_carrito
+            )
+            
+            # Generar link de WhatsApp
+            whatsapp_link = generar_link_whatsapp(items_carrito, total_pedido)
+            
+            logger.info(
+                f"Pedido WhatsApp generado para {self.request.user.email} | "
+                f"Total: ${total_pedido:.2f} | Items: {items_carrito.count()}"
+            )
+            
+            return Response(
+                {
+                    'whatsapp_link': whatsapp_link,
+                    'total': round(total_pedido, 2),
+                    'items_count': items_carrito.count(),
+                    'mensaje': 'Redirigiendo a WhatsApp...'
+                },
+                status=status.HTTP_200_OK
+            )
+        
+        except ValidationError as e:
+            return Response(
+                {'error': str(e.detail[0]) if hasattr(e, 'detail') else str(e)},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except Exception as e:
+            logger.error(f"Error generando pedido WhatsApp: {str(e)}", exc_info=True)
+            return Response(
+                {'error': 'Error al generar link de WhatsApp'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['post'])
+    def registrar_intencion_compra(self, request):
+        """
+        POST /api/gestion/carrito/registrar_intencion_compra/
+        
+        Registra una intención de compra (orden pendiente) en la base de datos
+        para auditoría cuando el cliente abre WhatsApp.
+        
+        Body:
+        {
+            "items": [{"producto_id": 1, "nombre": "X", "cantidad": 2, "precio": 100, "subtotal": 200}],
+            "total": 200
+        }
+        
+        Response:
+        {
+            "orden_id": 123,
+            "estado": "PENDIENTE",
+            "fecha_creacion": "2026-02-04T10:30:00Z"
+        }
+        """
+        try:
+            carrito = self.get_carrito_cliente()
+            items_carrito = carrito.items.select_related('producto').all()
+            
+            if not items_carrito.exists():
+                return Response(
+                    {'error': 'El carrito está vacío'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Construir JSON de items
+            items_json = []
+            total_pedido = 0
+            
+            for item in items_carrito:
+                precio = float(item.producto.precio)
+                subtotal = precio * item.cantidad
+                total_pedido += subtotal
+                
+                items_json.append({
+                    'producto_id': item.producto.id,
+                    'nombre': item.producto.nombre,
+                    'cantidad': item.cantidad,
+                    'precio': precio,
+                    'subtotal': subtotal
+                })
+            
+            # Obtener cliente
+            from usuarios.models import Cliente
+            cliente = Cliente.objects.filter(usuario=self.request.user).first()
+            
+            # Validar disponibilidad de stock y comprometer
+            from gestion.models import OrdenPendiente, Auditoria
+            
+            for item in items_carrito:
+                producto = item.producto
+                if producto.stock_disponible < item.cantidad:
+                    return Response(
+                        {
+                            'error': f"Stock insuficiente para {producto.nombre}. "
+                                   f"Disponible: {producto.stock_disponible}, Solicitado: {item.cantidad}"
+                        },
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            # Crear orden pendiente
+            orden = OrdenPendiente.objects.create(
+                cliente=cliente,
+                estado='PENDIENTE',
+                items_json=items_json,
+                monto_total=total_pedido
+            )
+            
+            # Comprometer el stock para cada item
+            for item in items_carrito:
+                producto = item.producto
+                producto.stock_comprometido += item.cantidad
+                producto.save()
+                logger.info(f"Stock comprometido: {producto.nombre} +{item.cantidad} (Disponible: {producto.stock_disponible})")
+            
+            # Registrar en auditoría
+            try:
+                ip_address = self.request.META.get('REMOTE_ADDR', '')
+                Auditoria.objects.create(
+                    tabla='OrdenPendiente',
+                    registro_id=orden.id,
+                    usuario=self.request.user,
+                    accion='ALTA',
+                    valor_nuevo={
+                        'id': orden.id,
+                        'estado': orden.estado,
+                        'monto_total': float(orden.monto_total),
+                        'items_count': len(items_json),
+                        'items_resumido': ', '.join([f"{item['nombre']} (x{item['cantidad']})" for item in items_json[:3]]),
+                        'fecha_creacion': orden.fecha_creacion.isoformat()
+                    },
+                    ip_address=ip_address
+                )
+            except Exception as audit_error:
+                logger.warning(f"No se registró auditoría para orden {orden.id}: {str(audit_error)}")
+            
+            logger.info(
+                f"Intención de compra registrada - Orden ID: {orden.id} | "
+                f"Usuario: {self.request.user.email} | Total: ${total_pedido:.2f}"
+            )
+            
+            return Response(
+                {
+                    'orden_id': orden.id,
+                    'estado': orden.estado,
+                    'fecha_creacion': orden.fecha_creacion.isoformat(),
+                    'monto_total': float(orden.monto_total),
+                    'items_count': len(items_json)
+                },
+                status=status.HTTP_201_CREATED
+            )
+        
+        except Exception as e:
+            logger.error(f"Error registrando intención de compra: {str(e)}", exc_info=True)
+            return Response(
+                {'error': 'Error al registrar la orden'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['get'], url_path='sugerencias_inteligentes')
     def sugerencias_inteligentes(self, request):
         """
-        GET /api/carrito/sugerencias_inteligentes/
+        GET /api/gestion/carrito/sugerencias_inteligentes/
         
         Analiza el diagnóstico del cliente y los productos en su carrito
         para sugerir productos complementarios basados en su tipo de cabello.
@@ -3487,9 +4331,11 @@ class CarritoViewSet(viewsets.ModelViewSet):
                 razon = 'cuero cabelludo graso'
             
             # 5. Buscar productos sugeridos
+            # Nota: stock_disponible es una propiedad calculada, no un campo de BD
+            # Por eso filtramos por stock_real > 0
             sugeridos = Producto.objects.filter(
                 compatibilidad=tag_busqueda,
-                stock__gt=0,
+                stock_real__gt=0,
                 activo=True
             ).exclude(
                 id__in=productos_en_carrito
@@ -3557,6 +4403,11 @@ class ContenidoEducativoViewSet(viewsets.ModelViewSet):
         - Clientes ven solo PUBLICADO
         """
         user = self.request.user
+
+        if user.is_staff or user.is_superuser:
+            return ContenidoEducativo.objects.filter(
+                activo=True
+            ).select_related('autor').prefetch_related('me_gusta_recibidos', 'guardados_recibidos')
         
         # Verificar si es profesional
         try:
@@ -3579,12 +4430,28 @@ class ContenidoEducativoViewSet(viewsets.ModelViewSet):
             serializer.save(autor=personal)
             logger.info(f"Contenido creado por {personal.nombre}")
         except AttributeError:
-            raise PermissionDenied("Solo profesionales pueden crear contenido")
+            user = self.request.user
+            if user.is_staff or user.is_superuser:
+                nombre = (user.first_name or 'Admin').strip() or 'Admin'
+                apellido = (user.last_name or 'Sistema').strip() or 'Sistema'
+                personal, _ = Personal.objects.get_or_create(
+                    usuario=user,
+                    defaults={
+                        'nombre': nombre,
+                        'apellido': apellido,
+                        'rol': 'administrador',
+                        'activo': True
+                    }
+                )
+                serializer.save(autor=personal)
+                logger.info(f"Contenido creado por admin {user.email}")
+            else:
+                raise PermissionDenied("Solo profesionales pueden crear contenido")
 
     def perform_update(self, serializer):
         """Solo el autor puede editar su contenido."""
         contenido = self.get_object()
-        if contenido.autor.usuario != self.request.user:
+        if not (self.request.user.is_staff or self.request.user.is_superuser) and contenido.autor.usuario != self.request.user:
             raise PermissionDenied("Solo el autor puede editar este contenido")
         serializer.save()
 
@@ -3827,4 +4694,538 @@ class ContenidoGuardadoViewSet(viewsets.ModelViewSet):
             raise PermissionDenied("Solo clientes pueden guardar contenido")
 
 
+# ============================================================================
+# VIEWSET PARA ÓRDENES PENDIENTES (AUDITORÍA)
+# ============================================================================
+
+class OrdenPendienteViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestionar órdenes pendientes (intenciones de compra por WhatsApp).
+    Solo Yanina (admin) puede verlas y confirmar pagos.
+    """
+    queryset = OrdenPendiente.objects.all()
+    serializer_class = OrdenPendienteSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['estado', 'cliente', 'fecha_creacion']
+    search_fields = ['cliente__usuario__email', 'cliente__usuario__first_name', 'cliente__usuario__last_name']
+    ordering_fields = ['fecha_creacion', 'monto_total']
+    ordering = ['-fecha_creacion']
+    
+    def get_queryset(self):
+        """
+        Los clientes ven solo sus propias órdenes.
+        Los admins ven todas.
+        """
+        if self.request.user.is_staff:
+            return OrdenPendiente.objects.all()
+        
+        try:
+            cliente = self.request.user.cliente
+            return OrdenPendiente.objects.filter(cliente=cliente)
+        except Cliente.DoesNotExist:
+            return OrdenPendiente.objects.none()
+    
+    @action(detail=True, methods=['post'])
+    def confirmar_pago(self, request, pk=None):
+        """
+        POST /api/gestion/ordenes-pendientes/{id}/confirmar_pago/
+        
+        Yanina confirma que recibió el pago por WhatsApp.
+        Descontar del stock_real y limpiar el stock_comprometido.
+        """
+        try:
+            orden = self.get_object()
+            
+            if orden.estado != 'PENDIENTE':
+                return Response(
+                    {'error': f'Solo se puede confirmar órdenes PENDIENTES. Estado actual: {orden.estado}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Procesar cada item: descontar stock_real y limpiar stock_comprometido
+            for item_data in orden.items_json:
+                try:
+                    producto = Producto.objects.get(id=item_data['producto_id'])
+                    cantidad = item_data['cantidad']
+                    
+                    # Validar que hay suficiente stock comprometido
+                    if producto.stock_comprometido < cantidad:
+                        return Response(
+                            {'error': f'Stock comprometido inconsistente para {producto.nombre}'},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    # Descontar del real y limpiar del comprometido
+                    producto.stock_real = max(0, producto.stock_real - cantidad)
+                    producto.stock_comprometido -= cantidad
+                    producto.save()
+                    
+                    logger.info(
+                        f"Stock descontado: {producto.nombre} -({cantidad}) | "
+                        f"Real: {producto.stock_real}, Comprometido: {producto.stock_comprometido}"
+                    )
+                except Producto.DoesNotExist:
+                    logger.warning(f"Producto {item_data['producto_id']} no encontrado en orden {orden.id}")
+                except Exception as e:
+                    logger.error(f"Error procesando producto en orden {orden.id}: {str(e)}")
+            
+            # Marcar orden como completada
+            orden.estado = 'COMPLETADA'
+            orden.fecha_completacion = timezone.now()
+            orden.save()
+            
+            logger.info(f"Orden {orden.id} completada. Stock descontado. Usuario: {request.user.email}")
+            
+            return Response(
+                {
+                    'status': 'Pago confirmado',
+                    'orden_id': orden.id,
+                    'estado': orden.estado,
+                    'fecha_completacion': orden.fecha_completacion.isoformat(),
+                    'mensaje': 'Stock descontado del inventario físico'
+                },
+                status=status.HTTP_200_OK
+            )
+        
+        except Exception as e:
+            logger.error(f"Error confirmando pago de orden {pk}: {str(e)}", exc_info=True)
+            return Response(
+                {'error': 'Error al confirmar el pago'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=True, methods=['post'])
+    def confirmar_entrega(self, request, pk=None):
+        """
+        POST /api/gestion/ordenes-pendientes/{id}/confirmar_entrega/
+        
+        Confirmar que la orden ha sido entregada.
+        Actualiza el estado a COMPLETADA y resta del stock_real y stock_comprometido.
+        """
+        try:
+            orden = self.get_object()
+            
+            if orden.estado not in ['PENDIENTE', 'CONFIRMADA']:
+                return Response(
+                    {'error': f'Solo se pueden completar órdenes PENDIENTES o CONFIRMADAS. Estado actual: {orden.estado}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Procesar cada item: descontar stock_real y stock_comprometido
+            with transaction.atomic():
+                # Soportar tanto el nuevo formato (items relacionados) como el viejo (items_json)
+                if hasattr(orden, 'items') and orden.items.exists():
+                    # Nuevo formato: usar la relación OrdenPendienteItem
+                    for item in orden.items.all():
+                        if not item.producto:
+                            logger.warning(f"Item {item.id} sin producto en orden {orden.id}")
+                            continue
+                        
+                        producto = item.producto
+                        cantidad = item.cantidad
+                        
+                        # Validar stock
+                        if producto.stock_real < cantidad:
+                            return Response(
+                                {'error': f'Stock insuficiente de {producto.nombre}. Disponible: {producto.stock_real}'},
+                                status=status.HTTP_400_BAD_REQUEST
+                            )
+                        
+                        # Descontar stock
+                        producto.stock_real -= cantidad
+                        producto.stock_comprometido = max(0, producto.stock_comprometido - cantidad)
+                        producto.save()
+                        
+                        logger.info(
+                            f"Stock descontado: {producto.nombre} -({cantidad}) | "
+                            f"Real: {producto.stock_real}, Comprometido: {producto.stock_comprometido}"
+                        )
+                else:
+                    # Viejo formato: usar items_json
+                    for item_data in orden.items_json:
+                        try:
+                            producto = Producto.objects.get(id=item_data['producto_id'])
+                            cantidad = item_data['cantidad']
+                            
+                            if producto.stock_real < cantidad:
+                                return Response(
+                                    {'error': f'Stock insuficiente de {producto.nombre}'},
+                                    status=status.HTTP_400_BAD_REQUEST
+                                )
+                            
+                            producto.stock_real = max(0, producto.stock_real - cantidad)
+                            producto.stock_comprometido = max(0, producto.stock_comprometido - cantidad)
+                            producto.save()
+                            
+                            logger.info(
+                                f"Stock descontado: {producto.nombre} -({cantidad}) | "
+                                f"Real: {producto.stock_real}, Comprometido: {producto.stock_comprometido}"
+                            )
+                        except Producto.DoesNotExist:
+                            logger.warning(f"Producto {item_data['producto_id']} no encontrado")
+                
+                # Marcar orden como completada
+                orden.estado = 'COMPLETADA'
+                orden.fecha_completacion = timezone.now()
+                orden.save()
+            
+            logger.info(f"Orden {orden.id} entregada. Stock actualizado. Usuario: {request.user.email}")
+            
+            return Response(
+                {
+                    'status': 'Entrega confirmada',
+                    'orden_id': orden.id,
+                    'estado': orden.estado,
+                    'fecha_completacion': orden.fecha_completacion.isoformat(),
+                    'mensaje': 'Orden completada y stock actualizado'
+                },
+                status=status.HTTP_200_OK
+            )
+        
+        except Exception as e:
+            logger.error(f"Error confirmando entrega de orden {pk}: {str(e)}", exc_info=True)
+            return Response(
+                {'error': 'Error al confirmar la entrega'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['post'])
+    def registrar_pago(self, request, pk=None):
+        """
+        POST /api/gestion/ordenes-compra/{id}/registrar_pago/
+
+        Permite al profesional registrar un pago asociado a la orden.
+        """
+        if not request.user.is_staff:
+            raise PermissionDenied("No tienes permisos para registrar pagos.")
+
+        orden = self.get_object()
+        serializer = PagoSerializer(data=request.data, context={'request': request})
+
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        pago = serializer.save(orden=orden)
+
+        return Response(
+            {
+                'status': 'Pago registrado',
+                'pago': PagoSerializer(pago, context={'request': request}).data
+            },
+            status=status.HTTP_201_CREATED
+        )
+
+    @action(detail=True, methods=['post'])
+    def cancelar(self, request, pk=None):
+        """
+        POST /api/gestion/ordenes-compra/{id}/cancelar/
+
+        Cancela una orden pendiente y libera el stock comprometido.
+        """
+        try:
+            orden = self.get_object()
+
+            if orden.estado != 'PENDIENTE':
+                return Response(
+                    {'error': f'Solo se puede cancelar órdenes PENDIENTES. Estado actual: {orden.estado}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            with transaction.atomic():
+                for item in orden.items.all():
+                    producto = item.producto
+                    cantidad = item.cantidad
+
+                    producto.stock_comprometido = max(0, producto.stock_comprometido - cantidad)
+                    producto.save()
+
+                    logger.info(
+                        f"Stock liberado: {producto.nombre} -({cantidad}) | "
+                        f"Comprometido: {producto.stock_comprometido}"
+                    )
+
+                orden.estado = 'CANCELADO'
+                orden.save()
+
+            serializer = self.get_serializer(orden)
+            return Response(
+                {
+                    'status': 'Orden cancelada',
+                    'orden': serializer.data,
+                    'mensaje': 'Orden cancelada y stock liberado'
+                },
+                status=status.HTTP_200_OK
+            )
+
+        except Exception as e:
+            logger.error(f"Error cancelando orden {pk}: {str(e)}", exc_info=True)
+            return Response(
+                {'error': 'Error al cancelar la orden'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+# ============================================
+# VIEWSET PARA ORDEN DE COMPRA
+# ============================================
+
+class OrdenCompraViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestionar órdenes de compra de clientes.
+    Segun el usuario, estos son pedidos efectuados por clientes que pasan a ser órdenes completadas.
+    """
+    queryset = OrdenCompra.objects.all()
+    serializer_class = OrdenCompraSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['estado', 'cliente', 'creado_at']
+    search_fields = ['cliente__usuario__email', 'codigo', 'cliente__usuario__first_name']
+    ordering_fields = ['creado_at', 'total']
+    ordering = ['-creado_at']
+    
+    def get_queryset(self):
+        """
+        Los clientes ven solo sus propias órdenes.
+        Los admins ven todas.
+        """
+        if self.request.user.is_staff:
+            return OrdenCompra.objects.all()
+        
+        try:
+            cliente = self.request.user.cliente
+            return OrdenCompra.objects.filter(cliente=cliente)
+        except Cliente.DoesNotExist:
+            return OrdenCompra.objects.none()
+
+    @action(detail=True, methods=['post'])
+    def registrar_pago(self, request, pk=None):
+        """
+        POST /api/gestion/ordenes-compra/{id}/registrar_pago/
+
+        Permite al profesional registrar un pago asociado a la orden.
+        """
+        if not request.user.is_staff:
+            raise PermissionDenied("No tienes permisos para registrar pagos.")
+
+        orden = self.get_object()
+        serializer = PagoSerializer(data=request.data, context={'request': request})
+
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        pago = serializer.save(orden=orden)
+
+        return Response(
+            {
+                'status': 'Pago registrado',
+                'pago': PagoSerializer(pago, context={'request': request}).data
+            },
+            status=status.HTTP_201_CREATED
+        )
+    
+    @action(detail=True, methods=['post'])
+    def confirmar_entrega(self, request, pk=None):
+        """
+        POST /api/gestion/ordenes-compra/{id}/confirmar_entrega/
+        
+        Confirma la entrega de una orden de compra a un cliente.
+        Descontar del stock_real y del stock_comprometido.
+        """
+        try:
+            orden = self.get_object()
+            
+            if orden.estado != 'PENDIENTE':
+                return Response(
+                    {'error': f'Solo se puede confirmar órdenes PENDIENTES. Estado actual: {orden.estado}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Usar transacción atómica para garantizar consistencia
+            with transaction.atomic():
+                # Procesar cada item de la orden
+                for item in orden.items.all():
+                    try:
+                        producto = item.producto
+                        cantidad = item.cantidad
+                        
+                        # Validar que hay suficiente stock comprometido
+                        if producto.stock_comprometido < cantidad:
+                            return Response(
+                                {'error': f'Stock comprometido inconsistente para {producto.nombre}'},
+                                status=status.HTTP_400_BAD_REQUEST
+                            )
+                        
+                        # Descontar del real y del comprometido
+                        producto.stock_real = max(0, producto.stock_real - cantidad)
+                        producto.stock_comprometido = max(0, producto.stock_comprometido - cantidad)
+                        producto.save()
+                        
+                        logger.info(
+                            f"Stock descontado: {producto.nombre} -({cantidad}) | "
+                            f"Real: {producto.stock_real}, Comprometido: {producto.stock_comprometido}"
+                        )
+                    except Exception as e:
+                        logger.warning(f"Error procesando item {item.id}: {str(e)}")
+                        raise
+                
+                # Marcar orden como completada
+                orden.estado = 'COMPLETADO'
+                orden.save()
+            
+            logger.info(f"Orden {orden.id} completada. Stock actualizado. Usuario: {request.user.email}")
+            
+            # Serializar la orden actualizada
+            serializer = self.get_serializer(orden)
+            
+            return Response(
+                {
+                    'status': 'Entrega confirmada',
+                    'orden': serializer.data,
+                    'mensaje': 'Orden completada y stock actualizado'
+                },
+                status=status.HTTP_200_OK
+            )
+        
+        except Exception as e:
+            logger.error(f"Error confirmando entrega de orden {pk}: {str(e)}", exc_info=True)
+            return Response(
+                {'error': 'Error al confirmar la entrega'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['post'])
+    def cancelar(self, request, pk=None):
+        """
+        POST /api/gestion/ordenes-compra/{id}/cancelar/
+
+        Cancela una orden pendiente y libera el stock comprometido.
+        """
+        try:
+            orden = self.get_object()
+
+            if orden.estado != 'PENDIENTE':
+                return Response(
+                    {'error': f'Solo se puede cancelar órdenes PENDIENTES. Estado actual: {orden.estado}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            with transaction.atomic():
+                for item in orden.items.all():
+                    producto = item.producto
+                    cantidad = item.cantidad
+
+                    producto.stock_comprometido = max(0, producto.stock_comprometido - cantidad)
+                    producto.save()
+
+                    logger.info(
+                        f"Stock liberado: {producto.nombre} -({cantidad}) | "
+                        f"Comprometido: {producto.stock_comprometido}"
+                    )
+
+                orden.estado = 'CANCELADO'
+                orden.save()
+
+            serializer = self.get_serializer(orden)
+            return Response(
+                {
+                    'status': 'Orden cancelada',
+                    'orden': serializer.data,
+                    'mensaje': 'Orden cancelada y stock liberado'
+                },
+                status=status.HTTP_200_OK
+            )
+
+        except Exception as e:
+            logger.error(f"Error cancelando orden {pk}: {str(e)}", exc_info=True)
+            return Response(
+                {'error': 'Error al cancelar la orden'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class PagoViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    ViewSet para listar pagos (Caja).
+    Solo admins/staff pueden acceder.
+    """
+    queryset = Pago.objects.all().select_related(
+        'orden__cliente__usuario',
+        'turno__cliente__usuario'
+    )
+    serializer_class = PagoSerializer
+    permission_classes = [IsAdminUser]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['metodo_pago', 'es_sena']
+    search_fields = [
+        'orden__codigo',
+        'orden__cliente__usuario__email',
+        'turno__cliente__usuario__email'
+    ]
+    ordering_fields = ['fecha_pago', 'monto']
+    ordering = ['-fecha_pago']
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        solo_hoy = self.request.query_params.get('solo_hoy')
+        fecha = self.request.query_params.get('fecha')
+
+        if solo_hoy and solo_hoy.lower() in ['1', 'true', 'si', 'yes']:
+            queryset = queryset.filter(fecha_pago__date=timezone.localdate())
+
+        if fecha:
+            try:
+                fecha_dt = datetime.strptime(fecha, '%Y-%m-%d').date()
+                queryset = queryset.filter(fecha_pago__date=fecha_dt)
+            except ValueError:
+                pass
+
+        return queryset
+# ============================================
+# VIEWSET PARA IMÁGENES DE PRODUCTOS
+# ============================================
+
+class ImagenProductoViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestionar imágenes adicionales de productos.
+    Permite agregar múltiples imágenes a un producto existente.
+    """
+    queryset = ImagenProducto.objects.all()
+    serializer_class = ImagenProductoSerializer
+    pagination_class = None
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
+    filterset_fields = ['producto']
+    ordering_fields = ['orden', 'fecha_creacion']
+    ordering = ['orden', 'fecha_creacion']
+
+    def get_permissions(self):
+        """
+        Permisos dinámicos:
+        - list/retrieve: AllowAny (clientes pueden ver imágenes)
+        - create/update/destroy: IsAdminUser (solo admins gestionan)
+        """
+        if self.action in ['list', 'retrieve']:
+            permission_classes = [AllowAny]
+        else:
+            permission_classes = [IsAdminUser]
+        return [permission() for permission in permission_classes]
+
+    def perform_create(self, serializer):
+        """
+        Guarda la imagen asociada al producto.
+        Se ejecuta la optimización de imagen automáticamente en el modelo.
+        """
+        try:
+            serializer.save()
+        except Exception as e:
+            logger.error(f"Error al guardar imagen de producto: {str(e)}")
+            raise
+
+    def create(self, request, *args, **kwargs):
+        if 'imagen' not in request.FILES:
+            return Response(
+                {'detail': 'No se envio imagen, no se creo registro.'},
+                status=status.HTTP_200_OK
+            )
+        return super().create(request, *args, **kwargs)
 
