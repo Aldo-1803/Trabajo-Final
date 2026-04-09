@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { IconBolt, IconCalendar, IconClock, IconGift, IconSparkles } from './common/Icons';
 import axios from 'axios';
 
 const PromocionesCarte = () => {
@@ -100,7 +101,7 @@ const PromocionesCarte = () => {
     return (
         <div className="mb-8 animate-fade-in">
             <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
-                <span className="text-2xl">✨</span> Promociones Exclusivas
+                <IconSparkles className="h-6 w-6" /> Promociones Exclusivas
             </h2>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -144,7 +145,10 @@ const PromocionesTarjeta = ({ promocion, tiempoRestante }) => {
                         : 'bg-white text-purple-600'
                     }
                 `}>
-                    {esLastMinute ? '⏰ LAST MINUTE' : '🎁 RETOQUE'}
+                    <span className="inline-flex items-center gap-2">
+                        {esLastMinute ? <IconClock className="h-4 w-4" /> : <IconGift className="h-4 w-4" />}
+                        {esLastMinute ? 'LAST MINUTE' : 'RETOQUE'}
+                    </span>
                 </span>
             </div>
 
@@ -169,7 +173,9 @@ const PromocionesTarjeta = ({ promocion, tiempoRestante }) => {
                 {/* Información específica por tipo */}
                 {esLastMinute && tiempoRestante?.vigente && (
                     <div className="bg-white bg-opacity-20 backdrop-blur-sm rounded-lg p-3 mb-3 border border-white border-opacity-30">
-                        <div className="text-xs opacity-95 mb-2">⏱️ Válido por:</div>
+                        <div className="text-xs opacity-95 mb-2 inline-flex items-center gap-2">
+                            <IconClock className="h-4 w-4" /> Válido por:
+                        </div>
                         <div className="font-mono text-2xl font-bold drop-shadow-lg">
                             {String(tiempoRestante.horas).padStart(2, '0')}:
                             {String(tiempoRestante.minutos).padStart(2, '0')}:
@@ -181,8 +187,8 @@ const PromocionesTarjeta = ({ promocion, tiempoRestante }) => {
 
                 {esRetoque && (
                     <div className="bg-white bg-opacity-20 backdrop-blur-sm rounded-lg p-3 mb-3 border border-white border-opacity-30">
-                        <div className="text-xs opacity-95">
-                            💄 Pack especial para tu próximo retoque
+                        <div className="text-xs opacity-95 inline-flex items-center gap-2">
+                            <IconSparkles className="h-4 w-4" /> Pack especial para tu próximo retoque
                         </div>
                     </div>
                 )}
@@ -211,7 +217,10 @@ const PromocionesTarjeta = ({ promocion, tiempoRestante }) => {
                         : 'bg-white text-purple-600 hover:bg-purple-50 hover:shadow-purple-300/50'
                     }
                 `}>
-                    {esLastMinute ? '⚡ Agendar Ahora' : '📅 Ver Servicio'}
+                    <span className="inline-flex items-center gap-2">
+                        {esLastMinute ? <IconBolt className="h-4 w-4" /> : <IconCalendar className="h-4 w-4" />}
+                        {esLastMinute ? 'Agendar Ahora' : 'Ver Servicio'}
+                    </span>
                 </button>
             </div>
 

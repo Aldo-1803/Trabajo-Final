@@ -15,12 +15,11 @@ const EditorContenidoEducativo = () => {
         descripcion: '',
         contenido_texto: '',
         multimedia_url: '',
-        tipo: 'blog',
+        tipo: 'TEXTO',
         estado: 'BORRADOR',
-        activo: true,
     });
 
-    const tipos = ['blog', 'video', 'tutorial', 'consejo', 'caso_estudio'];
+    const tipos = ['IMAGEN', 'VIDEO', 'TEXTO'];
     const estados = ['BORRADOR', 'PUBLICADO', 'ARCHIVADO'];
 
     useEffect(() => {
@@ -34,7 +33,7 @@ const EditorContenidoEducativo = () => {
         
         try {
             const res = await axios.get(
-                `http://127.0.0.1:8000/api/contenido-educativo/${id}/`,
+                `http://127.0.0.1:8000/api/gestion/contenido-educativo/${id}/`,
                 { headers: { 'Authorization': `Bearer ${token}` } }
             );
             
@@ -43,9 +42,8 @@ const EditorContenidoEducativo = () => {
                 descripcion: res.data.descripcion || '',
                 contenido_texto: res.data.contenido_texto || '',
                 multimedia_url: res.data.multimedia_url || '',
-                tipo: res.data.tipo || 'blog',
+                tipo: res.data.tipo || 'TEXTO',
                 estado: res.data.estado || 'BORRADOR',
-                activo: res.data.activo !== false,
             });
         } catch (error) {
             console.error('Error al cargar contenido:', error);
@@ -80,7 +78,21 @@ const EditorContenidoEducativo = () => {
             return;
         }
 
+        if (formData.tipo !== 'TEXTO' && !formData.multimedia_url.trim()) {
+            toast.error('La URL de multimedia es requerida para imagen o video');
+            return;
+        }
+
+        if (formData.tipo === 'TEXTO' && formData.multimedia_url.trim()) {
+            toast.error('El contenido de texto no debe incluir multimedia');
+            return;
+        }
+
         const token = localStorage.getItem('access_token');
+        const payload = {
+            ...formData,
+            multimedia_url: formData.tipo === 'TEXTO' ? '' : formData.multimedia_url.trim()
+        };
         
         try {
             setGuardando(true);
@@ -88,16 +100,16 @@ const EditorContenidoEducativo = () => {
             if (id) {
                 // Actualizar contenido existente
                 await axios.put(
-                    `http://127.0.0.1:8000/api/contenido-educativo/${id}/`,
-                    formData,
+                    `http://127.0.0.1:8000/api/gestion/contenido-educativo/${id}/`,
+                    payload,
                     { headers: { 'Authorization': `Bearer ${token}` } }
                 );
                 toast.success('Contenido actualizado correctamente');
             } else {
                 // Crear nuevo contenido
                 await axios.post(
-                    'http://127.0.0.1:8000/api/contenido-educativo/',
-                    formData,
+                    'http://127.0.0.1:8000/api/gestion/contenido-educativo/',
+                    payload,
                     { headers: { 'Authorization': `Bearer ${token}` } }
                 );
                 toast.success('Contenido creado correctamente');
@@ -106,7 +118,12 @@ const EditorContenidoEducativo = () => {
             navigate(ADMIN_ROUTES.CONTENIDO_EDUCATIVO);
         } catch (error) {
             console.error('Error al guardar:', error);
-            toast.error('Error al guardar el contenido');
+            const serverData = error.response?.data;
+            const serverMessage = serverData?.error
+                || (serverData && typeof serverData === 'object'
+                    ? Object.values(serverData).flat().join(' ')
+                    : null);
+            toast.error(serverMessage || 'Error al guardar el contenido');
         } finally {
             setGuardando(false);
         }
@@ -248,9 +265,9 @@ const EditorContenidoEducativo = () => {
                                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2"
                                     style={{ outlineColor: '#817773' }}
                                 >
-                                    {tipos.map(tipo => (
+                                    {tipos.map((tipo) => (
                                         <option key={tipo} value={tipo}>
-                                            {tipo.replace(/_/g, ' ').charAt(0).toUpperCase() + tipo.replace(/_/g, ' ').slice(1)}
+                                            {tipo === 'IMAGEN' ? 'Imagen' : tipo === 'VIDEO' ? 'Video' : 'Texto'}
                                         </option>
                                     ))}
                                 </select>
@@ -274,22 +291,6 @@ const EditorContenidoEducativo = () => {
                                     ))}
                                 </select>
                             </div>
-                        </div>
-
-                        {/* Checkbox Activo */}
-                        <div className="flex items-center">
-                            <input
-                                type="checkbox"
-                                id="activo"
-                                name="activo"
-                                checked={formData.activo}
-                                onChange={handleInputChange}
-                                className="rounded"
-                                style={{ accentColor: '#817773' }}
-                            />
-                            <label htmlFor="activo" className="ml-3 text-sm font-medium text-gray-700">
-                                Contenido activo (visible para clientes)
-                            </label>
                         </div>
 
                         {/* Botones de Acción */}

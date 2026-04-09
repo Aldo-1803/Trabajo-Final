@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { contenidoEducativoAPI } from '../api/contenidoEducativoAPI';
+import { IconBookmark, IconBook, IconHeart, IconPencil, IconTrash } from './common/Icons';
 
 const TarjetaContenido = ({ 
     contenido, 
@@ -9,6 +11,7 @@ const TarjetaContenido = ({
     onLike,
     onGuardar 
 }) => {
+    const navigate = useNavigate();
     const [cargando, setCargando] = useState(false);
     const [meGusta, setMeGusta] = useState(contenido.ya_le_gusta || false);
     const [guardado, setGuardado] = useState(contenido.ya_esta_guardado || false);
@@ -46,12 +49,15 @@ const TarjetaContenido = ({
     // Obtener color para badge de tipo
     const getBadgeColor = (tipo) => {
         const colores = {
-            'articulo': { bg: '#E3F2FD', text: '#1565C0' },
+            'imagen': { bg: '#E3F2FD', text: '#1565C0' },
             'video': { bg: '#FCE4EC', text: '#C2185B' },
-            'tutorial': { bg: '#E8F5E9', text: '#2E7D32' },
-            'consejo': { bg: '#FFF3E0', text: '#E65100' },
+            'texto': { bg: '#E8F5E9', text: '#2E7D32' },
         };
-        return colores[(tipo || 'articulo').toLowerCase()] || { bg: '#F5F5F5', text: '#616161' };
+        return colores[(tipo || 'texto').toLowerCase()] || { bg: '#F5F5F5', text: '#616161' };
+    };
+
+    const handleVerDetalle = () => {
+        navigate(`/cliente/contenido/${contenido.id}`);
     };
 
     return (
@@ -68,10 +74,10 @@ const TarjetaContenido = ({
                         </p>
                     </div>
                     <span className="inline-block px-2 py-1 text-xs rounded-full" style={{
-                        backgroundColor: contenido.estado === 'PUBLICADO' ? '#E8F5E8' : '#FFF3CD',
-                        color: contenido.estado === 'PUBLICADO' ? '#2E7D2E' : '#856404'
+                        backgroundColor: getBadgeColor(contenido.tipo).bg,
+                        color: getBadgeColor(contenido.tipo).text
                     }}>
-                        {contenido.estado}
+                        {contenido.tipo}
                     </span>
                 </div>
             </div>
@@ -112,6 +118,13 @@ const TarjetaContenido = ({
                     {contenido.descripcion}
                 </p>
 
+                {/* TEXTO PRINCIPAL */}
+                {contenido.tipo === 'TEXTO' && contenido.contenido_texto && (
+                    <p className="text-sm mb-3 line-clamp-3" style={{ color: '#5A5451' }}>
+                        {contenido.contenido_texto}
+                    </p>
+                )}
+
                 {/* TAGS */}
                 {contenido.tags && (
                     <div className="mb-3 flex flex-wrap gap-2">
@@ -129,12 +142,29 @@ const TarjetaContenido = ({
 
                 {/* STATS */}
                 <div className="flex gap-4 mb-4 text-xs" style={{ color: '#8B8682' }}>
-                    <span>❤️ {totalLikes} likes</span>
-                    <span>🔖 {contenido.total_guardados} guardados</span>
+                    <span className="inline-flex items-center gap-1">
+                        <IconHeart className="h-4 w-4" /> {totalLikes} likes
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                        <IconBookmark className="h-4 w-4" /> {contenido.total_guardados} guardados
+                    </span>
                 </div>
 
                 {/* ACCIONES */}
                 <div className="flex gap-2">
+                    {!esPropio && (
+                        <button
+                            onClick={handleVerDetalle}
+                            className="flex-1 py-2 px-3 rounded-lg transition text-sm font-bold"
+                            style={{ backgroundColor: '#817773', color: '#fff' }}
+                            onMouseEnter={(e) => (e.target.style.backgroundColor = '#5A5451')}
+                            onMouseLeave={(e) => (e.target.style.backgroundColor = '#817773')}
+                        >
+                            <span className="inline-flex items-center gap-2">
+                                <IconBook className="h-4 w-4" /> Ver detalle
+                            </span>
+                        </button>
+                    )}
                     {!esPropio && (
                         <>
                             <button
@@ -152,7 +182,9 @@ const TarjetaContenido = ({
                                     if (!meGusta) e.target.style.backgroundColor = '#E8DCC4';
                                 }}
                             >
-                                {meGusta ? '❤️ Liked' : '🤍 Like'}
+                                <span className="inline-flex items-center gap-2">
+                                    <IconHeart className="h-4 w-4" /> {meGusta ? 'Me gusta' : 'Dar Me Gusta'}
+                                </span>
                             </button>
 
                             <button
@@ -170,7 +202,9 @@ const TarjetaContenido = ({
                                     if (!guardado) e.target.style.backgroundColor = '#F5F5EB';
                                 }}
                             >
-                                {guardado ? '🔖 Guardado' : '📌 Guardar'}
+                                <span className="inline-flex items-center gap-2">
+                                    <IconBookmark className="h-4 w-4" /> {guardado ? 'Guardado' : 'Guardar'}
+                                </span>
                             </button>
                         </>
                     )}
@@ -184,7 +218,9 @@ const TarjetaContenido = ({
                                 onMouseEnter={(e) => e.target.style.backgroundColor = '#5A5451'}
                                 onMouseLeave={(e) => e.target.style.backgroundColor = '#817773'}
                             >
-                                ✏️ Editar
+                                <span className="inline-flex items-center gap-2">
+                                    <IconPencil className="h-4 w-4" /> Editar
+                                </span>
                             </button>
 
                             <button
@@ -194,7 +230,9 @@ const TarjetaContenido = ({
                                 onMouseEnter={(e) => e.target.style.backgroundColor = '#A03030'}
                                 onMouseLeave={(e) => e.target.style.backgroundColor = '#C73E3E'}
                             >
-                                🗑️ Eliminar
+                                <span className="inline-flex items-center gap-2">
+                                    <IconTrash className="h-4 w-4" /> Eliminar
+                                </span>
                             </button>
                         </>
                     )}

@@ -7,6 +7,10 @@ const GestionClientes = () => {
     const [clientes, setClientes] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
+    const [modalAbierto, setModalAbierto] = useState(false);
+    const [clienteSeleccionado, setClienteSeleccionado] = useState(null);
+    const [fichasCliente, setFichasCliente] = useState([]);
+    const [cargandoFichas, setCargandoFichas] = useState(false);
     const navigate = useNavigate();
 
     // --- CARGA DE DATOS ---
@@ -41,6 +45,31 @@ const GestionClientes = () => {
         fetchClientes();
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    const abrirModalFicha = async (cliente) => {
+        setClienteSeleccionado(cliente);
+        setModalAbierto(true);
+        setCargandoFichas(true);
+        try {
+            const token = localStorage.getItem('access_token');
+            const res = await axios.get(
+                `http://127.0.0.1:8000/api/gestion/fichas-tecnicas/por_cliente/?cliente_id=${cliente.id}`,
+                { headers: { 'Authorization': `Bearer ${token}` } }
+            );
+            setFichasCliente(res.data || []);
+        } catch (err) {
+            console.error('Error cargando fichas del cliente:', err);
+            setFichasCliente([]);
+        } finally {
+            setCargandoFichas(false);
+        }
+    };
+
+    const cerrarModalFicha = () => {
+        setModalAbierto(false);
+        setClienteSeleccionado(null);
+        setFichasCliente([]);
+    };
 
     // --- RENDERIZADO ---
     return (
@@ -118,7 +147,7 @@ const GestionClientes = () => {
                                                     style={{ color: '#817773' }}
                                                     onMouseEnter={(e) => e.target.style.color = '#6B5F5B'}
                                                     onMouseLeave={(e) => e.target.style.color = '#817773'}
-                                                    onClick={() => alert(`Ver historial de ${cliente.first_name} (Próximamente)`)}
+                                                    onClick={() => abrirModalFicha(cliente)}
                                                 >
                                                     Ver Ficha
                                                 </button>
@@ -131,6 +160,60 @@ const GestionClientes = () => {
                     )}
                 </div>
             </div>
+            {modalAbierto && clienteSeleccionado && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+                        <div className="sticky top-0 bg-white border-b px-6 py-4 flex justify-between items-center">
+                            <div>
+                                <h2 className="text-xl font-bold text-gray-800">Historial Técnico</h2>
+                                <p className="text-sm text-gray-500">{clienteSeleccionado.first_name} {clienteSeleccionado.last_name}</p>
+                            </div>
+                            <button
+                                onClick={cerrarModalFicha}
+                                className="text-gray-500 hover:text-gray-700 text-2xl"
+                            >
+                                ✕
+                            </button>
+                        </div>
+                        <div className="p-6 space-y-4">
+                            {cargandoFichas ? (
+                                <div className="text-center text-gray-500">Cargando historial...</div>
+                            ) : fichasCliente.length === 0 ? (
+                                <div className="text-center text-gray-500">No hay fichas técnicas registradas.</div>
+                            ) : (
+                                fichasCliente.map((ficha) => (
+                                    <div key={ficha.id} className="border rounded-lg p-4 shadow-sm bg-gray-50">
+                                        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                                            <div className="font-semibold text-gray-800">
+                                                {ficha.servicio_nombre} · {new Date(ficha.turno_fecha).toLocaleDateString('es-AR')}
+                                            </div>
+                                            <div className="text-xs text-gray-500">Profesional: {ficha.profesional_nombre || '—'}</div>
+                                        </div>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div>
+                                                <p className="text-xs font-semibold text-gray-500">Fórmula</p>
+                                                <p className="text-sm text-gray-700 whitespace-pre-wrap">{ficha.formula || '—'}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-xs font-semibold text-gray-500">Comentario al cliente</p>
+                                                <p className="text-sm text-gray-700 whitespace-pre-wrap">{ficha.comentario_cliente || '—'}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-xs font-semibold text-gray-500">Observaciones internas</p>
+                                                <p className="text-sm text-gray-700 whitespace-pre-wrap">{ficha.observaciones_proceso || '—'}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-xs font-semibold text-gray-500">Rutina recomendada</p>
+                                                <p className="text-sm text-gray-700">{ficha.rutina_recomendada_nombre || '—'}</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

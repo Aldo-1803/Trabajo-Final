@@ -10,13 +10,13 @@ import { contenidoEducativoAPI } from './src/api/contenidoEducativoAPI';
 // TEST 1: Obtener contenidos publicados
 // ============================================
 async function testGetPublicados() {
-    console.log('🧪 TEST 1: getPublicados()');
+    console.log('TEST 1: getPublicados()');
     try {
         const contenidos = await contenidoEducativoAPI.getPublicados();
-        console.log('✅ Contenidos cargados:', contenidos);
+        console.log('Contenidos cargados:', contenidos);
         return true;
     } catch (error) {
-        console.error('❌ Error:', error);
+        console.error('Error:', error);
         return false;
     }
 }
@@ -25,13 +25,13 @@ async function testGetPublicados() {
 // TEST 2: Obtener contenido por ID
 // ============================================
 async function testGetById() {
-    console.log('🧪 TEST 2: getById(1)');
+    console.log('TEST 2: getById(1)');
     try {
         const contenido = await contenidoEducativoAPI.getById(1);
-        console.log('✅ Contenido cargado:', contenido);
+        console.log('Contenido cargado:', contenido);
         return true;
     } catch (error) {
-        console.error('❌ Error:', error);
+        console.error('Error:', error);
         return false;
     }
 }
@@ -40,13 +40,13 @@ async function testGetById() {
 // TEST 3: Dar like
 // ============================================
 async function testLike() {
-    console.log('🧪 TEST 3: like(1)');
+    console.log('TEST 3: like(1)');
     try {
         const resultado = await contenidoEducativoAPI.like(1);
-        console.log('✅ Like registrado:', resultado);
+        console.log('Like registrado:', resultado);
         return true;
     } catch (error) {
-        console.error('❌ Error:', error);
+        console.error('Error:', error);
         return false;
     }
 }
@@ -55,13 +55,13 @@ async function testLike() {
 // TEST 4: Guardar contenido
 // ============================================
 async function testGuardar() {
-    console.log('🧪 TEST 4: guardar(1)');
+    console.log('TEST 4: guardar(1)');
     try {
         const resultado = await contenidoEducativoAPI.guardar(1);
-        console.log('✅ Contenido guardado:', resultado);
+        console.log('Contenido guardado:', resultado);
         return true;
     } catch (error) {
-        console.error('❌ Error:', error);
+        console.error('Error:', error);
         return false;
     }
 }
@@ -70,13 +70,13 @@ async function testGuardar() {
 // TEST 5: Obtener mis guardados
 // ============================================
 async function testMisGuardados() {
-    console.log('🧪 TEST 5: getMisGuardados()');
+    console.log('TEST 5: getMisGuardados()');
     try {
         const guardados = await contenidoEducativoAPI.getMisGuardados();
-        console.log('✅ Mis guardados:', guardados);
+        console.log('Mis guardados:', guardados);
         return true;
     } catch (error) {
-        console.error('❌ Error:', error);
+        console.error('Error:', error);
         return false;
     }
 }
@@ -85,7 +85,7 @@ async function testMisGuardados() {
 // EJECUTAR TODOS LOS TESTS
 // ============================================
 async function runAllTests() {
-    console.log('🚀 Iniciando tests del servicio API de Contenido Educativo...\n');
+    console.log('Iniciando tests del servicio API de Contenido Educativo...\n');
     
     const results = [];
     results.push(await testGetPublicados());
@@ -107,11 +107,11 @@ async function runAllTests() {
     const passed = results.filter(r => r === true).length;
     const total = results.length;
     
-    console.log(`\n📊 Resultados: ${passed}/${total} tests pasados`);
+    console.log(`\nResultados: ${passed}/${total} tests pasados`);
     if (passed === total) {
-        console.log('✅ ¡Todos los tests pasaron!');
+        console.log('Todos los tests pasaron.');
     } else {
-        console.log('❌ Algunos tests fallaron. Verifica los errores arriba.');
+        console.log('Algunos tests fallaron. Verifica los errores arriba.');
     }
 }
 

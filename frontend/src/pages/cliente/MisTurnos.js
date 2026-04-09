@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { confirmarAccion, notify } from '../../utils/notificaciones';
+import { IconCalendar, IconCheckCircle, IconClipboard, IconClock, IconX } from '../../components/common/Icons';
 
 const MisTurnos = () => {
     // --- ESTADOS ---
@@ -284,7 +285,12 @@ const MisTurnos = () => {
                                             <h3 className="text-xl font-bold" style={{ color: vencido ? '#8B8682' : '#817773' }}>
                                                 {turno.servicio_nombre || "Servicio Capilar"}
                                             </h3>
-                                            <p className="text-lg" style={{ color: '#8B8682' }}>📅 {turno.fecha} - 🕒 {turno.hora_inicio}</p>
+                                            <p className="text-lg inline-flex items-center gap-2" style={{ color: '#8B8682' }}>
+                                                <IconCalendar className="h-4 w-4" />
+                                                {turno.fecha}
+                                                <IconClock className="h-4 w-4 ml-2" />
+                                                {turno.hora_inicio}
+                                            </p>
                                             
                                             <div className="mt-2 flex items-center gap-2">
                                                 {/* Badge de Estado */}
@@ -334,18 +340,51 @@ const MisTurnos = () => {
                                             {/* LOGICA DE COMPROBANTE (Solo si NO vencido) */}
                                             {!vencido && turno.estado === 'esperando_sena' && (
                                                 <div className="w-full p-3 rounded border" style={{ backgroundColor: '#E3D5CA', borderColor: '#D5BDAF' }}>
-                                                    <p className="text-xs font-bold mb-2" style={{ color: '#817773' }}>Subir Comprobante:</p>
-                                                    <input 
-                                                        type="file" 
-                                                        accept="image/*,.pdf"
-                                                        onChange={(e) => handleFileChange(e, turno.id)} 
-                                                        className="block w-full text-xs"
-                                                        style={{ color: '#8B8682' }}
-                                                    />
-                                                    {turnoIdSubida === turno.id && archivo && (
-                                                        <button onClick={() => subirComprobante(turno.id)} className="mt-2 w-full text-white text-xs font-bold py-1 rounded transition" style={{ backgroundColor: '#AB9A91' }} onMouseEnter={(e) => e.target.style.backgroundColor = '#817773'} onMouseLeave={(e) => e.target.style.backgroundColor = '#AB9A91'}>
-                                                            ENVIAR
-                                                        </button>
+                                                    {turno.comprobante_pago ? (
+                                                        <div>
+                                                            <p className="text-xs font-bold mb-2 inline-flex items-center gap-2" style={{ color: '#817773' }}>
+                                                                <IconCheckCircle className="h-3 w-3" /> Comprobante Subido:
+                                                            </p>
+                                                            <a 
+                                                                href={turno.comprobante_pago} 
+                                                                target="_blank" 
+                                                                rel="noopener noreferrer"
+                                                                className="text-xs text-blue-600 hover:underline block mb-3"
+                                                            >
+                                                                <span className="inline-flex items-center gap-2">
+                                                                    <IconClipboard className="h-3 w-3" /> Ver Comprobante
+                                                                </span>
+                                                            </a>
+                                                            <p className="text-xs mb-2" style={{ color: '#817773' }}>¿Cambiar comprobante?</p>
+                                                            <input 
+                                                                type="file" 
+                                                                accept="image/*,.pdf"
+                                                                onChange={(e) => handleFileChange(e, turno.id)} 
+                                                                className="block w-full text-xs"
+                                                                style={{ color: '#8B8682' }}
+                                                            />
+                                                            {turnoIdSubida === turno.id && archivo && (
+                                                                <button onClick={() => subirComprobante(turno.id)} className="mt-2 w-full text-white text-xs font-bold py-1 rounded transition" style={{ backgroundColor: '#AB9A91' }} onMouseEnter={(e) => e.target.style.backgroundColor = '#817773'} onMouseLeave={(e) => e.target.style.backgroundColor = '#AB9A91'}>
+                                                                    ACTUALIZAR
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    ) : (
+                                                        <div>
+                                                            <p className="text-xs font-bold mb-2" style={{ color: '#817773' }}>Subir Comprobante:</p>
+                                                            <input 
+                                                                type="file" 
+                                                                accept="image/*,.pdf"
+                                                                onChange={(e) => handleFileChange(e, turno.id)} 
+                                                                className="block w-full text-xs"
+                                                                style={{ color: '#8B8682' }}
+                                                            />
+                                                            {turnoIdSubida === turno.id && archivo && (
+                                                                <button onClick={() => subirComprobante(turno.id)} className="mt-2 w-full text-white text-xs font-bold py-1 rounded transition" style={{ backgroundColor: '#AB9A91' }} onMouseEnter={(e) => e.target.style.backgroundColor = '#817773'} onMouseLeave={(e) => e.target.style.backgroundColor = '#AB9A91'}>
+                                                                    ENVIAR
+                                                                </button>
+                                                            )}
+                                                        </div>
                                                     )}
                                                 </div>
                                             )}
@@ -364,7 +403,9 @@ const MisTurnos = () => {
                     <div className="rounded-xl shadow-2xl max-w-md w-full p-6 animate-fade-in-up" style={{ backgroundColor: 'white' }}>
                         <div className="flex justify-between items-center mb-4">
                             <h2 className="text-xl font-bold" style={{ color: '#817773' }}>Gestionar Turno</h2>
-                            <button onClick={cerrarModal} className="transition" style={{ color: '#8B8682' }} onMouseEnter={(e) => e.target.style.color = '#5A5451'} onMouseLeave={(e) => e.target.style.color = '#8B8682'}>✕</button>
+                            <button onClick={cerrarModal} className="transition" style={{ color: '#8B8682' }} onMouseEnter={(e) => e.target.style.color = '#5A5451'} onMouseLeave={(e) => e.target.style.color = '#8B8682'}>
+                                <IconX className="h-4 w-4" />
+                            </button>
                         </div>
 
                         <div className="p-4 rounded-lg mb-6 border-l-4" style={{ 

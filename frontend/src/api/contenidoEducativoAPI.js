@@ -46,7 +46,7 @@ export const contenidoEducativoAPI = {
      */
     getPublicados: async (params = {}) => {
         try {
-            const response = await axios.get(`${API_BASE}/?estado=publicado`, {
+            const response = await axios.get(`${API_BASE}/?estado=PUBLICADO`, {
                 headers: getAuthHeaders(),
                 params
             });
@@ -85,7 +85,7 @@ export const contenidoEducativoAPI = {
             if (!id || typeof id !== 'number') {
                 throw new Error('ID de contenido inválido');
             }
-            const response = await axios.post(`${API_BASE}/${id}/me-gusta/`, {}, {
+            const response = await axios.post(`${API_BASE}/${id}/like/`, {}, {
                 headers: getAuthHeaders()
             });
             return response.data;

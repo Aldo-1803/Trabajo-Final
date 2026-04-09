@@ -115,7 +115,9 @@ const GestionPersonal = () => {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             notify.success('Personal eliminado');
-            cargarPersonal();
+            
+            // Recargar la lista después de la eliminación
+            await cargarPersonal();
         } catch (error) {
             console.error('Error al eliminar:', error);
             notify.error('No se pudo eliminar');

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { confirmarAccion, notify } from '../utils/notificaciones';
+import { IconBellOff, IconCheckCircle, IconClock, IconFastForward, IconInfo, IconWarning } from './common/Icons';
 
 const CampanaNotificaciones = () => {
     const [notificaciones, setNotificaciones] = useState([]);
@@ -110,7 +111,7 @@ const CampanaNotificaciones = () => {
             }
 
             // Si llegamos aquí, el cambio fue exitoso
-            notify.success("¡Turno adelantado correctamente!");
+            notify.success("Turno adelantado correctamente");
             
             // Marcar notificación como leída
             await marcarComoLeida(notif.id);
@@ -132,11 +133,15 @@ const CampanaNotificaciones = () => {
 
     // Función auxiliar para el color del icono según el tipo
     const getIconoTipo = (tipo) => {
-        switch(tipo) {
-            case 'alerta': return ''; // Rojo para cancelaciones/urgente
-            case 'recordatorio': return '';
-            case 'ADELANTO': return ''; // Adelanto rápido
-            default: return 'ℹ'; // Info normal
+        switch (tipo) {
+            case 'alerta':
+                return <IconWarning className="h-4 w-4 text-red-600" />;
+            case 'recordatorio':
+                return <IconClock className="h-4 w-4 text-amber-600" />;
+            case 'ADELANTO':
+                return <IconFastForward className="h-4 w-4 text-blue-600" />;
+            default:
+                return <IconInfo className="h-4 w-4 text-gray-500" />;
         }
     };
 
@@ -148,6 +153,22 @@ const CampanaNotificaciones = () => {
             
             // Obtener datos contextuales de la notificación
             const datosExtra = notif.datos_extra || {};
+            
+            // Obtener información del usuario actual desde localStorage
+            const userInfoString = localStorage.getItem('user_info');
+            console.log('Raw user_info from localStorage:', userInfoString);
+            
+            const userData = userInfoString ? JSON.parse(userInfoString) : {};
+            console.log('Parsed userData:', userData);
+            
+            // Convertir is_staff a boolean (puede ser boolean o string)
+            let isStaff = false;
+            if (userData.is_staff !== undefined) {
+                isStaff = userData.is_staff === true || userData.is_staff === 'true';
+            }
+            
+            console.log('isStaff value:', isStaff, 'type:', typeof isStaff);
+            console.log('User data check - userData:', userData, 'isStaff boolean:', isStaff);
             
             // Configurar ruta y estado según el tipo
             let rutaDestino = '/perfil'; // Ruta por defecto
@@ -176,31 +197,50 @@ const CampanaNotificaciones = () => {
                 };
             }
             
-            // 3. Si es turno_id -> Ir a mis-turnos para ver detalles
+            // 3. Si es compra -> Ir a mis-pedidos (cliente) o gestion de ordenes (admin)
+            else if (datosExtra.contexto === 'compra_exitosa' || datosExtra.orden_id) {
+                rutaDestino = isStaff ? '/admin/ordenes' : '/mis-pedidos';
+                stateData = {
+                    ordenId: datosExtra.orden_id || null,
+                    notificacionId: notif.id
+                };
+            }
+
+            // 4. Si es turno_id -> Ir a mis-turnos (cliente) o gestion-turnos (admin/profesional)
             else if (datosExtra.turno_id) {
-                rutaDestino = '/mis-turnos';
+                console.log('Turno notificacion detectada. isStaff:', isStaff);
+                // Si es profesional/admin, ir a la gestión de turnos
+                if (isStaff) {
+                    rutaDestino = '/admin/turnos';
+                    console.log('Redirigiendo a /admin/turnos (profesional)');
+                } else {
+                    // Si es cliente, ir a mis turnos
+                    rutaDestino = '/mis-turnos';
+                    console.log('Redirigiendo a /mis-turnos (cliente)');
+                }
                 stateData = {
                     turnoId: datosExtra.turno_id,
                     notificacionId: notif.id
                 };
             }
             
-            // 4. Según tipo de notificación si no hay datos específicos
+            // 5. Según tipo de notificación si no hay datos específicos
             else if (notif.tipo === 'alerta') {
-                rutaDestino = '/mis-turnos';
+                rutaDestino = isStaff ? '/admin/turnos' : '/mis-turnos';
             } else if (notif.tipo === 'recordatorio') {
-                rutaDestino = '/mis-turnos';
+                rutaDestino = isStaff ? '/admin/turnos' : '/mis-turnos';
             } else if (notif.tipo === 'diagnostico') {
                 rutaDestino = '/perfil';
             } else if (notif.tipo === 'promocion') {
                 rutaDestino = '/catalogo-productos';
             }
             
-            console.log('📱 Navegando desde notificación:', {
+            console.log('Navegando desde notificacion:', {
                 id: notif.id,
                 tipo: notif.tipo,
                 destino: rutaDestino,
-                datos: stateData
+                datos: stateData,
+                isStaff: isStaff
             });
             
             // Cerrar dropdown
@@ -246,7 +286,9 @@ const CampanaNotificaciones = () => {
                     <div className="max-h-72 sm:max-h-80 overflow-y-auto">
                         {notificaciones.length === 0 ? (
                             <div className="p-8 text-center text-gray-400">
-                                <p className="text-2xl mb-2"></p>
+                                <div className="flex justify-center mb-2">
+                                    <IconBellOff className="h-8 w-8" />
+                                </div>
                                 <p className="text-sm">No tienes notificaciones.</p>
                             </div>
                         ) : (
@@ -261,7 +303,10 @@ const CampanaNotificaciones = () => {
                                     {/* Título y Mensaje */}
                                     <div className="flex justify-between items-start mb-1">
                                         <h4 className={`text-sm ${notif.estado === 'pendiente' ? 'font-bold text-gray-900' : 'font-semibold text-gray-600'}`}>
-                                            {getIconoTipo(notif.tipo)} {notif.titulo}
+                                            <span className="inline-flex items-center gap-2">
+                                                {getIconoTipo(notif.tipo)}
+                                                {notif.titulo}
+                                            </span>
                                         </h4>
                                         <span className="text-xs text-gray-400 whitespace-nowrap ml-2">
                                             {new Date(notif.fecha_envio).toLocaleDateString()}
@@ -302,9 +347,19 @@ const CampanaNotificaciones = () => {
                                     
                                     {/* Si es ADELANTO pero ya fue aceptada/leída */}
                                     {notif.tipo === 'ADELANTO' && notif.estado === 'leido' && (
-                                        <div className="mt-3 bg-green-50 p-3 rounded border-2 border-green-200">
-                                            <p className="text-xs text-green-700 font-bold">
-                                                Turno adelantado correctamente
+                                        <div className={`mt-3 p-3 rounded border-2 ${
+                                            notif.datos_extra?.oferta_cerrada
+                                                ? 'bg-amber-50 border-amber-200'
+                                                : 'bg-green-50 border-green-200'
+                                        }`}>
+                                            <p className={`text-xs font-bold ${
+                                                notif.datos_extra?.oferta_cerrada
+                                                    ? 'text-amber-700'
+                                                    : 'text-green-700'
+                                            }`}>
+                                                {notif.datos_extra?.oferta_cerrada
+                                                    ? 'Otro cliente ya acepto el adelantamiento.'
+                                                    : 'Turno adelantado correctamente'}
                                             </p>
                                         </div>
                                     )}
@@ -328,7 +383,9 @@ const CampanaNotificaciones = () => {
                                     {notif.tipo !== 'ADELANTO' && notif.estado === 'leido' && (
                                         <div className="mt-2 flex justify-end">
                                             <span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">
-                                                ✓ Leída
+                                                <span className="inline-flex items-center gap-1">
+                                                    <IconCheckCircle className="h-3 w-3" /> Leída
+                                                </span>
                                             </span>
                                         </div>
                                     )}

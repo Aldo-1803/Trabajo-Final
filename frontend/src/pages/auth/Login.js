@@ -40,6 +40,7 @@ const Login = () => {
     const handleLogout = () => {
         localStorage.removeItem('access_token');
         localStorage.removeItem('refresh_token');
+        localStorage.removeItem('user_info');
         delete axios.defaults.headers.common['Authorization'];
         setCurrentUser(null);
         setShowLoginForm(true);
@@ -82,6 +83,15 @@ const Login = () => {
                 const usuario = perfilResponse.data;
 
                 console.log('Profile loaded successfully:', usuario);
+                
+                // Guardar información del usuario en localStorage para uso en notificaciones
+                localStorage.setItem('user_info', JSON.stringify({
+                    id: usuario.id,
+                    email: usuario.email,
+                    is_staff: usuario.is_staff,
+                    first_name: usuario.first_name,
+                    last_name: usuario.last_name
+                }));
 
                 // 4. REDIRECCIÓN INTELIGENTE
                 if (usuario.is_staff) {

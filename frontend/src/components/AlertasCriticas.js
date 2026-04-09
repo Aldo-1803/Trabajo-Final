@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { notify } from '../utils/notificaciones';
+import { IconBox, IconCalendar, IconCheckCircle, IconRocket, IconSearch, IconWarning } from './common/Icons';
 
 const AlertasCriticas = () => {
     const [productosStockBajo, setProductosStockBajo] = useState([]);
@@ -37,7 +38,7 @@ const AlertasCriticas = () => {
             const res = await axios.post('http://127.0.0.1:8000/api/gestion/promociones/escanear-huecos/', {}, config);
             
             setUltimoEscaneo(new Date());
-            notify.success(`✅ Escaneo completado: ${res.data.promos_creadas || 0} promociones generadas`);
+            notify.success(`Escaneo completado: ${res.data.promos_creadas || 0} promociones generadas`);
         } catch (err) {
             console.error('Error al escanear huecos:', err);
             const msgError = err.response?.data?.error || 'Error al escanear agenda';
@@ -53,7 +54,7 @@ const AlertasCriticas = () => {
             <div className="bg-white rounded-xl shadow-lg overflow-hidden border-l-4 border-red-500">
                 <div className="bg-gradient-to-r from-red-50 to-red-100 p-4 border-b-2 border-red-200">
                     <h2 className="text-lg font-bold text-red-800 flex items-center gap-2">
-                        <span className="text-2xl">⚠️</span> Productos con Stock Bajo
+                        <IconWarning className="h-5 w-5" /> Productos con Stock Bajo
                     </h2>
                     <p className="text-sm text-red-700 mt-1">
                         {productosStockBajo.length} producto(s) necesitan reabastecimiento
@@ -67,7 +68,10 @@ const AlertasCriticas = () => {
                         </div>
                     ) : productosStockBajo.length === 0 ? (
                         <div className="text-center py-8 text-gray-500">
-                            <p className="text-lg font-semibold mb-2">✅ Todo el inventario está en orden</p>
+                            <p className="text-lg font-semibold mb-2 flex items-center justify-center gap-2">
+                                <IconCheckCircle className="h-5 w-5 text-green-600" />
+                                Todo el inventario esta en orden
+                            </p>
                             <p className="text-sm">No hay productos con stock bajo</p>
                         </div>
                     ) : (
@@ -115,8 +119,9 @@ const AlertasCriticas = () => {
                                     </div>
 
                                     {/* Botón de reabastecimiento */}
-                                    <button className="w-full mt-3 bg-red-500 hover:bg-red-600 text-white font-bold py-2 rounded transition-all text-sm">
-                                        📦 Reabastecer
+                                    <button className="w-full mt-3 bg-red-500 hover:bg-red-600 text-white font-bold py-2 rounded transition-all text-sm flex items-center justify-center gap-2">
+                                        <IconBox className="h-4 w-4" />
+                                        Reabastecer
                                     </button>
                                 </div>
                             ))}
@@ -129,7 +134,7 @@ const AlertasCriticas = () => {
             <div className="bg-white rounded-xl shadow-lg overflow-hidden border-l-4 border-blue-500">
                 <div className="bg-gradient-to-r from-blue-50 to-blue-100 p-4 border-b-2 border-blue-200">
                     <h2 className="text-lg font-bold text-blue-800 flex items-center gap-2">
-                        <span className="text-2xl">📅</span> Genera Promociones Last Minute
+                        <IconCalendar className="h-5 w-5" /> Genera Promociones Last Minute
                     </h2>
                     <p className="text-sm text-blue-700 mt-1">
                         Detecta automáticamente huecos en la agenda y crea ofertas flash
@@ -138,14 +143,23 @@ const AlertasCriticas = () => {
 
                 <div className="p-6">
                     <div className="bg-blue-50 rounded-lg p-4 mb-6">
-                        <p className="text-gray-700 text-sm mb-3">
-                            🔍 Este sistema automáticamente:
+                        <p className="text-gray-700 text-sm mb-3 flex items-center gap-2">
+                            <IconSearch className="h-4 w-4" />
+                            Este sistema automaticamente:
                         </p>
                         <ul className="text-sm text-gray-600 space-y-1 ml-4">
-                            <li>✓ Escanea los próximos 3 días de agenda</li>
-                            <li>✓ Identifica huecos mayores a 3 horas</li>
-                            <li>✓ Crea promociones flash con descuento</li>
-                            <li>✓ Notifica a clientes con disponibilidad</li>
+                            <li className="inline-flex items-center gap-2">
+                                <IconCheckCircle className="h-4 w-4" /> Escanea los próximos 3 días de agenda
+                            </li>
+                            <li className="inline-flex items-center gap-2">
+                                <IconCheckCircle className="h-4 w-4" /> Identifica huecos mayores a 3 horas
+                            </li>
+                            <li className="inline-flex items-center gap-2">
+                                <IconCheckCircle className="h-4 w-4" /> Crea promociones flash con descuento
+                            </li>
+                            <li className="inline-flex items-center gap-2">
+                                <IconCheckCircle className="h-4 w-4" /> Notifica a clientes con disponibilidad
+                            </li>
                         </ul>
                     </div>
 
@@ -153,7 +167,10 @@ const AlertasCriticas = () => {
                         {ultimoEscaneo && (
                             <div className="bg-green-50 border border-green-300 rounded-lg p-3 text-sm">
                                 <p className="text-green-800 font-semibold">
-                                    ✅ Último escaneo realizado
+                                    <span className="inline-flex items-center gap-2">
+                                        <IconCheckCircle className="h-4 w-4 text-green-700" />
+                                        Ultimo escaneo realizado
+                                    </span>
                                 </p>
                                 <p className="text-green-700 text-xs mt-1">
                                     {ultimoEscaneo.toLocaleString('es-AR')}
@@ -181,7 +198,8 @@ const AlertasCriticas = () => {
                                 </>
                             ) : (
                                 <>
-                                    <span>🚀</span> Escanear Huecos Ahora
+                                    <IconRocket className="h-4 w-4" />
+                                    Escanear Huecos Ahora
                                 </>
                             )}
                         </button>

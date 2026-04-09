@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { confirmarAccion, notify } from '../../utils/notificaciones';
@@ -25,19 +25,27 @@ const GestionUsuarios = () => {
     const navigate = useNavigate();
 
     // --- CARGA DE DATOS ---
-    const cargarUsuarios = async () => {
+    const cargarUsuarios = useCallback(async () => {
         setLoading(true);
         try {
             const token = localStorage.getItem('access_token');
             
             // Construir parámetros de query
             const params = new URLSearchParams();
-            if (filtroRol) params.append('rol', filtroRol);
+            
+            // Filtro por rol (is_staff)
+            if (filtroRol) {
+                const isStaffValue = filtroRol === 'staff' ? 'true' : 'false';
+                params.append('is_staff', isStaffValue);
+            }
+            
+            // Filtro por estado (is_active)
             if (filtroEstado) {
-                // Convertir valores del filtro a booleano
                 const isActiveValue = filtroEstado === 'activos' ? 'true' : 'false';
                 params.append('is_active', isActiveValue);
             }
+            
+            // Búsqueda global
             if (busqueda) params.append('search', busqueda);
             
             const queryString = params.toString();
@@ -68,12 +76,12 @@ const GestionUsuarios = () => {
         } finally {
             setLoading(false);
         }
-    };
+    }, [filtroRol, filtroEstado, busqueda, navigate]);
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => {
         cargarUsuarios();
-    }, [filtroRol, filtroEstado, busqueda]);
+    }, [cargarUsuarios]);
 
     // --- ACCIONES DEL FORMULARIO ---
     const handleChange = (e) => {
@@ -193,8 +201,8 @@ const GestionUsuarios = () => {
                                 style={{ borderColor: '#D5BDAF' }}
                             >
                                 <option value="">Todos los roles</option>
-                                <option value="cliente"> Clientes</option>
-                                <option value="staff"> Personal / Staff</option>
+                                <option value="cliente">Clientes</option>
+                                <option value="staff">Personal / Staff</option>
                             </select>
                         </div>
 

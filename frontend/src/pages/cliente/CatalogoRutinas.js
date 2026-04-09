@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom'; // Importamos para redirigir al detalle
 import jsPDF from 'jspdf';
+import { IconCheckCircle } from '../../components/common/Icons';
 
 const CatalogoRutinas = () => {
   const [rutinas, setRutinas] = useState([]);
@@ -36,7 +37,7 @@ const CatalogoRutinas = () => {
         setError('');
 
     } catch (err) {
-        console.error("❌ Error inicial:", err);
+        console.error("Error inicial:", err);
         setError('Error de conexión. Revisa la consola (F12).');
     } finally {
         setLoading(false);
@@ -59,7 +60,7 @@ const CatalogoRutinas = () => {
 
         setMisRutinas(data);
     } catch (err) {
-        console.error("❌ Error al cargar mis rutinas:", err);
+        console.error("Error al cargar mis rutinas:", err);
         // Si hay error, simplemente continuamos sin las rutinas del cliente
     }
   };
@@ -70,7 +71,7 @@ const CatalogoRutinas = () => {
     // Verificar si ya tiene la rutina asignada comparando con rutina_original
     const yaAsignada = misRutinas.some(r => r.rutina_original === rutinaId);
     if (yaAsignada) {
-      setError('❌ Esta rutina ya está en "Mis Rutinas". No puedes asignarla nuevamente.');
+      setError('Esta rutina ya está en "Mis Rutinas". No puedes asignarla nuevamente.');
       setTimeout(() => setError(''), 4000);
       return;
     }
@@ -85,14 +86,14 @@ const CatalogoRutinas = () => {
         { rutina_id: rutinaId },
         { headers: { Authorization: `Bearer ${token}` } }
       );
-      setSuccessMessage('✅ ¡Rutina asignada exitosamente!');
+      setSuccessMessage('¡Rutina asignada exitosamente!');
       setTimeout(() => setSuccessMessage(''), 3000);
       fetchRutinas();
       fetchMisRutinas(); // Actualizar lista de mis rutinas
     } catch (err) {
       console.error('Error al asignar rutina:', err);
       if (err.response?.status === 400) {
-        setError('⚠️ Esta rutina ya la tienes asignada.');
+        setError('Esta rutina ya la tienes asignada.');
       } else {
         setError(err.response?.data?.error || 'Error al asignar la rutina');
       }
@@ -192,7 +193,9 @@ const CatalogoRutinas = () => {
                           className="w-full py-2 rounded-lg font-bold text-sm cursor-not-allowed opacity-75 mb-2"
                           style={{ backgroundColor: '#E8F5E8', color: '#2E7D2E' }}
                         >
-                          ✓ Ya está en Mis Rutinas
+                          <span className="inline-flex items-center justify-center gap-2">
+                            <IconCheckCircle className="h-4 w-4" /> Ya está en Mis Rutinas
+                          </span>
                         </button>
                       ) : (
                         <button

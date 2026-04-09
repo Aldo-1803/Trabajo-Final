@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import TarjetaContenido from '../../components/TarjetaContenido';
 import { contenidoEducativoAPI } from '../../api/contenidoEducativoAPI';
+import { IconBook, IconCalendar, IconInfo, IconSearch, IconSparkles } from '../../components/common/Icons';
 
 const ContenidoRecomendado = () => {
     const [recomendados, setRecomendados] = useState([]);
@@ -58,11 +59,13 @@ const ContenidoRecomendado = () => {
     };
 
     return (
-        <div className="max-w-7xl mx-auto px-6 py-8">
+        <div className="max-w-4xl mx-auto px-6 py-8">
             {/* HEADER */}
             <div className="mb-8">
                 <h1 className="text-3xl font-bold mb-2" style={{ color: '#817773' }}>
-                    ✨ Contenido Recomendado para Ti
+                    <span className="inline-flex items-center gap-2">
+                        <IconSparkles className="h-6 w-6" /> Contenido Recomendado para Ti
+                    </span>
                 </h1>
                 <p style={{ color: '#8B8682' }}>
                     Artículos seleccionados según tu tipo de cabello y necesidades
@@ -75,7 +78,9 @@ const ContenidoRecomendado = () => {
                     className="rounded-lg shadow p-6 mb-6 text-white"
                     style={{ background: 'linear-gradient(135deg, #2E7D2E, #3A9A3A)' }}
                 >
-                    <h3 className="text-lg font-bold mb-4">🔍 Tu Diagnóstico Actual</h3>
+                    <h3 className="text-lg font-bold mb-4 inline-flex items-center gap-2">
+                        <IconSearch className="h-5 w-5" /> Tu Diagnóstico Actual
+                    </h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                         <div>
                             <p className="opacity-90">Estado General</p>
@@ -107,7 +112,9 @@ const ContenidoRecomendado = () => {
                         )}
                     </div>
                     <p className="text-xs opacity-75 mt-4">
-                        📅 Diagnóstico del {new Date(diagnostico.fecha).toLocaleDateString('es-AR')}
+                        <span className="inline-flex items-center gap-2">
+                            <IconCalendar className="h-4 w-4" /> Diagnóstico del {new Date(diagnostico.fecha).toLocaleDateString('es-AR')}
+                        </span>
                     </p>
                 </div>
             )}
@@ -119,7 +126,9 @@ const ContenidoRecomendado = () => {
                     style={{ borderColor: '#C73E3E' }}
                 >
                     <p style={{ color: '#8B8682' }}>
-                        💡 Completa tu diagnóstico capilar para obtener recomendaciones personalizadas específicas para ti
+                        <span className="inline-flex items-center gap-2">
+                            <IconInfo className="h-4 w-4" /> Completa tu diagnóstico capilar para obtener recomendaciones personalizadas específicas para ti
+                        </span>
                     </p>
                 </div>
             )}
@@ -136,9 +145,9 @@ const ContenidoRecomendado = () => {
                     style={{ borderColor: '#D5D1CC' }}
                 >
                     <option value="">Todos</option>
-                    <option value="IMAGEN">📷 Imagen</option>
-                    <option value="VIDEO">🎥 Video</option>
-                    <option value="TEXTO">📝 Texto</option>
+                    <option value="IMAGEN">Imagen</option>
+                    <option value="VIDEO">Video</option>
+                    <option value="TEXTO">Texto</option>
                 </select>
             </div>
 
@@ -152,7 +161,9 @@ const ContenidoRecomendado = () => {
             ) : recomendados.length === 0 ? (
                 <div className="text-center py-16 bg-white rounded-lg shadow">
                     <p className="text-lg mb-4" style={{ color: '#8B8682' }}>
-                        📚 Explora nuestro centro educativo
+                        <span className="inline-flex items-center gap-2">
+                            <IconBook className="h-5 w-5" /> Explora nuestro centro educativo
+                        </span>
                     </p>
                     <p style={{ color: '#ABA89E' }}>
                         No hay artículos disponibles en este momento, pero puedes ver todo nuestro contenido
@@ -162,10 +173,12 @@ const ContenidoRecomendado = () => {
                 <>
                     <div className="mb-4 text-center">
                         <p className="text-sm" style={{ color: '#8B8682' }}>
-                            ✨ {recomendados.length} artículo{recomendados.length !== 1 ? 's' : ''} recomendado{recomendados.length !== 1 ? 's' : ''} para ti
+                            <span className="inline-flex items-center gap-2">
+                                <IconSparkles className="h-4 w-4" /> {recomendados.length} artículo{recomendados.length !== 1 ? 's' : ''} recomendado{recomendados.length !== 1 ? 's' : ''} para ti
+                            </span>
                         </p>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <div className="space-y-6">
                         {recomendados.map(contenido => (
                             <TarjetaContenido
                                 key={contenido.id}

@@ -1,6 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { contenidoEducativoAPI } from '../../api/contenidoEducativoAPI';
+import {
+    IconBookmark,
+    IconCalendar,
+    IconCheckCircle,
+    IconHeart,
+    IconImage,
+    IconInfo,
+    IconTag,
+    IconText,
+    IconUser,
+    IconVideo
+} from '../../components/common/Icons';
 
 const DetalleContenido = () => {
     const { id } = useParams();
@@ -80,7 +92,9 @@ const DetalleContenido = () => {
         return (
             <div className="max-w-4xl mx-auto px-6 py-8 text-center">
                 <p className="text-lg mb-4" style={{ color: '#8B8682' }}>
-                    📭 Contenido no encontrado
+                    <span className="inline-flex items-center gap-2">
+                        <IconInfo className="h-5 w-5" /> Contenido no encontrado
+                    </span>
                 </p>
                 <button
                     onClick={() => navigate(-1)}
@@ -145,7 +159,13 @@ const DetalleContenido = () => {
                             background: contenido.estado === 'PUBLICADO' ? '#2E7D2E' : '#ABA89E'
                         }}
                     >
-                        {contenido.estado === 'PUBLICADO' ? '✓ Publicado' : '📋 ' + contenido.estado}
+                        {contenido.estado === 'PUBLICADO' ? (
+                            <span className="inline-flex items-center gap-2">
+                                <IconCheckCircle className="h-4 w-4" /> Publicado
+                            </span>
+                        ) : (
+                            contenido.estado
+                        )}
                     </span>
                 </div>
 
@@ -157,7 +177,7 @@ const DetalleContenido = () => {
                 {/* Metadatos */}
                 <div className="flex flex-wrap items-center gap-4 text-sm mb-6" style={{ color: '#8B8682' }}>
                     <div className="flex items-center gap-2">
-                        <span>👤</span>
+                        <IconUser className="h-4 w-4" />
                         <span className="font-semibold">
                             {contenido.autor?.nombre} {contenido.autor?.apellido}
                         </span>
@@ -167,11 +187,24 @@ const DetalleContenido = () => {
                     </div>
                     <div>•</div>
                     <div className="flex items-center gap-1">
-                        📅 {new Date(contenido.fecha_publicacion).toLocaleDateString('es-AR')}
+                        <IconCalendar className="h-4 w-4" /> {new Date(contenido.fecha_publicacion).toLocaleDateString('es-AR')}
                     </div>
                     <div>•</div>
                     <div className="flex items-center gap-1">
-                        🏷️ {contenido.tipo === 'IMAGEN' ? '📷 Imagen' : contenido.tipo === 'VIDEO' ? '🎥 Video' : '📝 Texto'}
+                        <IconTag className="h-4 w-4" />
+                        {contenido.tipo === 'IMAGEN' ? (
+                            <span className="inline-flex items-center gap-1">
+                                <IconImage className="h-4 w-4" /> Imagen
+                            </span>
+                        ) : contenido.tipo === 'VIDEO' ? (
+                            <span className="inline-flex items-center gap-1">
+                                <IconVideo className="h-4 w-4" /> Video
+                            </span>
+                        ) : (
+                            <span className="inline-flex items-center gap-1">
+                                <IconText className="h-4 w-4" /> Texto
+                            </span>
+                        )}
                     </div>
                 </div>
 
@@ -209,7 +242,7 @@ const DetalleContenido = () => {
                             opacity: cargandoInteracciones ? 0.6 : 1
                         }}
                     >
-                        {meGusta ? '❤️' : '🤍'} {totalLikes} Me Gusta
+                        <IconHeart className="h-4 w-4" /> {totalLikes} Me Gusta
                     </button>
 
                     <button
@@ -222,7 +255,7 @@ const DetalleContenido = () => {
                             opacity: cargandoInteracciones ? 0.6 : 1
                         }}
                     >
-                        {guardado ? '🔖' : '🤍'} {guardado ? 'Guardado' : 'Guardar'}
+                        <IconBookmark className="h-4 w-4" /> {guardado ? 'Guardado' : 'Guardar'}
                     </button>
                 </div>
             </div>
@@ -250,19 +283,29 @@ const DetalleContenido = () => {
                 <div className="bg-white rounded-lg shadow p-4 text-center">
                     <p style={{ color: '#8B8682' }} className="text-sm">Me Gusta</p>
                     <p className="text-2xl font-bold" style={{ color: '#C73E3E' }}>
-                        ❤️ {totalLikes}
+                        <span className="inline-flex items-center gap-2">
+                            <IconHeart className="h-5 w-5" /> {totalLikes}
+                        </span>
                     </p>
                 </div>
                 <div className="bg-white rounded-lg shadow p-4 text-center">
                     <p style={{ color: '#8B8682' }} className="text-sm">Guardados</p>
                     <p className="text-2xl font-bold" style={{ color: '#2E7D2E' }}>
-                        🔖 {contenido.total_guardados || 0}
+                        <span className="inline-flex items-center gap-2">
+                            <IconBookmark className="h-5 w-5" /> {contenido.total_guardados || 0}
+                        </span>
                     </p>
                 </div>
                 <div className="bg-white rounded-lg shadow p-4 text-center">
                     <p style={{ color: '#8B8682' }} className="text-sm">Tipo</p>
                     <p className="text-2xl font-bold" style={{ color: '#817773' }}>
-                        {contenido.tipo === 'IMAGEN' ? '📷' : contenido.tipo === 'VIDEO' ? '🎥' : '📝'}
+                        {contenido.tipo === 'IMAGEN' ? (
+                            <IconImage className="h-6 w-6" />
+                        ) : contenido.tipo === 'VIDEO' ? (
+                            <IconVideo className="h-6 w-6" />
+                        ) : (
+                            <IconText className="h-6 w-6" />
+                        )}
                     </p>
                 </div>
             </div>

@@ -10,8 +10,18 @@ const GestionProductos = () => {
     const [loading, setLoading] = useState(true);
     const [modalAbierto, setModalAbierto] = useState(false);
     const [modoEdicion, setModoEdicion] = useState(false);
-    const [tabActiva, setTabActiva] = useState('catalogo'); // 'catalogo' | 'alertas'
+    const [tabActiva, setTabActiva] = useState('catalogo'); // 'catalogo' | 'alertas' | 'combos'
     const [productosStockBajo, setProductosStockBajo] = useState([]);
+    const [combosSugeridos, setCombosSugeridos] = useState([]);
+    const [loadingCombos, setLoadingCombos] = useState(false);
+    const [comboEdiciones, setComboEdiciones] = useState({});
+    const [comboForm, setComboForm] = useState({
+        nombre: '',
+        descripcion: '',
+        descuento_porcentaje: 10,
+        dias_vigencia: 15,
+        productos: []
+    });
     
     // Estado del Formulario
     const [form, setForm] = useState({
@@ -21,19 +31,21 @@ const GestionProductos = () => {
         marca: '',
         categoria: '',
         descripcion: '',
+        material_principal: '',
+        proposito_uso: '',
         precio: '',
-        stock: '',
+        stock_real: '',
+        stock_comprometido: '',
         stock_minimo: '',
-        imagen_url: '',
+        imagen: null,
+        imagen_url: '', // Solo para lectura (URL completa del servidor)
         estado_publicacion: 'PUBLICADO',
         compatibilidad: 'TODO',
         activo: true
     });
     
-    // Estado para múltiples imágenes
-    const [imagenes, setImagenes] = useState([]);
-    const [imagenActual, setImagenActual] = useState(0);
-    const [cargandoImagen, setCargandoImagen] = useState(false);
+    // Estado para manejar múltiples imágenes
+    const [imagenesSubidas, setImagenesSubidas] = useState([]);
 
     const navigate = useNavigate();
 
@@ -47,17 +59,42 @@ const GestionProductos = () => {
         { value: 'SECO', label: 'Cuero Cabelludo Seco' },
     ];
 
+    const opcionesMaterialPrincipal = [
+        { value: 'SATEN', label: 'Satén' },
+        { value: 'MICROFIBRA', label: 'Microfibra' },
+        { value: 'MADERA', label: 'Madera' },
+        { value: 'PLASTICO', label: 'Plástico' },
+    ];
+
+    const opcionesPropositoUso = [
+        { value: 'DORMIR', label: 'Dormir' },
+        { value: 'STYLING', label: 'Styling (Peinado)' },
+        { value: 'HIGIENE', label: 'Higiene' },
+        { value: 'SECADO', label: 'Secado' },
+    ];
+
     const opcionesEstadoPublicacion = [
         { value: 'PUBLICADO', label: 'Publicado' },
         { value: 'BORRADOR', label: 'Borrador' },
         { value: 'DISCONTINUADO', label: 'Discontinuado' },
     ];
 
+    const getStockDisponible = (prod) => {
+        const stockDisponible = Number(prod?.stock_disponible);
+        if (Number.isFinite(stockDisponible)) {
+            return stockDisponible;
+        }
+        const stockReal = Number(prod?.stock_real || 0);
+        const stockComprometido = Number(prod?.stock_comprometido || 0);
+        return Math.max(0, stockReal - stockComprometido);
+    };
+
     // --- CARGA INICIAL ---
     useEffect(() => {
         cargarProductos();
         cargarCategorias();
         cargarProductosStockBajo();
+        cargarCombosSugeridos();
     }, []);
 
     const cargarProductos = async () => {
@@ -100,6 +137,142 @@ const GestionProductos = () => {
         }
     };
 
+    const cargarCombosSugeridos = async () => {
+        try {
+            setLoadingCombos(true);
+            const token = localStorage.getItem('access_token');
+            const res = await axios.get('http://127.0.0.1:8000/api/gestion/promociones/sugerencias/', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const sugerencias = Array.isArray(res.data) ? res.data : (res.data?.results || []);
+            setCombosSugeridos(sugerencias);
+            const ediciones = {};
+            sugerencias.forEach((combo) => {
+                ediciones[combo.id] = {
+                    nombre: combo.nombre,
+                    descripcion: combo.descripcion,
+                    descuento_porcentaje: combo.descuento_porcentaje
+                };
+            });
+            setComboEdiciones(ediciones);
+        } catch (error) {
+            console.error('Error al cargar combos sugeridos', error);
+            notify.error('No se pudieron cargar las sugerencias de combos');
+        } finally {
+            setLoadingCombos(false);
+        }
+    };
+
+    const actualizarEdicionCombo = (id, campo, valor) => {
+        setComboEdiciones((prev) => ({
+            ...prev,
+            [id]: {
+                ...prev[id],
+                [campo]: valor
+            }
+        }));
+    };
+
+    const publicarCombo = async (comboId) => {
+        try {
+            const token = localStorage.getItem('access_token');
+            const payload = comboEdiciones[comboId] || {};
+            await axios.post(
+                `http://127.0.0.1:8000/api/gestion/promociones/${comboId}/publicar/`,
+                payload,
+                { headers: { 'Authorization': `Bearer ${token}` } }
+            );
+            notify.success('Combo publicado correctamente.');
+            cargarCombosSugeridos();
+        } catch (error) {
+            console.error('Error al publicar combo', error);
+            notify.error('No se pudo publicar el combo.');
+        }
+    };
+
+    const rechazarCombo = async (comboId) => {
+        const result = await confirmarAccion({
+            title: '¿Rechazar sugerencia?',
+            text: 'Esta sugerencia se descartará.',
+            confirmButtonText: 'Sí, rechazar'
+        });
+        if (!result.isConfirmed) return;
+
+        try {
+            const token = localStorage.getItem('access_token');
+            await axios.post(
+                `http://127.0.0.1:8000/api/gestion/promociones/${comboId}/rechazar/`,
+                {},
+                { headers: { 'Authorization': `Bearer ${token}` } }
+            );
+            notify.success('Combo rechazado.');
+            cargarCombosSugeridos();
+        } catch (error) {
+            console.error('Error al rechazar combo', error);
+            notify.error('No se pudo rechazar el combo.');
+        }
+    };
+
+    const toggleProductoCombo = (productoId) => {
+        setComboForm((prev) => {
+            const existe = prev.productos.includes(productoId);
+            const productos = existe
+                ? prev.productos.filter((id) => id !== productoId)
+                : [...prev.productos, productoId];
+            return { ...prev, productos };
+        });
+    };
+
+    const crearComboManual = async (e) => {
+        e.preventDefault();
+
+        if (!comboForm.nombre.trim()) {
+            notify.error('El nombre del combo es requerido.');
+            return;
+        }
+        if (comboForm.productos.length < 2) {
+            notify.error('Selecciona al menos 2 productos para el combo.');
+            return;
+        }
+
+        try {
+            const token = localStorage.getItem('access_token');
+            const hoy = new Date();
+            const fechaInicio = hoy.toISOString().slice(0, 10);
+            const fechaFin = new Date(hoy);
+            fechaFin.setDate(fechaFin.getDate() + Number(comboForm.dias_vigencia || 15));
+
+            await axios.post(
+                'http://127.0.0.1:8000/api/gestion/promociones/',
+                {
+                    nombre: comboForm.nombre.trim(),
+                    descripcion: comboForm.descripcion.trim() || 'Combo creado manualmente',
+                    tipo: 'COMBO',
+                    descuento_porcentaje: Number(comboForm.descuento_porcentaje || 10),
+                    fecha_inicio: fechaInicio,
+                    fecha_fin: fechaFin.toISOString().slice(0, 10),
+                    is_active: true,
+                    es_sugerencia_automatica: false,
+                    estado_sugerencia: 'ACEPTADA',
+                    productos: comboForm.productos
+                },
+                { headers: { 'Authorization': `Bearer ${token}` } }
+            );
+
+            notify.success('Combo creado y publicado.');
+            setComboForm({
+                nombre: '',
+                descripcion: '',
+                descuento_porcentaje: 10,
+                dias_vigencia: 15,
+                productos: []
+            });
+        } catch (error) {
+            console.error('Error creando combo manual', error);
+            notify.error('No se pudo crear el combo manual.');
+        }
+    };
+
     // --- MANEJADORES DEL FORMULARIO ---
     const handleChange = (e) => {
         const { name, type, checked, value } = e.target;
@@ -109,17 +282,19 @@ const GestionProductos = () => {
         });
     };
 
-    // Manejar carga de imágenes
+    // Manejar carga de imágenes (múltiples)
     const handleSubirImagen = async (e) => {
         const archivos = e.target.files;
-        if (!archivos) return;
+        if (!archivos || archivos.length === 0) return;
 
-        const nuevasImagenes = [...imagenes];
-        
-        for (let archivo of archivos) {
+        const nuevasImagenes = [];
+
+        for (let i = 0; i < archivos.length; i++) {
+            const archivo = archivos[i];
+
             // Validar que sea imagen
             if (!archivo.type.startsWith('image/')) {
-                notify.error('Solo se permiten archivos de imagen');
+                notify.error(`${archivo.name} no es una imagen válida`);
                 continue;
             }
 
@@ -129,86 +304,79 @@ const GestionProductos = () => {
                 continue;
             }
 
-            try {
-                setCargandoImagen(true);
-                
-                // Crear FormData para enviar archivo
-                const formData = new FormData();
-                formData.append('imagen', archivo);
-
-                // Subir al servidor
-                const token = localStorage.getItem('access_token');
-                const response = await axios.post(
-                    'http://127.0.0.1:8000/api/gestion/upload-imagen/',
-                    formData,
-                    {
-                        headers: { 
-                            'Authorization': `Bearer ${token}`,
-                            'Content-Type': 'multipart/form-data'
-                        }
-                    }
-                );
-
-                console.log('Respuesta upload:', response.data);
-
-                if (response.data && response.data.url) {
-                    nuevasImagenes.push(response.data.url);
-                    notify.success(`${archivo.name} cargado correctamente`);
-                } else {
-                    notify.error(`Error: No se recibió URL de imagen para ${archivo.name}`);
-                }
-            } catch (error) {
-                console.error('Error subiendo imagen:', error.response?.data || error.message);
-                notify.error(`Error subiendo ${archivo.name}: ${error.response?.data?.error || error.message}`);
-            } finally {
-                setCargandoImagen(false);
-            }
+            nuevasImagenes.push({
+                id: Date.now() + i, // ID temporal para identificar en lista
+                archivo: archivo,
+                preview: URL.createObjectURL(archivo)
+            });
         }
 
-        setImagenes(nuevasImagenes);
-        
-        // Establecer la primera imagen como principal
         if (nuevasImagenes.length > 0) {
-            setForm({ ...form, imagen_url: nuevasImagenes[0] });
-            setImagenActual(0);
-            console.log('Imágenes seteadas:', nuevasImagenes);
+            setImagenesSubidas([...imagenesSubidas, ...nuevasImagenes]);
+            notify.success(`${nuevasImagenes.length} imagen(es) seleccionada(s) para subir`);
         }
         
         e.target.value = ''; // Reset input
     };
 
-    // Eliminar imagen del carrusel
-    const eliminarImagen = (indice) => {
-        const nuevasImagenes = imagenes.filter((_, i) => i !== indice);
-        setImagenes(nuevasImagenes);
+    // Eliminar imagen de la lista a subir (nueva o existente)
+    const eliminarImagenSubida = async (id) => {
+        const imagenAEliminar = imagenesSubidas.find(img => img.id === id);
         
-        if (nuevasImagenes.length === 0) {
-            setForm({ ...form, imagen_url: '' });
-            setImagenActual(0);
-        } else if (imagenActual >= nuevasImagenes.length) {
-            setImagenActual(Math.max(0, nuevasImagenes.length - 1));
-            setForm({ ...form, imagen_url: nuevasImagenes[Math.max(0, nuevasImagenes.length - 1)] });
-        } else {
-            setForm({ ...form, imagen_url: nuevasImagenes[imagenActual] });
+        // Si es una imagen existente, eliminarla del servidor
+        if (imagenAEliminar?.esExistente) {
+            const result = await confirmarAccion({
+                title: '¿Eliminar imagen?',
+                text: 'Esta acción no se puede deshacer',
+                confirmButtonText: 'Sí, eliminar'
+            });
+            
+            if (!result.isConfirmed) return;
+            
+            try {
+                const token = localStorage.getItem('access_token');
+                await axios.delete(
+                    `http://127.0.0.1:8000/api/gestion/imagenes-productos/${imagenAEliminar.productoImagenId}/`,
+                    { headers: { 'Authorization': `Bearer ${token}` } }
+                );
+                notify.success('Imagen eliminada correctamente');
+            } catch (error) {
+                console.error('Error al eliminar imagen:', error);
+                notify.error('No se pudo eliminar la imagen');
+                return;
+            }
+        } else if (imagenAEliminar?.preview) {
+            // Si es una imagen nueva, solo liberar la URL del objeto
+            URL.revokeObjectURL(imagenAEliminar.preview);
         }
+        
+        setImagenesSubidas(imagenesSubidas.filter(img => img.id !== id));
     };
 
-    // Cambiar imagen actual en carrusel
-    const cambiarImagen = (indice) => {
-        setImagenActual(indice);
-        setForm({ ...form, imagen_url: imagenes[indice] });
+    // Eliminar imagen principal (para edición)
+    const eliminarImagen = () => {
+        setForm({ ...form, imagen: null, imagen_url: '' });
+        notify.success('Imagen principal eliminada');
     };
 
     const abrirModal = (producto = null) => {
         if (producto) {
             setModoEdicion(true);
             setForm(producto);
-            // Si hay imagen_url, la convertimos en array
-            if (producto.imagen_url) {
-                setImagenes([producto.imagen_url]);
-                setImagenActual(0);
+            
+            // Si el producto tiene imágenes adicionales, cargarlas para mostrar en el modal
+            // PERO NO LA PRIMERA (que es la imagen principal)
+            if (producto.imagenes && producto.imagenes.length > 1) {
+                const imagenesExistentes = producto.imagenes.slice(1).map((img, idx) => ({
+                    id: `existing-${img.id}`, // ID único para distinguir de nuevas
+                    url: img.imagen_url, // URL de la imagen existente
+                    orden: img.orden,
+                    productoImagenId: img.id, // ID en la base de datos
+                    esExistente: true // Flag para saber que ya existe en BD
+                }));
+                setImagenesSubidas(imagenesExistentes);
             } else {
-                setImagenes([]);
+                setImagenesSubidas([]);
             }
         } else {
             setModoEdicion(false);
@@ -219,16 +387,19 @@ const GestionProductos = () => {
                 marca: '',
                 categoria: '',
                 descripcion: '',
+                material_principal: '',
+                proposito_uso: '',
                 precio: '',
-                stock: '',
+                stock_real: '',
+                stock_comprometido: '',
                 stock_minimo: '',
+                imagen: null,
                 imagen_url: '',
                 estado_publicacion: 'PUBLICADO',
                 compatibilidad: 'TODO',
                 activo: true
             });
-            setImagenes([]);
-            setImagenActual(0);
+            setImagenesSubidas([]);
         }
         setModalAbierto(true);
     };
@@ -244,11 +415,6 @@ const GestionProductos = () => {
         const headers = { 'Authorization': `Bearer ${token}` };
 
         // Validaciones
-        if (!form.sku || !form.sku.trim()) {
-            notify.error("El SKU es requerido.");
-            return;
-        }
-
         if (!form.nombre || !form.nombre.trim()) {
             notify.error("El nombre del producto es requerido.");
             return;
@@ -259,8 +425,8 @@ const GestionProductos = () => {
             return;
         }
 
-        if (!form.stock && form.stock !== 0) {
-            notify.error("El stock es requerido.");
+        if (!form.stock_real && form.stock_real !== 0) {
+            notify.error("El stock real es requerido.");
             return;
         }
 
@@ -269,11 +435,7 @@ const GestionProductos = () => {
             return;
         }
 
-        // Validar que haya al menos una imagen
-        if (imagenes.length === 0 && !form.imagen_url) {
-            notify.error("Por favor agrega al menos una imagen del producto.");
-            return;
-        }
+        // La imagen es opcional
 
         // Convertir tipos de datos
         const categoriaId = parseInt(form.categoria);
@@ -283,40 +445,79 @@ const GestionProductos = () => {
         }
 
         const precioNum = parseFloat(form.precio);
-        const stockNum = parseInt(form.stock);
-        const stockMinimoNum = parseInt(form.stock_minimo) || 3;
+        const stockRealNum = parseInt(form.stock_real);
+        const stockMinimoNum = parseInt(form.stock_minimo) || 5;
 
-        // Preparar datos para enviar
-        const datosProducto = {
-            sku: form.sku.trim(),
-            nombre: form.nombre.trim(),
-            marca: form.marca.trim(),
-            categoria: categoriaId,
-            descripcion: form.descripcion,
-            precio: precioNum,
-            stock: stockNum,
-            stock_minimo: stockMinimoNum,
-            imagen_url: form.imagen_url || (imagenes.length > 0 ? imagenes[0] : ''),
-            estado_publicacion: form.estado_publicacion || 'PUBLICADO',
-            compatibilidad: form.compatibilidad || 'TODO',
-            activo: form.activo === true || form.activo === 'true',
-        };
+        // Preparar FormData para enviar archivo principal
+        const imagenPrincipal = form.imagen instanceof File
+            ? form.imagen
+            : (imagenesSubidas.length > 0 ? imagenesSubidas[0].archivo : null);
 
-        console.log('Datos a guardar:', datosProducto);
+        const formData = new FormData();
+        if (form.sku && form.sku.trim()) {
+            formData.append('sku', form.sku.trim());
+        }
+        formData.append('nombre', form.nombre.trim());
+        formData.append('marca', form.marca.trim());
+        formData.append('categoria', categoriaId);
+        formData.append('descripcion', form.descripcion);
+        formData.append('material_principal', form.material_principal || '');
+        formData.append('proposito_uso', form.proposito_uso || '');
+        formData.append('precio', precioNum);
+        formData.append('stock_real', stockRealNum);
+        formData.append('stock_minimo', stockMinimoNum);
+        formData.append('estado_publicacion', form.estado_publicacion || 'PUBLICADO');
+        formData.append('compatibilidad', form.compatibilidad || 'TODO');
+        formData.append('activo', form.activo === true || form.activo === 'true');
+        
+        // Agregar imagen principal si hay una nueva
+        if (imagenPrincipal) {
+            formData.append('imagen', imagenPrincipal);
+        }
 
         try {
+            let productoId = form.id;
             let mensaje = "";
+            
             if (modoEdicion) {
-                await axios.put(`http://127.0.0.1:8000/api/gestion/productos/${form.id}/`, datosProducto, { headers });
+                await axios.put(`http://127.0.0.1:8000/api/gestion/productos/${form.id}/`, formData, { headers });
                 mensaje = "Producto actualizado correctamente.";
             } else {
-                await axios.post('http://127.0.0.1:8000/api/gestion/productos/', datosProducto, { headers });
+                const response = await axios.post('http://127.0.0.1:8000/api/gestion/productos/', formData, { headers });
+                productoId = response.data.id;
                 mensaje = "Producto creado exitosamente.";
             }
+            
+            // Ahora subir las imágenes adicionales si existen (solo las nuevas)
+            const imagenesNuevas = imagenesSubidas
+                .filter(img => !img.esExistente)
+                .filter(img => img.archivo && img.archivo !== imagenPrincipal);
+            
+            if (imagenesNuevas.length > 0) {
+                for (let i = 0; i < imagenesNuevas.length; i++) {
+                    const imagenData = new FormData();
+                    imagenData.append('imagen', imagenesNuevas[i].archivo);
+                    imagenData.append('orden', imagenesSubidas.length + i); // Ordenar después de las existentes
+                    imagenData.append('producto', productoId);
+                    
+                    try {
+                        await axios.post(`http://127.0.0.1:8000/api/gestion/imagenes-productos/`, imagenData, { headers });
+                    } catch (imgError) {
+                        console.error(`Error al subir imagen ${i + 1}:`, imgError);
+                        notify.warning(`La imagen ${i + 1} (${imagenesNuevas[i].archivo.name}) no se pudo subir correctamente.`);
+                    }
+                }
+            }
+            
             notify.success(mensaje);
             cerrarModal();
-            cargarProductos();
-            cargarProductosStockBajo();
+            setImagenesSubidas([]);
+            
+            // Pequeño delay para asegurar que el servidor completó la operación
+            setTimeout(() => {
+                cargarProductos();
+                cargarProductosStockBajo();
+            }, 500);
         } catch (error) {
             console.error('Error completo:', error);
             console.error('Response data:', error.response?.data);
@@ -363,6 +564,28 @@ const GestionProductos = () => {
         }
     };
 
+    const desactivarProducto = async (id, nombre) => {
+        const result = await confirmarAccion({
+            title: "¿Desactivar producto?",
+            text: `Se desactivará "${nombre}" y no aparecerá en el catálogo.`,
+            confirmButtonText: "Sí, desactivar"
+        });
+        if (!result.isConfirmed) return;
+
+        try {
+            const token = localStorage.getItem('access_token');
+            await axios.post(`http://127.0.0.1:8000/api/gestion/productos/${id}/desactivar/`, {}, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            notify.success("Producto desactivado.");
+            cargarProductos();
+            cargarProductosStockBajo();
+        } catch (error) {
+            const msg = error.response?.data?.error || "No se pudo desactivar.";
+            notify.error(`${msg}`);
+        }
+    };
+
     // --- RENDERIZADO TABLA PRINCIPAL ---
     const TablaProductos = ({ datos, esAlerta = false }) => (
         <div className="shadow-lg rounded-lg overflow-hidden border" style={{ backgroundColor: 'white', borderColor: '#D5D1CC' }}>
@@ -384,7 +607,11 @@ const GestionProductos = () => {
                         </tr>
                     </thead>
                     <tbody style={{ borderColor: '#D5D1CC' }} className="divide-y">
-                        {datos.map((prod) => (
+                        {datos.map((prod) => {
+                            const stockDisponible = getStockDisponible(prod);
+                            const stockMinimo = Number(prod.stock_minimo || 0);
+
+                            return (
                             <tr key={prod.id} style={{ borderColor: '#E3D5CA' }} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F5F5EB'} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'white'}>
                                 <td className="px-6 py-4 whitespace-nowrap">
                                     <span className="text-xs font-bold" style={{ color: '#8B8682' }}>{prod.sku}</span>
@@ -404,13 +631,13 @@ const GestionProductos = () => {
                                     </span>
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap">
-                                    {prod.stock > prod.stock_minimo ? (
+                                    {stockDisponible > stockMinimo ? (
                                         <span className="px-2 py-1 text-xs font-bold rounded-full" style={{ backgroundColor: '#E8F5E8', color: '#2E7D2E' }}>
-                                            {prod.stock} u.
+                                            {stockDisponible} u.
                                         </span>
-                                    ) : prod.stock > 0 ? (
+                                    ) : stockDisponible > 0 ? (
                                         <span className="px-2 py-1 text-xs font-bold rounded-full animate-pulse" style={{ backgroundColor: '#F5F1E8', color: '#8B7500' }}>
-                                            {prod.stock} u.
+                                            {stockDisponible} u.
                                         </span>
                                     ) : (
                                         <span className="px-2 py-1 text-xs font-bold rounded-full" style={{ backgroundColor: '#FFE8E8', color: '#C73E3E' }}>
@@ -435,18 +662,33 @@ const GestionProductos = () => {
                                             Editar
                                         </button>
                                         <button 
+                                            onClick={() => desactivarProducto(prod.id, prod.nombre)}
+                                            className="font-bold transition mr-4"
+                                            style={{ color: '#8B7500' }}
+                                            onMouseEnter={(e) => e.target.style.color = '#5A4F00'}
+                                            onMouseLeave={(e) => e.target.style.color = '#8B7500'}
+                                        >
+                                            Desactivar
+                                        </button>
+                                        <button 
                                             onClick={() => eliminarProducto(prod.id, prod.nombre)}
-                                            className="font-bold transition"
+                                            disabled={stockDisponible > 0}
+                                            className="font-bold transition disabled:opacity-50"
                                             style={{ color: '#C73E3E' }}
-                                            onMouseEnter={(e) => e.target.style.color = '#8B3E3E'}
-                                            onMouseLeave={(e) => e.target.style.color = '#C73E3E'}
+                                            onMouseEnter={(e) => {
+                                                if (stockDisponible === 0) e.target.style.color = '#8B3E3E';
+                                            }}
+                                            onMouseLeave={(e) => {
+                                                if (stockDisponible === 0) e.target.style.color = '#C73E3E';
+                                            }}
                                         >
                                             Eliminar
                                         </button>
                                     </td>
                                 )}
                             </tr>
-                        ))}
+                            );
+                        })}
                     </tbody>
                 </table>
             )}
@@ -539,6 +781,29 @@ const GestionProductos = () => {
                         >
                             Stock Bajo ({productosStockBajo.length})
                         </button>
+                        <button 
+                            onClick={() => setTabActiva('combos')}
+                            className="px-6 py-4 font-semibold whitespace-nowrap transition-all duration-200 border-b-2"
+                            style={{ 
+                                color: tabActiva === 'combos' ? '#fff' : '#8B8682',
+                                backgroundColor: tabActiva === 'combos' ? '#817773' : 'transparent',
+                                borderColor: tabActiva === 'combos' ? '#817773' : 'transparent'
+                            }}
+                            onMouseEnter={(e) => {
+                                if (tabActiva !== 'combos') {
+                                    e.target.style.backgroundColor = '#E8DCC4';
+                                    e.target.style.color = '#817773';
+                                }
+                            }}
+                            onMouseLeave={(e) => {
+                                if (tabActiva !== 'combos') {
+                                    e.target.style.backgroundColor = 'transparent';
+                                    e.target.style.color = '#8B8682';
+                                }
+                            }}
+                        >
+                            Combos
+                        </button>
                     </div>
                 </div>
 
@@ -561,31 +826,188 @@ const GestionProductos = () => {
                                     <TablaProductos datos={productosStockBajo} esAlerta={true} />
                                 </div>
                             )}
+                            {tabActiva === 'combos' && (
+                                <div className="p-6 space-y-8">
+                                    <div>
+                                        <h2 className="text-xl font-bold mb-4" style={{ color: '#817773' }}>Sugerencias Automáticas</h2>
+                                        {loadingCombos ? (
+                                            <div className="text-center" style={{ color: '#8B8682' }}>Cargando sugerencias...</div>
+                                        ) : combosSugeridos.length === 0 ? (
+                                            <div className="text-center p-6 rounded-lg" style={{ backgroundColor: '#F5F5EB', color: '#8B8682' }}>
+                                                No hay combos sugeridos pendientes.
+                                            </div>
+                                        ) : (
+                                            <div className="space-y-4">
+                                                {combosSugeridos.map((combo) => (
+                                                    <div key={combo.id} className="border rounded-lg p-4" style={{ borderColor: '#E8DCC4', backgroundColor: '#FFF' }}>
+                                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                                            <div>
+                                                                <label className="block text-sm font-medium mb-1" style={{ color: '#817773' }}>Nombre</label>
+                                                                <input
+                                                                    type="text"
+                                                                    value={comboEdiciones[combo.id]?.nombre || ''}
+                                                                    onChange={(e) => actualizarEdicionCombo(combo.id, 'nombre', e.target.value)}
+                                                                    className="w-full border rounded-md p-2"
+                                                                    style={{ borderColor: '#D5D1CC' }}
+                                                                />
+                                                            </div>
+                                                            <div className="md:col-span-2">
+                                                                <label className="block text-sm font-medium mb-1" style={{ color: '#817773' }}>Descripción</label>
+                                                                <input
+                                                                    type="text"
+                                                                    value={comboEdiciones[combo.id]?.descripcion || ''}
+                                                                    onChange={(e) => actualizarEdicionCombo(combo.id, 'descripcion', e.target.value)}
+                                                                    className="w-full border rounded-md p-2"
+                                                                    style={{ borderColor: '#D5D1CC' }}
+                                                                />
+                                                            </div>
+                                                            <div>
+                                                                <label className="block text-sm font-medium mb-1" style={{ color: '#817773' }}>Descuento (%)</label>
+                                                                <input
+                                                                    type="number"
+                                                                    min="1"
+                                                                    max="100"
+                                                                    value={comboEdiciones[combo.id]?.descuento_porcentaje || 0}
+                                                                    onChange={(e) => actualizarEdicionCombo(combo.id, 'descuento_porcentaje', e.target.value)}
+                                                                    className="w-full border rounded-md p-2"
+                                                                    style={{ borderColor: '#D5D1CC' }}
+                                                                />
+                                                            </div>
+                                                            <div className="md:col-span-2">
+                                                                <label className="block text-sm font-medium mb-1" style={{ color: '#817773' }}>Productos</label>
+                                                                <div className="text-sm" style={{ color: '#8B8682' }}>
+                                                                    {(combo.productos || []).map((prodId) => {
+                                                                        const prod = productos.find((p) => p.id === prodId);
+                                                                        return prod ? prod.nombre : `ID ${prodId}`;
+                                                                    }).join(', ')}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                        <div className="flex justify-end gap-3 mt-4">
+                                                            <button
+                                                                onClick={() => rechazarCombo(combo.id)}
+                                                                className="px-4 py-2 rounded-lg font-bold"
+                                                                style={{ backgroundColor: '#FFE8E8', color: '#C73E3E' }}
+                                                            >
+                                                                Rechazar
+                                                            </button>
+                                                            <button
+                                                                onClick={() => publicarCombo(combo.id)}
+                                                                className="px-4 py-2 rounded-lg font-bold text-white"
+                                                                style={{ backgroundColor: '#817773' }}
+                                                            >
+                                                                Publicar
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <div className="border-t pt-6" style={{ borderColor: '#E8DCC4' }}>
+                                        <h2 className="text-xl font-bold mb-4" style={{ color: '#817773' }}>Crear Combo Manual</h2>
+                                        <form onSubmit={crearComboManual} className="space-y-4">
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                <div>
+                                                    <label className="block text-sm font-medium mb-1" style={{ color: '#817773' }}>Nombre *</label>
+                                                    <input
+                                                        type="text"
+                                                        value={comboForm.nombre}
+                                                        onChange={(e) => setComboForm({ ...comboForm, nombre: e.target.value })}
+                                                        className="w-full border rounded-md p-2"
+                                                        style={{ borderColor: '#D5D1CC' }}
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="block text-sm font-medium mb-1" style={{ color: '#817773' }}>Descuento (%)</label>
+                                                    <input
+                                                        type="number"
+                                                        min="1"
+                                                        max="100"
+                                                        value={comboForm.descuento_porcentaje}
+                                                        onChange={(e) => setComboForm({ ...comboForm, descuento_porcentaje: e.target.value })}
+                                                        className="w-full border rounded-md p-2"
+                                                        style={{ borderColor: '#D5D1CC' }}
+                                                    />
+                                                </div>
+                                                <div className="md:col-span-2">
+                                                    <label className="block text-sm font-medium mb-1" style={{ color: '#817773' }}>Descripción</label>
+                                                    <input
+                                                        type="text"
+                                                        value={comboForm.descripcion}
+                                                        onChange={(e) => setComboForm({ ...comboForm, descripcion: e.target.value })}
+                                                        className="w-full border rounded-md p-2"
+                                                        style={{ borderColor: '#D5D1CC' }}
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="block text-sm font-medium mb-1" style={{ color: '#817773' }}>Días de vigencia</label>
+                                                    <input
+                                                        type="number"
+                                                        min="1"
+                                                        value={comboForm.dias_vigencia}
+                                                        onChange={(e) => setComboForm({ ...comboForm, dias_vigencia: e.target.value })}
+                                                        className="w-full border rounded-md p-2"
+                                                        style={{ borderColor: '#D5D1CC' }}
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            <div>
+                                                <label className="block text-sm font-medium mb-2" style={{ color: '#817773' }}>Productos *</label>
+                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-48 overflow-y-auto border rounded-lg p-3" style={{ borderColor: '#E8DCC4' }}>
+                                                    {productos.map((prod) => (
+                                                        <label key={prod.id} className="flex items-center gap-2 text-sm" style={{ color: '#5A5451' }}>
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={comboForm.productos.includes(prod.id)}
+                                                                onChange={() => toggleProductoCombo(prod.id)}
+                                                            />
+                                                            {prod.nombre}
+                                                        </label>
+                                                    ))}
+                                                </div>
+                                            </div>
+
+                                            <div className="flex justify-end">
+                                                <button
+                                                    type="submit"
+                                                    className="px-4 py-2 rounded-lg font-bold text-white"
+                                                    style={{ backgroundColor: '#817773' }}
+                                                >
+                                                    Publicar Combo
+                                                </button>
+                                            </div>
+                                        </form>
+                                    </div>
+                                </div>
+                            )}
                         </>
                     )}
                 </div>
             </div>
             {modalAbierto && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
-                    <div className="rounded-xl shadow-2xl max-w-2xl w-full p-6 animate-fade-in-up my-8" style={{ backgroundColor: 'white' }}>
+                    <div className="rounded-xl shadow-2xl max-w-3xl w-full p-6 animate-fade-in-up my-8" style={{ backgroundColor: 'white', maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}>
                         <h2 className="text-xl font-bold mb-4" style={{ color: '#817773', borderBottom: '2px solid #E3D5CA', paddingBottom: '0.5rem' }}>
                             {modoEdicion ? 'Editar Producto' : 'Nuevo Producto'}
                         </h2>
                         
-                        <form onSubmit={guardarProducto} className="space-y-4 max-h-96 overflow-y-auto pr-2">
+                        <form onSubmit={guardarProducto} className="space-y-4 overflow-y-auto pr-2 flex-1">
                             {/* Fila 1: SKU y Nombre */}
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
-                                    <label className="block text-sm font-medium mb-1" style={{ color: '#817773' }}>SKU *</label>
+                                    <label className="block text-sm font-medium mb-1" style={{ color: '#817773' }}>SKU</label>
                                     <input 
                                         type="text" 
                                         name="sku" 
-                                        required
-                                        placeholder="Ej: PROD-001"
+                                        placeholder={modoEdicion ? "SKU" : "Se genera automaticamente"}
                                         className="mt-1 block w-full border rounded-md shadow-sm p-2 focus:ring-2 outline-none"
                                         style={{ borderColor: '#D5D1CC', '--tw-ring-color': '#AB9A91' }}
                                         value={form.sku}
                                         onChange={handleChange}
+                                        readOnly={!modoEdicion}
                                     />
                                 </div>
                                 <div>
@@ -648,6 +1070,40 @@ const GestionProductos = () => {
                                 />
                             </div>
 
+                            {/* Material y Propósito */}
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium mb-1" style={{ color: '#817773' }}>Material Principal</label>
+                                    <select 
+                                        name="material_principal"
+                                        className="mt-1 block w-full border rounded-md shadow-sm p-2 focus:ring-2 outline-none"
+                                        style={{ borderColor: '#D5D1CC', '--tw-ring-color': '#AB9A91' }}
+                                        value={form.material_principal || ''}
+                                        onChange={handleChange}
+                                    >
+                                        <option value="">-- Seleccionar --</option>
+                                        {opcionesMaterialPrincipal.map(opt => (
+                                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium mb-1" style={{ color: '#817773' }}>Propósito de Uso</label>
+                                    <select 
+                                        name="proposito_uso"
+                                        className="mt-1 block w-full border rounded-md shadow-sm p-2 focus:ring-2 outline-none"
+                                        style={{ borderColor: '#D5D1CC', '--tw-ring-color': '#AB9A91' }}
+                                        value={form.proposito_uso || ''}
+                                        onChange={handleChange}
+                                    >
+                                        <option value="">-- Seleccionar --</option>
+                                        {opcionesPropositoUso.map(opt => (
+                                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            </div>
+
                             {/* Fila 3: Precio y Stock */}
                             <div className="grid grid-cols-3 gap-4">
                                 <div>
@@ -665,15 +1121,15 @@ const GestionProductos = () => {
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium mb-1" style={{ color: '#817773' }}>Stock *</label>
+                                    <label className="block text-sm font-medium mb-1" style={{ color: '#817773' }}>Stock Real *</label>
                                     <input 
                                         type="number" 
-                                        name="stock" 
+                                        name="stock_real" 
                                         required
                                         placeholder="0"
                                         className="mt-1 block w-full border rounded-md shadow-sm p-2 focus:ring-2 outline-none"
                                         style={{ borderColor: '#D5D1CC', '--tw-ring-color': '#AB9A91' }}
-                                        value={form.stock}
+                                        value={form.stock_real}
                                         onChange={handleChange}
                                     />
                                 </div>
@@ -723,115 +1179,107 @@ const GestionProductos = () => {
                                 </div>
                             </div>
 
-                            {/* Galería de Imágenes */}
+                            {/* Galería de Imágenes - Consolidada */}
                             <div>
-                                <label className="block text-sm font-medium mb-2" style={{ color: '#817773' }}>Imágenes del Producto</label>
+                                <label className="block text-sm font-medium mb-2" style={{ color: '#817773' }}>Galería de Imágenes</label>
                                 
-                                {/* Carrusel de imágenes */}
-                                {imagenes.length > 0 && (
-                                    <div className="mb-4 border rounded-lg p-4" style={{ borderColor: '#E8DCC4', backgroundColor: '#F5F5EB' }}>
-                                        <div className="relative w-full flex justify-center items-center mb-4">
-                                            <img 
-                                                src={imagenes[imagenActual]} 
-                                                alt={`Imagen ${imagenActual + 1}`}
-                                                className="max-h-64 max-w-full object-contain rounded-lg"
-                                                onError={(e) => {
-                                                    e.target.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect fill="%23ddd" width="200" height="200"/%3E%3Ctext x="50%25" y="50%25" text-anchor="middle" dy=".3em" fill="%23999"%3EImagen no disponible%3C/text%3E%3C/svg%3E';
-                                                }}
-                                            />
-                                            {imagenes.length > 1 && (
-                                                <>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => cambiarImagen((imagenActual - 1 + imagenes.length) % imagenes.length)}
-                                                        className="absolute left-2 bg-white rounded-full p-2 hover:bg-gray-100 transition"
-                                                        style={{ color: '#817773' }}
-                                                    >
-                                                        ❮
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => cambiarImagen((imagenActual + 1) % imagenes.length)}
-                                                        className="absolute right-2 bg-white rounded-full p-2 hover:bg-gray-100 transition"
-                                                        style={{ color: '#817773' }}
-                                                    >
-                                                        ❯
-                                                    </button>
-                                                </>
-                                            )}
-                                        </div>
-
-                                        {/* Miniaturas */}
-                                        <div className="flex gap-2 overflow-x-auto pb-2">
-                                            {imagenes.map((img, indice) => (
-                                                <div key={indice} className="relative flex-shrink-0">
-                                                    <img 
-                                                        src={img} 
-                                                        alt={`Miniatura ${indice + 1}`}
-                                                        className={`w-16 h-16 object-cover rounded-lg cursor-pointer border-2 transition ${
-                                                            imagenActual === indice ? 'border-green-500' : 'border-gray-300'
-                                                        }`}
-                                                        onClick={() => cambiarImagen(indice)}
-                                                    />
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => eliminarImagen(indice)}
-                                                        className="absolute top-0 right-0 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold hover:bg-red-600 transition"
-                                                    >
-                                                        ✕
-                                                    </button>
-                                                </div>
-                                            ))}
-                                        </div>
-
-                                        <p className="text-xs mt-2" style={{ color: '#8B8682' }}>
-                                            Imagen {imagenActual + 1} de {imagenes.length}
-                                        </p>
-                                    </div>
-                                )}
-
-                                {/* Input para subir imágenes */}
-                                <div className="border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition" 
-                                    style={{ borderColor: '#D5D1CC', backgroundColor: cargandoImagen ? '#F5F5EB' : '#FAFAF7' }}>
+                                {/* Input para subir/agregar imágenes */}
+                                <div className="border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition mb-4 hover:bg-opacity-75" 
+                                    style={{ borderColor: '#D5D1CC', backgroundColor: '#FAFAF7' }}>
                                     <input 
                                         type="file"
-                                        multiple
                                         accept="image/*"
                                         onChange={handleSubirImagen}
-                                        disabled={cargandoImagen}
                                         className="hidden"
                                         id="imageInput"
+                                        multiple
                                     />
                                     <label htmlFor="imageInput" className="cursor-pointer block">
                                         <p className="text-sm font-medium" style={{ color: '#817773' }}>
-                                            {cargandoImagen ? 'Cargando imágenes...' : 'Haz clic para subir imágenes'}
+                                            📷 Haz clic para agregar imágenes
                                         </p>
                                         <p className="text-xs mt-1" style={{ color: '#ABA89E' }}>
-                                            PNG, JPG, GIF (máx 5MB cada una)
+                                            PNG, JPG, GIF (máx 5MB cada una • múltiples permitidas)
                                         </p>
                                     </label>
                                 </div>
 
-                                {/* O pega URL directa */}
-                                <div className="mt-3">
-                                    <label className="text-xs font-medium block mb-1" style={{ color: '#817773' }}>O pega URL de imagen:</label>
-                                    <input 
-                                        type="url" 
-                                        placeholder="https://..."
-                                        className="w-full border rounded-md p-2 text-sm outline-none focus:ring-2"
-                                        style={{ borderColor: '#D5D1CC', '--tw-ring-color': '#AB9A91' }}
-                                        onKeyPress={(e) => {
-                                            if (e.key === 'Enter' && e.target.value.trim()) {
-                                                setImagenes([...imagenes, e.target.value.trim()]);
-                                                if (imagenes.length === 0) {
-                                                    setForm({ ...form, imagen_url: e.target.value.trim() });
-                                                }
-                                                e.target.value = '';
-                                            }
-                                        }}
-                                    />
-                                    <p className="text-xs mt-1" style={{ color: '#ABA89E' }}>Presiona Enter para agregar</p>
-                                </div>
+                                {/* Galería unificada de imágenes (principal + adicionales) */}
+                                {((form.imagen_url || form.imagen) || imagenesSubidas.length > 0) && (
+                                    <div className="grid grid-cols-2 gap-3">
+                                        {/* Mostrar imagen principal si existe */}
+                                        {(form.imagen_url || form.imagen) && (
+                                            <div className="border rounded-lg overflow-hidden relative group" style={{ borderColor: '#D5D1CC' }}>
+                                                {form.imagen instanceof File ? (
+                                                    <div className="bg-gray-100 p-3 text-center">
+                                                        <p className="text-xs font-semibold" style={{ color: '#817773' }}>
+                                                            ✅ Nueva imagen principal
+                                                        </p>
+                                                        <p className="text-xs mt-1" style={{ color: '#8B8682' }}>
+                                                            {form.imagen.name}
+                                                        </p>
+                                                    </div>
+                                                ) : (
+                                                    <img 
+                                                        src={form.imagen_url} 
+                                                        alt="Principal"
+                                                        className="w-full h-32 object-cover"
+                                                        onError={(e) => {
+                                                            e.target.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect fill="%23ddd" width="200" height="200"/%3E%3C/svg%3E';
+                                                        }}
+                                                    />
+                                                )}
+                                                <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-40 transition flex items-center justify-center">
+                                                    <button
+                                                        type="button"
+                                                        onClick={eliminarImagen}
+                                                        className="opacity-0 group-hover:opacity-100 px-3 py-1 text-sm text-white bg-red-500 rounded hover:bg-red-600 transition"
+                                                        title="Eliminar imagen principal"
+                                                    >
+                                                        ✕ Eliminar
+                                                    </button>
+                                                </div>
+                                                <div className="px-2 py-1 text-xs font-semibold" style={{ backgroundColor: '#E8DCC4', color: '#817773' }}>
+                                                    📌 Principal
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Mostrar imágenes adicionales */}
+                                        {imagenesSubidas.map((img) => (
+                                            <div key={img.id} className="border rounded-lg overflow-hidden relative group" style={{ borderColor: '#D5D1CC' }}>
+                                                <img 
+                                                    src={img.preview || img.url} 
+                                                    alt="Galería"
+                                                    className="w-full h-32 object-cover"
+                                                    onError={(e) => {
+                                                        e.target.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect fill="%23ddd" width="200" height="200"/%3E%3C/svg%3E';
+                                                    }}
+                                                />
+                                                <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-40 transition flex items-center justify-center">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => eliminarImagenSubida(img.id)}
+                                                        className="opacity-0 group-hover:opacity-100 px-3 py-1 text-sm text-white bg-red-500 rounded hover:bg-red-600 transition"
+                                                        title={img.esExistente ? 'Eliminar del producto' : 'Quitar de la carga'}
+                                                    >
+                                                        ✕
+                                                    </button>
+                                                </div>
+                                                <div className="px-2 py-1 text-xs" style={{ backgroundColor: img.esExistente ? '#E8F5E8' : '#FFF3E0', color: img.esExistente ? '#2E7D2E' : '#E65100' }}>
+                                                    {img.esExistente ? '✓ Guardada' : '⏳ Nueva'}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                                
+                                {!((form.imagen_url || form.imagen) || imagenesSubidas.length > 0) && (
+                                    <div className="border rounded-lg p-8 text-center" style={{ borderColor: '#E8DCC4', backgroundColor: '#F5F5EB' }}>
+                                        <p style={{ color: '#8B8682' }}>No hay imágenes aún</p>
+                                        <p className="text-xs" style={{ color: '#ABA89E' }}>Haz clic en el área superior para agregar imágenes</p>
+                                    </div>
+                                )}
                             </div>
 
                             {/* Checkbox Activo */}

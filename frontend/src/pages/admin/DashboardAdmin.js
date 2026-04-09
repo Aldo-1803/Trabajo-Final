@@ -42,11 +42,6 @@ const DashboardAdmin = () => {
                 
                 <h2 className="text-3xl font-bold mb-8" style={{ color: '#817773' }}>Hola, Yani</h2>
 
-                {/* --- SECCIÓN: ALERTAS CRÍTICAS --- */}
-                <div className="mb-10">
-                    <AlertasCriticas />
-                </div>
-
                 {/* --- TARJETAS DE ESTADÍSTICAS (KPIs) --- */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
                     {/* Tarjeta 1: Hoy */}
@@ -87,6 +82,21 @@ const DashboardAdmin = () => {
                             </div>
                         </div>
                     </div>
+                </div>
+
+                {/* --- ALERTAS Y PROMOS (COLAPSABLE) --- */}
+                <div className="mb-8">
+                    <details className="bg-white rounded-xl shadow-md">
+                        <summary
+                            className="cursor-pointer select-none px-5 py-4 text-sm font-semibold"
+                            style={{ color: '#817773' }}
+                        >
+                            Alertas de stock y promociones Last Minute
+                        </summary>
+                        <div className="px-5 pb-5 pt-2">
+                            <AlertasCriticas />
+                        </div>
+                    </details>
                 </div>
 
                 {/* --- SECCIÓN DE ACCESOS RÁPIDOS Y AGENDA --- */}
@@ -233,6 +243,34 @@ const DashboardAdmin = () => {
                             <div className="text-left">
                                 <h4 className="font-bold" style={{ color: '#817773' }}>Configuración del Sistema</h4>
                                 <p className="text-xs" style={{ color: '#8B8682' }}>Parámetros y catálogos</p>
+                            </div>
+                        </button>
+
+                        <button 
+                            onClick={() => navigate('/admin/ordenes')}
+                            className="w-full p-4 rounded-lg shadow hover:shadow-md flex items-center gap-4 transition-all"
+                            style={{ backgroundColor: 'white' }}
+                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F5F5EB'}
+                            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'white'}
+                        >
+                            <span className="p-2 rounded-lg" style={{ backgroundColor: '#E3D5CA', color: '#817773' }}></span>
+                            <div className="text-left">
+                                <h4 className="font-bold" style={{ color: '#817773' }}>Gestión de Órdenes</h4>
+                                <p className="text-xs" style={{ color: '#8B8682' }}>Órdenes de compra de clientes</p>
+                            </div>
+                        </button>
+
+                        <button 
+                            onClick={() => navigate('/admin/auditoria')}
+                            className="w-full p-4 rounded-lg shadow hover:shadow-md flex items-center gap-4 transition-all"
+                            style={{ backgroundColor: 'white' }}
+                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F5F5EB'}
+                            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'white'}
+                        >
+                            <span className="p-2 rounded-lg" style={{ backgroundColor: '#E3D5CA', color: '#817773' }}></span>
+                            <div className="text-left">
+                                <h4 className="font-bold" style={{ color: '#817773' }}>Auditoría del Sistema</h4>
+                                <p className="text-xs" style={{ color: '#8B8682' }}>Registro de cambios y acciones</p>
                             </div>
                         </button>
                     </div>

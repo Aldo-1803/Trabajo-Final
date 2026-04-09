@@ -3,11 +3,13 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import axios from 'axios';
 import { CLIENTE_ROUTES, ADMIN_ROUTES, AUTH_ROUTES } from '../routes/routes';
 import CampanaNotificaciones from './CampanaNotificaciones';
+import { IconCart } from './common/Icons';
 
 const Header = () => {
     const [user, setUser] = useState(null);
     const [dropdownOpen, setDropdownOpen] = useState(false);
     const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+    const [empresaNombre, setEmpresaNombre] = useState('Bohemia Hair');
     const navigate = useNavigate();
     const location = useLocation();
 
@@ -27,6 +29,22 @@ const Header = () => {
             }
         };
         fetchUser();
+    }, []);
+
+    useEffect(() => {
+        const fetchEmpresaNombre = async () => {
+            try {
+                const res = await axios.get('http://127.0.0.1:8000/api/gestion/configuracion/publica/');
+                const nombre = res.data?.empresa_nombre?.trim();
+                if (nombre) {
+                    setEmpresaNombre(nombre);
+                }
+            } catch (error) {
+                console.error('Error cargando nombre de empresa:', error);
+            }
+        };
+
+        fetchEmpresaNombre();
     }, []);
 
     const handleLogout = () => {
@@ -49,7 +67,10 @@ const Header = () => {
     
     const adminLinks = [
         { name: 'Dashboard', href: ADMIN_ROUTES.DASHBOARD },
+        { name: 'Reportes', href: ADMIN_ROUTES.REPORTES },
         { name: 'Turnos', href: ADMIN_ROUTES.TURNOS },
+        { name: 'Ordenes', href: ADMIN_ROUTES.ORDENES },
+        { name: 'Caja', href: ADMIN_ROUTES.CAJA },
         { name: 'Rutinas', href: ADMIN_ROUTES.GESTIONAR_RUTINAS },
         { name: 'Servicios', href: ADMIN_ROUTES.SERVICIOS },
         { name: 'Contenido Educativo', href: ADMIN_ROUTES.CONTENIDO_EDUCATIVO },
@@ -58,6 +79,7 @@ const Header = () => {
 
     const clientLinks = [
         { name: 'Mis Turnos', href: CLIENTE_ROUTES.MIS_TURNOS },
+        { name: 'Mis Pedidos', href: CLIENTE_ROUTES.MIS_PEDIDOS },
         { name: 'Reservar', href: CLIENTE_ROUTES.RESERVAR },
         { name: 'Rutinas', href: CLIENTE_ROUTES.CATALOGO_RUTINAS },
         { name: 'Servicios', href: CLIENTE_ROUTES.CATALOGO_SERVICIOS },
@@ -74,7 +96,7 @@ const Header = () => {
                     {/* Logo */}
                     <div className="flex-shrink-0">
                         <Link to={isAdmin ? ADMIN_ROUTES.DASHBOARD : CLIENTE_ROUTES.PERFIL}>
-                            <h1 className="text-xl sm:text-2xl font-bold text-gray-800 tracking-tight">Bohemia Hair</h1>
+                            <h1 className="text-xl sm:text-2xl font-bold text-gray-800 tracking-tight">{empresaNombre}</h1>
                         </Link>
                     </div>
 
@@ -120,6 +142,21 @@ const Header = () => {
                                 <div className="hidden lg:block">
                                     <CampanaNotificaciones />
                                 </div>
+                                
+                                {/* Carrito de Compras */}
+                                {!isAdmin && (
+                                    <Link
+                                        to={CLIENTE_ROUTES.CARRITO}
+                                        className="relative flex items-center justify-center w-10 h-10 rounded-lg transition-all"
+                                        style={{ backgroundColor: 'rgba(255, 255, 255, 0.3)' }}
+                                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.5)'}
+                                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.3)'}
+                                        title="Carrito de compras"
+                                    >
+                                        <IconCart className="h-5 w-5 text-gray-800" />
+                                    </Link>
+                                )}
+                                
                                 <div className="relative">
                                     <button
                                         className="flex items-center gap-2 px-2 py-1 md:px-3 md:py-2 rounded-lg transition-all text-gray-800 font-medium text-sm"

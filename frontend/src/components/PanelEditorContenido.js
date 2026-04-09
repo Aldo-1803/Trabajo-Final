@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { IconCheckCircle, IconPencil, IconPlus, IconX } from './common/Icons';
 
 const PanelEditorContenido = ({ contenidoEditar = null, onGuardar, onCancelar }) => {
     const [formulario, setFormulario] = useState({
@@ -7,7 +8,7 @@ const PanelEditorContenido = ({ contenidoEditar = null, onGuardar, onCancelar })
         descripcion: '',
         contenido_texto: '',
         multimedia_url: '',
-        tipo: 'IMAGEN',
+        tipo: 'TEXTO',
         tags: '',
         estado: 'BORRADOR'
     });
@@ -60,7 +61,7 @@ const PanelEditorContenido = ({ contenidoEditar = null, onGuardar, onCancelar })
         if (!formulario.contenido_texto.trim()) newErrores.contenido_texto = 'El contenido es requerido';
         
         if (formulario.tipo !== 'TEXTO' && !formulario.multimedia_url.trim()) {
-            newErrores.multimedia_url = 'URL de multimedia requerida para ' + formulario.tipo;
+            newErrores.multimedia_url = 'La URL de multimedia es requerida para imagen o video';
         }
         if (formulario.tipo === 'TEXTO' && formulario.multimedia_url.trim()) {
             newErrores.multimedia_url = 'No incluir multimedia en contenido de TEXTO';
@@ -87,14 +88,14 @@ const PanelEditorContenido = ({ contenidoEditar = null, onGuardar, onCancelar })
             if (contenidoEditar) {
                 // Editar
                 await axios.put(
-                    `http://localhost:8000/api/contenido-educativo/${contenidoEditar.id}/`,
+                    `http://localhost:8000/api/gestion/contenido-educativo/${contenidoEditar.id}/`,
                     formulario,
                     config
                 );
             } else {
                 // Crear
                 await axios.post(
-                    'http://localhost:8000/api/contenido-educativo/',
+                    'http://localhost:8000/api/gestion/contenido-educativo/',
                     formulario,
                     config
                 );
@@ -125,7 +126,15 @@ const PanelEditorContenido = ({ contenidoEditar = null, onGuardar, onCancelar })
     return (
         <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
             <h2 className="text-2xl font-bold mb-6" style={{ color: '#817773' }}>
-                {contenidoEditar ? '✏️ Editar Contenido' : '➕ Crear Contenido Educativo'}
+                {contenidoEditar ? (
+                    <span className="inline-flex items-center gap-2">
+                        <IconPencil className="h-5 w-5" /> Editar Contenido
+                    </span>
+                ) : (
+                    <span className="inline-flex items-center gap-2">
+                        <IconPlus className="h-5 w-5" /> Crear Contenido Educativo
+                    </span>
+                )}
             </h2>
 
             <form onSubmit={handleSubmit} className="space-y-4">
@@ -149,9 +158,9 @@ const PanelEditorContenido = ({ contenidoEditar = null, onGuardar, onCancelar })
                             className="w-full p-2 border rounded-lg outline-none"
                             style={{ borderColor: '#D5D1CC' }}
                         >
-                            <option value="IMAGEN">📷 Imagen</option>
-                            <option value="VIDEO">🎥 Video (YouTube/Vimeo)</option>
-                            <option value="TEXTO">📝 Solo Texto</option>
+                            <option value="IMAGEN">Imagen</option>
+                            <option value="VIDEO">Video</option>
+                            <option value="TEXTO">Texto</option>
                         </select>
                     </div>
 
@@ -310,7 +319,11 @@ const PanelEditorContenido = ({ contenidoEditar = null, onGuardar, onCancelar })
                         onMouseEnter={(e) => !cargando && (e.target.style.backgroundColor = '#22652E')}
                         onMouseLeave={(e) => !cargando && (e.target.style.backgroundColor = '#2E7D2E')}
                     >
-                        {cargando ? '⏳ Guardando...' : '💾 ' + (contenidoEditar ? 'Actualizar' : 'Publicar')}
+                        {cargando ? 'Guardando...' : (
+                            <span className="inline-flex items-center gap-2">
+                                <IconCheckCircle className="h-4 w-4" /> {contenidoEditar ? 'Actualizar' : 'Publicar'}
+                            </span>
+                        )}
                     </button>
 
                     <button
@@ -321,7 +334,9 @@ const PanelEditorContenido = ({ contenidoEditar = null, onGuardar, onCancelar })
                         onMouseEnter={(e) => e.target.style.backgroundColor = '#5A5451'}
                         onMouseLeave={(e) => e.target.style.backgroundColor = '#8B8682'}
                     >
-                        ✕ Cancelar
+                        <span className="inline-flex items-center gap-2">
+                            <IconX className="h-4 w-4" /> Cancelar
+                        </span>
                     </button>
                 </div>
             </form>

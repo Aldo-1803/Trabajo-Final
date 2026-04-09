@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { IconInfo, IconSparkles } from './common/Icons';
 
 const ProductosSugerenciasCard = () => {
     const [productos, setProductos] = useState([]);
@@ -36,7 +37,9 @@ const ProductosSugerenciasCard = () => {
         return (
             <div className="p-4 rounded-lg border" style={{ backgroundColor: '#F5EBE0', borderColor: '#D5D1CC' }}>
                 <p style={{ color: '#8B8682' }} className="text-sm">
-                    💡 Realiza un diagnóstico capilar para recibir recomendaciones personalizadas de productos
+                    <span className="inline-flex items-center gap-2">
+                        <IconInfo className="h-4 w-4" /> Realiza un diagnóstico capilar para recibir recomendaciones personalizadas de productos
+                    </span>
                 </p>
             </div>
         );
@@ -45,7 +48,9 @@ const ProductosSugerenciasCard = () => {
     return (
         <div className="p-4 rounded-lg border" style={{ backgroundColor: 'white', borderColor: '#D5D1CC' }}>
             <h3 className="font-bold mb-3" style={{ color: '#817773' }}>
-                🌟 Productos Recomendados para Ti
+                <span className="inline-flex items-center gap-2">
+                    <IconSparkles className="h-5 w-5" /> Productos Recomendados para Ti
+                </span>
             </h3>
             <p style={{ color: '#8B8682' }} className="text-sm mb-4">
                 {motivoSugerencia}

@@ -3,6 +3,8 @@ import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import FichaRecomendacion from '../../components/FichaRecomendacion';
 import PromocionesCarte from '../../components/PromocionesCarte';
+import { IconBag, IconBook, IconBookmark, IconCalendar, IconClipboard, IconPencil, IconSearch, IconSparkles, IconWarning } from '../../components/common/Icons';
+import { CLIENTE_ROUTES } from '../../routes/routes';
 
 // ============================================================================
 // COMPONENTE PRINCIPAL
@@ -102,7 +104,16 @@ const Perfil = () => {
                 {error && <ErrorAlert error={error} />}
 
                 {/* BOTONES DE ACCESO RÁPIDO */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+                    <button
+                        onClick={() => navigate('/mis-rutinas')}
+                        className="px-6 py-4 rounded-lg font-bold text-white shadow-md transition-all duration-200 hover:shadow-lg"
+                        style={{ backgroundColor: '#D5BDAF' }}
+                        onMouseEnter={(e) => e.target.style.backgroundColor = '#AB9A91'}
+                        onMouseLeave={(e) => e.target.style.backgroundColor = '#D5BDAF'}
+                    >
+                        Mis Rutinas
+                    </button>
                     <button
                         onClick={() => navigate('/catalogo-productos')}
                         className="px-6 py-4 rounded-lg font-bold text-white shadow-md transition-all duration-200 hover:shadow-lg"
@@ -129,6 +140,8 @@ const Perfil = () => {
                     <PerfilCapilar usuario={usuario} />
                 </div>
 
+                <ContenidoEducativoSection navigate={navigate} />
+
                 {/* DIAGNÓSTICO */}
                 {diagnostico && <DiagnosticoCard diagnostico={diagnostico} notificaciones={notificaciones} navigate={navigate} />}
             </div>
@@ -142,20 +155,26 @@ const Perfil = () => {
 
 const ErrorAlert = ({ error }) => (
     <div className="mb-8 p-4 rounded-lg border-l-4" style={{ backgroundColor: '#FFE8E8', borderColor: '#C73E3E' }}>
-        <p style={{ color: '#C73E3E' }} className="font-medium">⚠️ {error}</p>
+        <p style={{ color: '#C73E3E' }} className="font-medium inline-flex items-center gap-2">
+            <IconWarning className="h-4 w-4" /> {error}
+        </p>
     </div>
 );
 
 const InformacionPersonal = ({ usuario, navigate }) => (
     <div style={{ backgroundColor: 'white', borderLeft: '5px solid #AB9A91' }} className="rounded-xl p-8 shadow-lg">
         <div className="flex justify-between items-center mb-6">
-            <h2 style={{ color: '#817773' }} className="text-2xl font-bold">📋 Información Personal</h2>
+            <h2 style={{ color: '#817773' }} className="text-2xl font-bold inline-flex items-center gap-2">
+                <IconClipboard className="h-5 w-5" /> Informacion Personal
+            </h2>
             <button
                 onClick={() => navigate('/editar-perfil')}
                 className="px-4 py-2 rounded-lg text-white font-bold shadow-md transform hover:scale-105 transition-all"
                 style={{ background: 'linear-gradient(135deg, #AB9A91 0%, #817773 100%)' }}
             >
-                ✏️ Editar
+                <span className="inline-flex items-center gap-2">
+                    <IconPencil className="h-4 w-4" /> Editar
+                </span>
             </button>
         </div>
         
@@ -186,24 +205,20 @@ const DiagnosticoCard = ({ diagnostico, notificaciones, navigate }) => {
     const turnoNotificacion = notificaciones && notificaciones.length > 0 
         ? notificaciones.find(n => n.tipo === 'alerta' && n.datos_extra?.fecha && n.datos_extra?.hora)
         : null;
+    const mensajeAnalisis = diagnostico.regla_diagnostico_mensaje || diagnostico.mensaje_diagnostico;
 
     return (
         <div style={{ backgroundColor: 'white', borderLeft: '5px solid #E3D5CA' }} className="rounded-xl p-8 shadow-lg mb-8">
-            <h2 style={{ color: '#817773' }} className="text-2xl font-bold mb-6">📋 Diagnóstico Personalizado</h2>
+            <h2 style={{ color: '#817773' }} className="text-2xl font-bold mb-6 inline-flex items-center gap-2">
+                <IconClipboard className="h-5 w-5" /> Diagnostico Personalizado
+            </h2>
             
-            {/* Mensaje Principal - Análisis Profesional */}
-            <div className="bg-gradient-to-r from-transparent to-transparent rounded-lg p-6 mb-6 border-l-4" style={{ borderColor: '#AB9A91', backgroundColor: '#F5EBE0' }}>
-                <h3 style={{ color: '#817773' }} className="text-lg font-bold mb-2">Tu Análisis Capilar</h3>
-                <p style={{ color: '#817773' }} className="text-base leading-relaxed">
-                    {diagnostico.mensaje_diagnostico || 'Análisis en proceso...'}
-                </p>
-            </div>
-
             {/* FICHA DE RECOMENDACIÓN - Componente Reutilizable */}
             <FichaRecomendacion 
                 diagnostico={diagnostico} 
                 turnoNotificacion={turnoNotificacion} 
                 navigate={navigate}
+                mensaje={mensajeAnalisis}
             />
 
             {/* PROMOCIONES EXCLUSIVAS - Widget P3 */}
@@ -230,7 +245,7 @@ const DiagnosticoCard = ({ diagnostico, notificaciones, navigate }) => {
                             className="px-6 py-3 rounded-lg text-white font-bold shadow-md transform hover:scale-105 transition-all flex items-center gap-2"
                             style={{ background: 'linear-gradient(135deg, #AB9A91 0%, #817773 100%)' }}
                         >
-                            <span>📖</span> Ver detalle de rutina
+                            <IconBook className="h-4 w-4" /> Ver detalle de rutina
                         </button>
                     </div>
                 </div>
@@ -257,7 +272,7 @@ const DiagnosticoCard = ({ diagnostico, notificaciones, navigate }) => {
                             className="px-6 py-3 rounded-lg text-white font-bold shadow-md transform hover:scale-105 transition-all flex items-center gap-2"
                             style={{ background: 'linear-gradient(135deg, #E3D5CA 0%, #D5BDAF 100%)' }}
                         >
-                            <span>✨</span> Agendar Turno
+                            <IconCalendar className="h-4 w-4" /> Agendar Turno
                         </button>
                     </div>
                 </div>
@@ -268,7 +283,9 @@ const DiagnosticoCard = ({ diagnostico, notificaciones, navigate }) => {
                 <div className="flex flex-col md:flex-row items-center justify-between gap-4">
                     <div>
                         <p className="text-sm font-bold uppercase tracking-wider" style={{ color: '#E3D5CA' }}>
-                            ✨ Servicios Disponibles
+                            <span className="inline-flex items-center gap-2">
+                                <IconSparkles className="h-4 w-4" /> Servicios Disponibles
+                            </span>
                         </p>
                         <h3 className="text-xl font-bold" style={{ color: '#817773' }}>
                             Explora nuestros tratamientos
@@ -283,13 +300,58 @@ const DiagnosticoCard = ({ diagnostico, notificaciones, navigate }) => {
                         className="px-6 py-3 rounded-lg text-white font-bold shadow-md transform hover:scale-105 transition-all flex items-center gap-2"
                         style={{ background: 'linear-gradient(135deg, #D5BDAF 0%, #AB9A91 100%)' }}
                     >
-                        <span>🛍️</span> Ver catálogo
+                        <IconBag className="h-4 w-4" /> Ver catalogo
                     </button>
                 </div>
             </div>
         </div>
     );
 };
+
+const ContenidoEducativoSection = ({ navigate }) => (
+    <div style={{ backgroundColor: 'white', borderLeft: '5px solid #C9B07A' }} className="rounded-xl p-8 shadow-lg mb-8">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+            <div>
+                <h2 style={{ color: '#817773' }} className="text-2xl font-bold inline-flex items-center gap-2">
+                    <IconBook className="h-5 w-5" /> Contenido Educativo
+                </h2>
+                <p className="text-sm" style={{ color: '#8B8682' }}>
+                    Accede a recomendaciones, artículos y favoritos personalizados.
+                </p>
+            </div>
+            <button
+                onClick={() => navigate(CLIENTE_ROUTES.CONTENIDO_PUBLICO)}
+                className="px-4 py-2 rounded-lg text-white font-bold shadow-md transition-all"
+                style={{ background: 'linear-gradient(135deg, #C9B07A 0%, #A68C72 100%)' }}
+            >
+                Ver centro educativo
+            </button>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <button
+                onClick={() => navigate(CLIENTE_ROUTES.CONTENIDO_RECOMENDADO)}
+                className="px-5 py-4 rounded-lg font-bold text-white shadow-md transition-all hover:shadow-lg flex items-center justify-center gap-2"
+                style={{ backgroundColor: '#817773' }}
+            >
+                <IconSparkles className="h-5 w-5" /> Recomendado para ti
+            </button>
+            <button
+                onClick={() => navigate(CLIENTE_ROUTES.CONTENIDO_PUBLICO)}
+                className="px-5 py-4 rounded-lg font-bold text-white shadow-md transition-all hover:shadow-lg flex items-center justify-center gap-2"
+                style={{ backgroundColor: '#AB9A91' }}
+            >
+                <IconSearch className="h-5 w-5" /> Explorar contenido
+            </button>
+            <button
+                onClick={() => navigate(CLIENTE_ROUTES.CONTENIDO_GUARDADO)}
+                className="px-5 py-4 rounded-lg font-bold text-white shadow-md transition-all hover:shadow-lg flex items-center justify-center gap-2"
+                style={{ backgroundColor: '#D5BDAF' }}
+            >
+                <IconBookmark className="h-5 w-5" /> Guardados
+            </button>
+        </div>
+    </div>
+);
 
 
 const InfoRow = ({ label, value }) => (

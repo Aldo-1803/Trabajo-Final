@@ -12,6 +12,7 @@ export const CLIENTE_ROUTES = {
   EDITAR_PERFIL: '/editar-perfil',
   RESERVAR: '/reservar',
   MIS_TURNOS: '/mis-turnos',
+  MIS_PEDIDOS: '/mis-pedidos',
   MI_AGENDA: '/mi-agenda',
   CATALOGO_RUTINAS: '/catalogo-rutinas',
   CATALOGO_PRODUCTOS: '/catalogo-productos',
@@ -20,11 +21,17 @@ export const CLIENTE_ROUTES = {
   CATALOGO_SERVICIOS: '/catalogo-servicios',
   SERVICIO_DETALLE: '/servicio/:servicioId',
   PROMOCION_DETALLE: '/promocion/:id',
+  CARRITO: '/carrito',
+  CONTENIDO_RECOMENDADO: '/cliente/contenido-recomendado',
+  CONTENIDO_PUBLICO: '/cliente/contenido-publico',
+  CONTENIDO_GUARDADO: '/cliente/contenido-guardado',
+  CONTENIDO_DETALLE: '/cliente/contenido/:id',
 };
 
 // Rutas de admin
 export const ADMIN_ROUTES = {
   DASHBOARD: '/admin-dashboard',
+  REPORTES: '/admin/reportes',
   NUEVO_TURNO: '/admin/nuevo-turno',
   TURNOS: '/admin/turnos',
   GESTIONAR_RUTINAS: '/admin/gestionar-rutinas',
@@ -41,6 +48,9 @@ export const ADMIN_ROUTES = {
   CONTENIDO_EDUCATIVO: '/admin/contenido-educativo',
   CREAR_CONTENIDO: '/admin/contenido-educativo/crear',
   EDITAR_CONTENIDO: '/admin/contenido-educativo/:id/editar',
+  ORDENES: '/admin/ordenes',
+  CAJA: '/admin/caja',
+  AUDITORIA: '/admin/auditoria',
 };
 
 // Rutas sin Header

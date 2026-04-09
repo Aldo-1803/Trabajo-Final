@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useNavigate, useLocation, useParams } from 'react-router-dom';
 import { notify } from '../../utils/notificaciones';
+import { IconBag, IconClock, IconGift, IconInfo, IconSparkles } from '../../components/common/Icons';
 
 const DetallePromocion = () => {
     const navigate = useNavigate();
@@ -117,9 +118,21 @@ const DetallePromocion = () => {
                                 ? 'bg-purple-500 text-white'
                                 : 'bg-blue-500 text-white'
                         }`}>
-                            {promocion.tipo === 'LAST_MINUTE' && '⏰ ÚLTIMA HORA'}
-                            {promocion.tipo === 'RETOQUE' && '💄 RETOQUE'}
-                            {promocion.tipo === 'COMBO' && '🎁 COMBO'}
+                            {promocion.tipo === 'LAST_MINUTE' && (
+                                <span className="inline-flex items-center gap-2">
+                                    <IconClock className="h-4 w-4" /> ULTIMA HORA
+                                </span>
+                            )}
+                            {promocion.tipo === 'RETOQUE' && (
+                                <span className="inline-flex items-center gap-2">
+                                    <IconSparkles className="h-4 w-4" /> RETOQUE
+                                </span>
+                            )}
+                            {promocion.tipo === 'COMBO' && (
+                                <span className="inline-flex items-center gap-2">
+                                    <IconGift className="h-4 w-4" /> COMBO
+                                </span>
+                            )}
                         </span>
                     </div>
                     
@@ -129,7 +142,9 @@ const DetallePromocion = () => {
                     {/* Contador para LAST_MINUTE */}
                     {promocion.tipo === 'LAST_MINUTE' && tiempoRestante && tiempoRestante !== 'Expirada' && (
                         <div className="mt-4 bg-red-900 bg-opacity-50 p-3 rounded-lg">
-                            <p className="text-sm font-bold">⏱️ Válido por:</p>
+                            <p className="text-sm font-bold inline-flex items-center gap-2">
+                                <IconClock className="h-4 w-4" /> Válido por:
+                            </p>
                             <p className="text-xl font-bold text-yellow-300">{tiempoRestante}</p>
                         </div>
                     )}
@@ -149,7 +164,7 @@ const DetallePromocion = () => {
                     {promocion.servicios && promocion.servicios.length > 0 && (
                         <div>
                             <h3 className="text-lg font-bold text-gray-900 mb-3 flex items-center">
-                                <span className="mr-2">💇</span>
+                                <IconSparkles className="h-5 w-5 mr-2" />
                                 Servicios incluidos ({promocion.servicios.length})
                             </h3>
                             <div className="space-y-2">
@@ -157,9 +172,9 @@ const DetallePromocion = () => {
                                     <div key={servicio.id} className="bg-gray-50 p-3 rounded-lg border border-gray-200">
                                         <p className="font-semibold text-gray-900">{servicio.nombre}</p>
                                         {servicio.duracion_estimada && (
-                                            <p className="text-sm text-gray-600">
-                                                ⏱️ {servicio.duracion_estimada} min
-                                            </p>
+                                                <p className="text-sm text-gray-600 inline-flex items-center gap-2">
+                                                    <IconClock className="h-4 w-4" /> {servicio.duracion_estimada} min
+                                                </p>
                                         )}
                                     </div>
                                 ))}
@@ -171,7 +186,7 @@ const DetallePromocion = () => {
                     {promocion.productos && promocion.productos.length > 0 && (
                         <div>
                             <h3 className="text-lg font-bold text-gray-900 mb-3 flex items-center">
-                                <span className="mr-2">🛍️</span>
+                                <IconBag className="h-5 w-5 mr-2" />
                                 Productos incluidos ({promocion.productos.length})
                             </h3>
                             <div className="space-y-2">
@@ -180,7 +195,7 @@ const DetallePromocion = () => {
                                         <p className="font-semibold text-gray-900">{producto.nombre}</p>
                                         {producto.precio && (
                                             <p className="text-sm text-gray-600">
-                                                💰 ${producto.precio}
+                                                ${producto.precio}
                                             </p>
                                         )}
                                     </div>
@@ -193,7 +208,9 @@ const DetallePromocion = () => {
                     {promocion.condiciones && (
                         <div className="bg-blue-50 border-2 border-blue-200 p-4 rounded-lg">
                             <p className="text-sm text-gray-700">
-                                <span className="font-bold text-blue-900">ℹ️ Condiciones:</span> {promocion.condiciones}
+                                <span className="font-bold text-blue-900 inline-flex items-center gap-2">
+                                    <IconInfo className="h-4 w-4" /> Condiciones:
+                                </span> {promocion.condiciones}
                             </p>
                         </div>
                     )}
@@ -225,7 +242,9 @@ const DetallePromocion = () => {
                         }}
                         className="w-full bg-gradient-to-r from-pink-600 to-rose-500 text-white font-bold py-3 rounded-lg hover:from-pink-700 hover:to-rose-600 transition shadow-lg"
                     >
-                        ✨ Reservar con esta promoción
+                            <span className="inline-flex items-center gap-2">
+                                <IconSparkles className="h-4 w-4" /> Reservar con esta promoción
+                            </span>
                     </button>
                 </div>
             </div>

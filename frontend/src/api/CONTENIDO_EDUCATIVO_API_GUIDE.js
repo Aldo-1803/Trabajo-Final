@@ -133,7 +133,7 @@ const MiComponente = () => {
                 <div key={c.id}>
                     <h3>{c.titulo}</h3>
                     <button onClick={() => handleLike(c.id)}>
-                        ❤️ {c.total_likes}
+                        Likes: {c.total_likes}
                     </button>
                 </div>
             ))}
@@ -148,23 +148,23 @@ export default MiComponente;
 // ============================================
 
 /**
- * ✅ Centralización
+ * - Centralizacion
  *    - Una única fuente de verdad para todas las URLs
  *    - Headers y autenticación automáticos
  * 
- * ✅ Mantenibilidad
+ * - Mantenibilidad
  *    - Si cambia la URL, solo cambias un archivo
  *    - Sin duplicación de código
  * 
- * ✅ Consistencia
+ * - Consistencia
  *    - Mismo manejo de errores en toda la app
  *    - Misma interfaz en todos los componentes
  * 
- * ✅ Escalabilidad
+ * - Escalabilidad
  *    - Fácil de agregar nuevos métodos
  *    - Fácil de agregar validaciones
  * 
- * ✅ Testing
+ * - Testing
  *    - Fácil de mockear en tests
  *    - Aisla la lógica de API del componente
  */

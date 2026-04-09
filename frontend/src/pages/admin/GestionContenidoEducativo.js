@@ -25,7 +25,7 @@ const GestionContenidoEducativo = () => {
         
         try {
             setCargando(true);
-            let url = 'http://127.0.0.1:8000/api/contenido-educativo/?limit=100';
+            let url = 'http://127.0.0.1:8000/api/gestion/contenido-educativo/?limit=100';
             
             if (filtroEstado) {
                 url += `&estado=${filtroEstado}`;
@@ -57,7 +57,7 @@ const GestionContenidoEducativo = () => {
             const token = localStorage.getItem('access_token');
             
             try {
-                await axios.delete(`http://127.0.0.1:8000/api/contenido-educativo/${id}/`, {
+                await axios.delete(`http://127.0.0.1:8000/api/gestion/contenido-educativo/${id}/`, {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
                 
@@ -75,7 +75,7 @@ const GestionContenidoEducativo = () => {
         
         try {
             await axios.patch(
-                `http://127.0.0.1:8000/api/contenido-educativo/${id}/`,
+                `http://127.0.0.1:8000/api/gestion/contenido-educativo/${id}/`,
                 { estado: nuevoEstado },
                 { headers: { 'Authorization': `Bearer ${token}` } }
             );

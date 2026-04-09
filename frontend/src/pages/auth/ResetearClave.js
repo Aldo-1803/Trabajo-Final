@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 import { useParams, useNavigate } from 'react-router-dom';
+import { IconCheckCircle, IconInfo, IconKey, IconLock, IconWarning } from '../../components/common/Icons';
 
 // Paleta de colores Bohemia Hair
 const COLORS = {
@@ -86,7 +87,9 @@ const ResetearClave = () => {
                         style={{ backgroundColor: COLORS.primary_dark }}
                     >
                         <h1 className="text-3xl sm:text-4xl font-bold text-white mb-2">
-                            🔑 Crear Nueva Contraseña
+                            <span className="inline-flex items-center gap-2">
+                                <IconKey className="h-6 w-6" /> Crear Nueva Contraseña
+                            </span>
                         </h1>
                         <p className="text-base sm:text-lg" style={{ color: COLORS.accent_light }}>
                             Establece una contraseña segura para tu cuenta
@@ -106,7 +109,7 @@ const ResetearClave = () => {
                                 }}
                             >
                                 <p style={{ color: COLORS.error }} className="font-medium flex items-center gap-2">
-                                    ⚠️ {error}
+                                    <IconWarning className="h-4 w-4" /> {error}
                                 </p>
                             </div>
                         )}
@@ -121,7 +124,7 @@ const ResetearClave = () => {
                                 }}
                             >
                                 <p style={{ color: COLORS.success }} className="font-medium flex items-center gap-2">
-                                    ✓ {mensaje}
+                                    <IconCheckCircle className="h-4 w-4" /> {mensaje}
                                 </p>
                                 <p style={{ color: COLORS.text_light }} className="text-sm mt-2">
                                     Serás redirigido al login en 3 segundos...
@@ -193,7 +196,9 @@ const ResetearClave = () => {
                                 className="text-xs sm:text-sm mt-2"
                                 style={{ color: COLORS.text_light }}
                             >
-                                💡 Usa mayúsculas, números y caracteres especiales para mayor seguridad
+                                <span className="inline-flex items-center gap-2">
+                                    <IconInfo className="h-4 w-4" /> Usa mayúsculas, números y caracteres especiales para mayor seguridad
+                                </span>
                             </p>
                         </div>
 
@@ -210,7 +215,11 @@ const ResetearClave = () => {
                             onMouseEnter={(e) => !loading && !mensaje && (e.target.style.opacity = '0.9')}
                             onMouseLeave={(e) => !loading && !mensaje && (e.target.style.opacity = '1')}
                         >
-                            {loading ? '⏳ Guardando...' : '💾 Guardar Nueva Contraseña'}
+                            {loading ? 'Guardando...' : (
+                                <span className="inline-flex items-center gap-2">
+                                    <IconCheckCircle className="h-4 w-4" /> Guardar Nueva Contraseña
+                                </span>
+                            )}
                         </button>
 
                         {/* Separador */}
@@ -243,7 +252,9 @@ const ResetearClave = () => {
 
                 {/* Nota de seguridad */}
                 <div className="mt-6 text-center text-xs sm:text-sm" style={{ color: COLORS.text_light }}>
-                    <p>🔒 Tu contraseña está protegida con encriptación segura</p>
+                    <p className="inline-flex items-center gap-2">
+                        <IconLock className="h-4 w-4" /> Tu contraseña está protegida con encriptación segura
+                    </p>
                 </div>
             </div>
         </div>

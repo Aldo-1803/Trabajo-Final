@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { notify } from '../../utils/notificaciones';
+import { IconBag, IconCart, IconCheckCircle, IconInfo, IconSparkles, IconWarning, IconX, IconXCircle } from '../../components/common/Icons';
 
 const ProductosRecomendados = () => {
     const [productos, setProductos] = useState([]);
@@ -51,7 +52,7 @@ const ProductosRecomendados = () => {
         } else {
             setCarroCompra([...carroCompra, { ...producto, cantidad: 1 }]);
         }
-        notify.success(`✅ ${producto.nombre} agregado al carrito`);
+        notify.success(`${producto.nombre} agregado al carrito`);
     };
 
     const removerDelCarro = (productoId) => {
@@ -77,7 +78,9 @@ const ProductosRecomendados = () => {
             {/* HEADER */}
             <div className="mb-8">
                 <h1 className="text-3xl font-bold mb-2" style={{ color: '#817773' }}>
-                    🛍️ Productos Recomendados para Ti
+                    <span className="inline-flex items-center gap-2">
+                        <IconBag className="h-6 w-6" /> Productos Recomendados para Ti
+                    </span>
                 </h1>
                 {diagnosticoInfo && (
                     <p style={{ color: '#8B8682' }} className="text-sm">
@@ -90,7 +93,9 @@ const ProductosRecomendados = () => {
             {motivoSugerencia && (
                 <div className="mb-6 p-4 rounded-lg border-l-4" style={{ backgroundColor: '#F0F5FF', borderColor: '#3E5B8E' }}>
                     <p style={{ color: '#3E5B8E' }} className="font-semibold">
-                        💡 {motivoSugerencia}
+                        <span className="inline-flex items-center gap-2">
+                            <IconSparkles className="h-4 w-4" /> {motivoSugerencia}
+                        </span>
                     </p>
                     <p style={{ color: '#5A7BA8' }} className="text-sm mt-1">
                         Estos productos fueron seleccionados especialmente basándose en los resultados de tu diagnóstico capilar.
@@ -104,7 +109,9 @@ const ProductosRecomendados = () => {
                     {productos.length === 0 ? (
                         <div className="p-8 text-center rounded-lg border" style={{ backgroundColor: 'white', borderColor: '#D5D1CC' }}>
                             <p style={{ color: '#8B8682' }} className="mb-2">
-                                📋 No hay productos disponibles en este momento
+                                <span className="inline-flex items-center gap-2">
+                                    <IconInfo className="h-4 w-4" /> No hay productos disponibles en este momento
+                                </span>
                             </p>
                             <p style={{ color: '#ABA89E' }} className="text-sm">
                                 Por favor realiza un diagnóstico capilar para recibir recomendaciones personalizadas
@@ -143,7 +150,9 @@ const ProductosRecomendados = () => {
                                         {/* Compatibilidad */}
                                         <div className="mb-3">
                                             <span className="px-2 py-1 text-xs rounded-full" style={{ backgroundColor: '#E8EBF5', color: '#3E5B8E' }}>
-                                                ✓ Compatible
+                                                <span className="inline-flex items-center gap-1">
+                                                    <IconCheckCircle className="h-3 w-3" /> Compatible
+                                                </span>
                                             </span>
                                         </div>
 
@@ -151,15 +160,21 @@ const ProductosRecomendados = () => {
                                         <div className="mb-3">
                                             {producto.stock > 5 ? (
                                                 <span className="text-xs font-semibold" style={{ color: '#2E7D2E' }}>
-                                                    ✅ En Stock ({producto.stock} disponibles)
+                                                    <span className="inline-flex items-center gap-1">
+                                                        <IconCheckCircle className="h-3 w-3" /> En Stock ({producto.stock} disponibles)
+                                                    </span>
                                                 </span>
                                             ) : producto.stock > 0 ? (
                                                 <span className="text-xs font-semibold" style={{ color: '#8B7500' }}>
-                                                    ⚠️ Stock limitado ({producto.stock})
+                                                    <span className="inline-flex items-center gap-1">
+                                                        <IconWarning className="h-3 w-3" /> Stock limitado ({producto.stock})
+                                                    </span>
                                                 </span>
                                             ) : (
                                                 <span className="text-xs font-semibold" style={{ color: '#C73E3E' }}>
-                                                    ❌ Sin stock
+                                                    <span className="inline-flex items-center gap-1">
+                                                        <IconXCircle className="h-3 w-3" /> Sin stock
+                                                    </span>
                                                 </span>
                                             )}
                                         </div>
@@ -190,7 +205,9 @@ const ProductosRecomendados = () => {
                                                     }
                                                 }}
                                             >
-                                                🛒 Agregar
+                                                <span className="inline-flex items-center gap-2">
+                                                    <IconCart className="h-4 w-4" /> Agregar
+                                                </span>
                                             </button>
                                         </div>
                                     </div>
@@ -203,7 +220,9 @@ const ProductosRecomendados = () => {
                 {/* CARRITO LATERAL */}
                 <div className="rounded-lg shadow-lg p-6" style={{ backgroundColor: 'white', height: 'fit-content' }}>
                     <h2 className="text-lg font-bold mb-4" style={{ color: '#817773', borderBottom: '2px solid #E3D5CA', paddingBottom: '0.5rem' }}>
-                        🛒 Tu Carrito
+                        <span className="inline-flex items-center gap-2">
+                            <IconCart className="h-5 w-5" /> Tu Carrito
+                        </span>
                     </h2>
 
                     {carroCompra.length === 0 ? (
@@ -231,7 +250,7 @@ const ProductosRecomendados = () => {
                                             onClick={() => removerDelCarro(producto.id)}
                                             className="text-red-500 hover:text-red-700 font-bold"
                                         >
-                                            ✕
+                                            <IconX className="h-4 w-4" />
                                         </button>
                                     </div>
                                 ))}

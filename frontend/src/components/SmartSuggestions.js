@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { notify } from '../utils/notificaciones';
+import { IconBox, IconClock, IconSparkles } from './common/Icons';
 
 const SmartSuggestions = ({ onProductAdded = null }) => {
     const [sugerencias, setSugerencias] = useState([]);
@@ -21,7 +22,7 @@ const SmartSuggestions = ({ onProductAdded = null }) => {
 
             const token = localStorage.getItem('access_token');
             const res = await axios.get(
-                'http://127.0.0.1:8000/api/carrito/sugerencias_inteligentes/',
+                'http://127.0.0.1:8000/api/gestion/carrito/sugerencias_inteligentes/',
                 { headers: { 'Authorization': `Bearer ${token}` } }
             );
 
@@ -45,7 +46,7 @@ const SmartSuggestions = ({ onProductAdded = null }) => {
 
             const token = localStorage.getItem('access_token');
             await axios.post(
-                'http://127.0.0.1:8000/api/carrito/agregar_producto/',
+                'http://127.0.0.1:8000/api/gestion/carrito/agregar_producto/',
                 {
                     producto_id: producto.id,
                     cantidad: 1
@@ -53,7 +54,7 @@ const SmartSuggestions = ({ onProductAdded = null }) => {
                 { headers: { 'Authorization': `Bearer ${token}` } }
             );
 
-            notify.success(`${producto.nombre} agregado al carrito 🛍️`);
+            notify.success(`${producto.nombre} agregado al carrito`);
 
             // Callback opcional para actualizar carrito en componente padre
             if (onProductAdded) {
@@ -91,7 +92,7 @@ const SmartSuggestions = ({ onProductAdded = null }) => {
             {/* Header */}
             <div className="mb-6">
                 <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-                    ✨ ¡Completa tu rutina personalizada!
+                    <IconSparkles className="h-6 w-6" /> ¡Completa tu rutina personalizada!
                 </h2>
                 <p className="text-sm text-gray-600 mt-1">
                     Productos recomendados según tu diagnóstico capilar
@@ -161,7 +162,7 @@ const SmartSuggestions = ({ onProductAdded = null }) => {
                                     />
                                 ) : (
                                     <div className="w-full h-40 bg-gradient-to-br from-amber-100 to-orange-100 flex items-center justify-center">
-                                        <span className="text-4xl">🧴</span>
+                                        <IconBox className="h-10 w-10 text-amber-600" />
                                     </div>
                                 )}
 
@@ -207,7 +208,9 @@ const SmartSuggestions = ({ onProductAdded = null }) => {
                                         >
                                             {agreguandoProducto === producto.id ? (
                                                 <>
-                                                    <span className="inline-block animate-spin mr-1">⏳</span>
+                                                    <span className="inline-flex items-center mr-1">
+                                                        <IconClock className="h-4 w-4 animate-spin" />
+                                                    </span>
                                                     Agregando...
                                                 </>
                                             ) : producto.stock === 0 ? (

@@ -1,4 +1,6 @@
 import React from 'react';
+import { IconBolt, IconCalendar, IconCheckCircle, IconInfo } from './common/Icons';
+import { CLIENTE_ROUTES } from '../routes/routes';
 
 /**
  * FichaRecomendacion
@@ -11,8 +13,9 @@ import React from 'react';
  *  - turnoNotificacion: objeto con datos_extra (profesional_id, fecha, hora)
  *  - navigate: función de navegación (useNavigate)
  *  - onAgendar: callback opcional cuando se hace clic en "Agendar Turno"
+ *  - mensaje: texto unificado del diagnostico
  */
-const FichaRecomendacion = ({ diagnostico, turnoNotificacion, navigate, onAgendar }) => {
+const FichaRecomendacion = ({ diagnostico, turnoNotificacion, navigate, onAgendar, mensaje }) => {
     if (!diagnostico?.servicio_urgente_nombre) {
         return null; // No mostrar si no hay servicio urgente
     }
@@ -28,7 +31,7 @@ const FichaRecomendacion = ({ diagnostico, turnoNotificacion, navigate, onAgenda
         if (onAgendar) {
             onAgendar(parametos);
         } else {
-            navigate('/reserva', { state: parametos });
+            navigate(CLIENTE_ROUTES.RESERVAR, { state: parametos });
         }
     };
 
@@ -36,7 +39,9 @@ const FichaRecomendacion = ({ diagnostico, turnoNotificacion, navigate, onAgenda
         <div className="mt-6 p-8 rounded-xl border-2 shadow-lg" style={{ borderColor: '#E11D48', backgroundColor: '#FEF2F2' }}>
             {/* Encabezado */}
             <div className="flex items-start gap-4 mb-6">
-                <div style={{ color: '#E11D48' }} className="text-4xl flex-shrink-0">⚡</div>
+                <div className="flex-shrink-0" style={{ color: '#E11D48' }}>
+                    <IconBolt className="h-10 w-10" />
+                </div>
                 <div className="flex-1">
                     <p className="text-xs font-bold uppercase tracking-widest" style={{ color: '#E11D48' }}>
                         Recomendación Profesional
@@ -50,24 +55,32 @@ const FichaRecomendacion = ({ diagnostico, turnoNotificacion, navigate, onAgenda
             {/* Descripción */}
             <div className="mb-6 p-4 rounded-lg" style={{ backgroundColor: '#FFFFFF' }}>
                 <p style={{ color: '#817773' }} className="text-base leading-relaxed">
-                    Basado en tu diagnóstico capilar, nuestro equipo profesional recomienda este servicio 
-                    como el más beneficioso para tu tipo y estado de cabello. 
-                    Es el momento ideal para actuar y recuperar la salud capilar.
+                    {mensaje || (
+                        'Basado en tu diagnóstico capilar, nuestro equipo profesional recomienda este servicio '
+                        + 'como el más beneficioso para tu tipo y estado de cabello. '
+                        + 'Es el momento ideal para actuar y recuperar la salud capilar.'
+                    )}
                 </p>
             </div>
 
             {/* Beneficios */}
             <div className="mb-6 grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div className="p-3 rounded-lg" style={{ backgroundColor: '#FFFFFF' }}>
-                    <p style={{ color: '#E11D48' }} className="text-sm font-bold">✓ Personalizado</p>
+                    <p style={{ color: '#E11D48' }} className="text-sm font-bold inline-flex items-center gap-2">
+                        <IconCheckCircle className="h-4 w-4" /> Personalizado
+                    </p>
                     <p style={{ color: '#817773' }} className="text-xs mt-1">Diseñado para tu cabello</p>
                 </div>
                 <div className="p-3 rounded-lg" style={{ backgroundColor: '#FFFFFF' }}>
-                    <p style={{ color: '#E11D48' }} className="text-sm font-bold">✓ Profesional</p>
+                    <p style={{ color: '#E11D48' }} className="text-sm font-bold inline-flex items-center gap-2">
+                        <IconCheckCircle className="h-4 w-4" /> Profesional
+                    </p>
                     <p style={{ color: '#817773' }} className="text-xs mt-1">Aplicado por expertos</p>
                 </div>
                 <div className="p-3 rounded-lg" style={{ backgroundColor: '#FFFFFF' }}>
-                    <p style={{ color: '#E11D48' }} className="text-sm font-bold">✓ Resultados</p>
+                    <p style={{ color: '#E11D48' }} className="text-sm font-bold inline-flex items-center gap-2">
+                        <IconCheckCircle className="h-4 w-4" /> Resultados
+                    </p>
                     <p style={{ color: '#817773' }} className="text-xs mt-1">Visible desde el primer día</p>
                 </div>
             </div>
@@ -81,7 +94,8 @@ const FichaRecomendacion = ({ diagnostico, turnoNotificacion, navigate, onAgenda
                     onMouseEnter={(e) => e.target.style.backgroundColor = '#BE0D38'}
                     onMouseLeave={(e) => e.target.style.backgroundColor = '#E11D48'}
                 >
-                    <span>📅</span> Agendar Turno Sugerido
+                    <IconCalendar className="h-5 w-5" />
+                    Agendar Turno Sugerido
                 </button>
                 <button
                     onClick={() => navigate('/catalogo-servicios')}
@@ -90,7 +104,9 @@ const FichaRecomendacion = ({ diagnostico, turnoNotificacion, navigate, onAgenda
                     onMouseEnter={(e) => e.target.style.backgroundColor = '#D5BDAF'}
                     onMouseLeave={(e) => e.target.style.backgroundColor = '#E3D5CA'}
                 >
-                    <span>ℹ️</span> Ver más servicios
+                    <span className="inline-flex items-center gap-2">
+                        <IconInfo className="h-5 w-5" /> Ver mas servicios
+                    </span>
                 </button>
             </div>
         </div>

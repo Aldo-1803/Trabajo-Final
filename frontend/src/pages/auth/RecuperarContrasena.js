@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
+import { IconCheckCircle } from '../../components/common/Icons';
 
 // Paleta de colores Bohemia Hair
 const COLORS = {
@@ -102,7 +103,7 @@ const RecuperarContrasena = () => {
                                 }}
                             >
                                 <p style={{ color: COLORS.success }} className="font-medium flex items-center gap-2">
-                                    ✓ {mensaje}
+                                    <IconCheckCircle className="h-4 w-4" /> {mensaje}
                                 </p>
                             </div>
                         )}

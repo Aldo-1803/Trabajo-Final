@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { notify, confirmarAccion } from '../../utils/notificaciones';
+import { IconCheckCircle, IconSparkles, IconWarning } from '../../components/common/Icons';
 
 const ReservaCliente = () => {
     const navigate = useNavigate();
@@ -113,7 +114,7 @@ const ReservaCliente = () => {
                     if (diaConFecha) {
                         setTimeout(() => {
                             seleccionarFecha(diaConFecha);
-                            notify.info('💡 Hemos pre-cargado la fecha sugerida. Puedes cambiarla si lo deseas.');
+                            notify.info('Hemos pre-cargado la fecha sugerida. Puedes cambiarla si lo deseas.');
                         }, 500);
                     }
                 }
@@ -155,7 +156,7 @@ const ReservaCliente = () => {
                 if (slotSugerido) {
                     setTimeout(() => {
                         setHorarioSeleccionado(slotSugerido);
-                        notify.info('💡 También pre-cargamos la hora sugerida. Puedes cambiarla cuando quieras.');
+                        notify.info('También pre-cargamos la hora sugerida. Puedes cambiarla cuando quieras.');
                     }, 500);
                 }
             }
@@ -272,7 +273,7 @@ const ReservaCliente = () => {
                 <div className="animate-fade-in">
                     {esDesdeRecomendacion && (
                         <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg flex items-center gap-2">
-                            <span className="text-blue-600 font-bold text-lg">💡</span>
+                            <IconSparkles className="h-5 w-5 text-blue-600" />
                             <p className="text-blue-800 text-sm">
                                 <strong>Venes de una recomendación:</strong> El servicio ya está pre-seleccionado. Puedes cambiar si lo prefieres.
                             </p>
@@ -283,7 +284,9 @@ const ReservaCliente = () => {
                     {!loadingServicios && servicios.length === 0 && (
                         <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
                             <p className="text-amber-800 text-sm">
-                                <strong>⚠️ Servicios no disponibles</strong><br/>
+                                <strong className="inline-flex items-center gap-2">
+                                    <IconWarning className="h-4 w-4" /> Servicios no disponibles
+                                </strong><br/>
                                 Por el momento no hay servicios disponibles para reservar. Por favor, contáctanos para más información.
                             </p>
                         </div>
@@ -360,8 +363,8 @@ const ReservaCliente = () => {
                                     <div className="text-xs">{dia.fecha}</div>
                                     {/* Badge de sugerencia */}
                                     {esDesdeRecomendacion && fechaSugerida === dia.fecha && (
-                                        <div className="absolute top-0 right-0 bg-yellow-400 text-yellow-900 text-xs px-2 py-1 rounded-bl-lg rounded-tr-lg font-bold">
-                                            ✓ Sugerida
+                                        <div className="absolute top-0 right-0 bg-yellow-400 text-yellow-900 text-xs px-2 py-1 rounded-bl-lg rounded-tr-lg font-bold inline-flex items-center gap-1">
+                                            <IconCheckCircle className="h-3 w-3" /> Sugerida
                                         </div>
                                     )}
                                 </button>
@@ -438,7 +441,7 @@ const ReservaCliente = () => {
                                             {/* Badge de sugerencia */}
                                             {esDesdeRecomendacion && horarioSugerido === slot.hora && (
                                                 <div className="absolute -top-2 -right-2 bg-yellow-400 text-yellow-900 text-xs px-1 py-0 rounded-full font-bold flex items-center justify-center w-5 h-5">
-                                                    ✓
+                                                    <IconCheckCircle className="h-3 w-3" />
                                                 </div>
                                             )}
                                         </button>
@@ -450,8 +453,8 @@ const ReservaCliente = () => {
 
                     {horarioSeleccionado && profesionalSeleccionado && (
                         <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
-                            <p className="text-green-800 text-sm font-medium">
-                                ✓ {fechaSeleccionada.dia_semana}, {fechaSeleccionada.fecha} a las {horarioSeleccionado.hora}
+                            <p className="text-green-800 text-sm font-medium inline-flex items-center gap-2">
+                                <IconCheckCircle className="h-4 w-4" /> {fechaSeleccionada.dia_semana}, {fechaSeleccionada.fecha} a las {horarioSeleccionado.hora}
                             </p>
                             <p className="text-green-700 text-sm">
                                 Con {profesionalSeleccionado.nombre}
