@@ -1,15 +1,20 @@
 from dataclasses import dataclass
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
 from django.db import IntegrityError, transaction
 
 from gestion.models import Auditoria, Personal
 from usuarios.access_services import (
     InconsistentBusinessRoleState,
     ProtectedSuperuser,
+    assign_validated_business_role,
 )
 from usuarios.roles import (
     BusinessPermission,
+    BusinessRole,
     get_business_role,
     has_inconsistent_business_roles,
 )
@@ -20,8 +25,18 @@ PERSONAL_LINK_AUDIT_SOURCE = (
     'gestion.personal_access_services.link_user_to_personal'
 )
 PERSONAL_LINK_AUDIT_TABLE = 'PersonalUserLink'
+PERSONAL_ACCESS_AUDIT_EVENT = 'PERSONAL_ACCESS_CREATED'
+PERSONAL_ACCESS_AUDIT_SOURCE = (
+    'gestion.personal_access_services.create_access_for_personal'
+)
+PERSONAL_ACCESS_AUDIT_TABLE = 'PersonalAccess'
 MIN_REASON_LENGTH = 3
 MAX_REASON_LENGTH = 500
+ALLOWED_PERSONAL_ACCESS_ROLES = (
+    BusinessRole.EMPLEADO,
+    BusinessRole.PROFESIONAL,
+    BusinessRole.ADMINISTRADOR,
+)
 
 
 class PersonalLinkError(Exception):
@@ -56,6 +71,38 @@ class PersonalLinkConflict(PersonalLinkError):
     pass
 
 
+class PersonalAccessCreateError(Exception):
+    pass
+
+
+class PersonalAlreadyHasAccess(PersonalAccessCreateError):
+    pass
+
+
+class EmailAlreadyExists(PersonalAccessCreateError):
+    pass
+
+
+class PersonalInactiveForAccess(PersonalAccessCreateError):
+    pass
+
+
+class InvalidPersonalAccessRole(PersonalAccessCreateError):
+    pass
+
+
+class InvalidTemporaryPassword(PersonalAccessCreateError):
+    pass
+
+
+class InvalidPersonalAccessEmail(PersonalAccessCreateError):
+    pass
+
+
+class PersonalAccessConflict(PersonalAccessCreateError):
+    pass
+
+
 @dataclass(frozen=True)
 class PersonalLinkResult:
     changed: bool
@@ -66,6 +113,131 @@ class PersonalLinkResult:
     business_role: str | None
     warnings: tuple[str, ...]
     audit_id: int | None
+
+
+@dataclass(frozen=True)
+class PersonalAccessCreateResult:
+    changed: bool
+    personal_id: int
+    user_id: int
+    email: str
+    role: str
+    personal_active: bool
+    user_active: bool
+    link_audit_id: int
+    role_audit_id: int
+    access_audit_id: int
+
+
+@transaction.atomic
+def create_access_for_personal(
+    actor,
+    personal,
+    email,
+    raw_password,
+    role,
+    reason,
+):
+    """Create, link, and authorize one user for existing personnel."""
+    normalized_reason = _validate_reason(reason)
+    user_model = get_user_model()
+    current_actor = _get_authorized_actor(actor, user_model)
+    locked_personal = _get_locked_personal(personal)
+
+    if locked_personal.usuario_id is not None:
+        raise PersonalAlreadyHasAccess(
+            'The personnel record already has a linked user.'
+        )
+    if not locked_personal.activo:
+        raise PersonalInactiveForAccess(
+            'Active personnel is required to create access.'
+        )
+    if role not in ALLOWED_PERSONAL_ACCESS_ROLES:
+        raise InvalidPersonalAccessRole(
+            'The requested role cannot be created as personnel access.'
+        )
+
+    normalized_email = _normalize_and_validate_email(email, user_model)
+    if user_model.objects.filter(email__iexact=normalized_email).exists():
+        raise EmailAlreadyExists(
+            'An account already exists for the requested email.'
+        )
+
+    candidate_user = user_model(
+        email=normalized_email,
+        first_name=locked_personal.nombre,
+        last_name=locked_personal.apellido,
+        is_active=True,
+        is_staff=False,
+        is_superuser=False,
+    )
+    _validate_temporary_password(raw_password, candidate_user)
+
+    try:
+        with transaction.atomic():
+            created_user = user_model.objects.create_user(
+                email=normalized_email,
+                password=raw_password,
+                first_name=locked_personal.nombre,
+                last_name=locked_personal.apellido,
+                is_active=True,
+                is_staff=False,
+                is_superuser=False,
+            )
+    except IntegrityError as exc:
+        if user_model.objects.filter(email__iexact=normalized_email).exists():
+            raise EmailAlreadyExists(
+                'An account already exists for the requested email.'
+            ) from exc
+        raise PersonalAccessConflict(
+            'User creation conflicts with another operation.'
+        ) from exc
+
+    link_result = link_user_to_personal(
+        actor=current_actor,
+        personal=locked_personal,
+        user=created_user,
+        reason=normalized_reason,
+    )
+    role_result = assign_validated_business_role(
+        actor=current_actor,
+        target_user=created_user,
+        target_role=role,
+        reason=normalized_reason,
+    )
+    access_audit = Auditoria.objects.create(
+        tabla=PERSONAL_ACCESS_AUDIT_TABLE,
+        registro_id=locked_personal.pk,
+        usuario=current_actor,
+        accion='ALTA',
+        valor_nuevo={
+            'event': PERSONAL_ACCESS_AUDIT_EVENT,
+            'source': PERSONAL_ACCESS_AUDIT_SOURCE,
+            'actor_id': current_actor.pk,
+            'personal_id': locked_personal.pk,
+            'user_id': created_user.pk,
+            'user_email': created_user.email,
+            'role': role,
+            'personal_active': locked_personal.activo,
+            'user_active': created_user.is_active,
+            'reason': normalized_reason,
+            'link_audit_id': link_result.audit_id,
+            'role_audit_id': role_result.audit_id,
+        },
+    )
+
+    return PersonalAccessCreateResult(
+        changed=True,
+        personal_id=locked_personal.pk,
+        user_id=created_user.pk,
+        email=created_user.email,
+        role=role,
+        personal_active=locked_personal.activo,
+        user_active=created_user.is_active,
+        link_audit_id=link_result.audit_id,
+        role_audit_id=role_result.audit_id,
+        access_audit_id=access_audit.pk,
+    )
 
 
 @transaction.atomic
@@ -168,6 +340,32 @@ def _validate_reason(reason):
             f'{MAX_REASON_LENGTH} characters.'
         )
     return normalized_reason
+
+
+def _normalize_and_validate_email(email, user_model):
+    if not isinstance(email, str):
+        raise InvalidPersonalAccessEmail('A valid email is required.')
+
+    normalized_email = user_model.objects.normalize_email(email.strip())
+    try:
+        validate_email(normalized_email)
+    except ValidationError as exc:
+        raise InvalidPersonalAccessEmail('A valid email is required.') from exc
+    return normalized_email
+
+
+def _validate_temporary_password(raw_password, candidate_user):
+    if not isinstance(raw_password, str):
+        raise InvalidTemporaryPassword(
+            'A valid temporary password is required.'
+        )
+
+    try:
+        validate_password(raw_password, user=candidate_user)
+    except ValidationError as exc:
+        raise InvalidTemporaryPassword(
+            'The temporary password does not meet security requirements.'
+        ) from exc
 
 
 def _get_authorized_actor(actor, user_model):

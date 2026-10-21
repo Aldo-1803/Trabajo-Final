@@ -614,6 +614,31 @@ class PersonalUserLinkCommandSerializer(serializers.Serializer):
                     for field in sorted(unexpected_fields)
                 })
         return super().to_internal_value(data)
+
+
+class PersonalAccessCreateCommandSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    password_temporal = serializers.CharField(
+        write_only=True,
+        trim_whitespace=False,
+    )
+    role = serializers.CharField(max_length=50)
+    motivo = serializers.CharField(
+        min_length=3,
+        max_length=500,
+        allow_blank=False,
+        trim_whitespace=True,
+    )
+
+    def to_internal_value(self, data):
+        if hasattr(data, 'keys'):
+            unexpected_fields = set(data.keys()) - set(self.fields)
+            if unexpected_fields:
+                raise serializers.ValidationError({
+                    field: ['Este campo no está permitido.']
+                    for field in sorted(unexpected_fields)
+                })
+        return super().to_internal_value(data)
     
 class AgendaCuidadosSerializer(serializers.ModelSerializer):
     class Meta:

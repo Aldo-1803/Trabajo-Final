@@ -42,7 +42,7 @@ from .serializers import (
     CategoriaServicioSerializer, ServicioSerializer, TurnoSerializer, RutinaSerializer, RutinaClienteSerializer,
     RutinaClienteCreateSerializer, ReglaDiagnosticoSerializer, NotificacionSerializer, ProductoSerializer, ImagenProductoSerializer, EquipamientoSerializer,
     UsuarioAdminSerializer, AgendaCuidadosSerializer, HorarioLaboralSerializer, BloqueoAgendaSerializer, PersonalSerializer,
-    PersonalUserLinkCommandSerializer,
+    PersonalAccessCreateCommandSerializer, PersonalUserLinkCommandSerializer,
     PagoSerializer,
     TipoEquipamientoSerializer, FichaTecnicaSerializer, RequisitoServicioSerializer, DiagnosticoCapilarSerializer,
     CategoriaProductoSerializer, PromocionSerializer, ConfiguracionSerializer, ConfiguracionRetoqueSummarySerializer,
@@ -51,13 +51,21 @@ from .serializers import (
     #PasoRutinaSerializer,
 )
 from .personal_access_services import (
+    EmailAlreadyExists,
+    InvalidPersonalAccessEmail,
+    InvalidPersonalAccessRole,
     InvalidPersonalLinkReason,
     InvalidPersonalLinkTarget,
     InvalidPersonalLinkUser,
+    InvalidTemporaryPassword,
     PermissionDeniedForPersonalLink,
+    PersonalAccessConflict,
     PersonalAlreadyLinked,
+    PersonalAlreadyHasAccess,
+    PersonalInactiveForAccess,
     PersonalLinkConflict,
     UserAlreadyLinkedToPersonal,
+    create_access_for_personal,
     link_user_to_personal,
 )
 from usuarios.access_services import (
@@ -444,7 +452,7 @@ class PersonalViewSet(viewsets.ModelViewSet):
     ordering_fields = ['nombre']
 
     def get_permissions(self):
-        if self.action == 'vincular_usuario':
+        if self.action in ['vincular_usuario', 'crear_acceso']:
             permission_classes = [IsAuthenticated]
         elif self.action in ['list', 'retrieve']:
             permission_classes = [IsAuthenticated]
@@ -564,6 +572,122 @@ class PersonalViewSet(viewsets.ModelViewSet):
             'rol': result.business_role,
             'warnings': list(result.warnings),
         }, status=status.HTTP_200_OK)
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='crear-acceso',
+        permission_classes=[IsAuthenticated],
+    )
+    def crear_acceso(self, request, pk=None):
+        try:
+            personal = self.get_object()
+        except Http404:
+            return self._link_error(
+                'PERSONAL_NOT_FOUND',
+                'El Personal solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        command = PersonalAccessCreateCommandSerializer(data=request.data)
+        if not command.is_valid():
+            error_code = (
+                'INVALID_REASON'
+                if set(command.errors) == {'motivo'}
+                else 'INVALID_PAYLOAD'
+            )
+            return self._link_error(
+                error_code,
+                'El payload de creación de acceso es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+                fields=command.errors,
+            )
+
+        try:
+            result = create_access_for_personal(
+                actor=request.user,
+                personal=personal,
+                email=command.validated_data['email'],
+                raw_password=command.validated_data['password_temporal'],
+                role=command.validated_data['role'],
+                reason=command.validated_data['motivo'],
+            )
+        except PermissionDeniedForPersonalLink:
+            return self._link_error(
+                'PERMISSION_DENIED',
+                'No tiene permisos para crear acceso para Personal.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except InvalidTemporaryPassword:
+            return self._link_error(
+                'INVALID_PASSWORD',
+                'La contraseña temporal no cumple los requisitos de seguridad.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except InvalidPersonalAccessRole:
+            return self._link_error(
+                'INVALID_ROLE',
+                'El rol solicitado no está permitido para acceso laboral.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except InvalidPersonalLinkReason:
+            return self._link_error(
+                'INVALID_REASON',
+                'El motivo de creación de acceso es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except InvalidPersonalAccessEmail:
+            return self._link_error(
+                'INVALID_PAYLOAD',
+                'El email proporcionado es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except InvalidPersonalLinkTarget:
+            return self._link_error(
+                'PERSONAL_NOT_FOUND',
+                'El Personal solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+        except EmailAlreadyExists:
+            return self._link_error(
+                'EMAIL_ALREADY_EXISTS',
+                'Ya existe un Usuario con ese email; utilice vincular-usuario.',
+                status.HTTP_409_CONFLICT,
+            )
+        except (PersonalAlreadyHasAccess, PersonalAlreadyLinked):
+            return self._link_error(
+                'PERSONAL_ALREADY_HAS_ACCESS',
+                'El Personal ya tiene un Usuario vinculado.',
+                status.HTTP_409_CONFLICT,
+            )
+        except PersonalInactiveForAccess:
+            return self._link_error(
+                'PERSONAL_INACTIVE',
+                'No se puede crear acceso para Personal inactivo.',
+                status.HTTP_409_CONFLICT,
+            )
+        except InconsistentBusinessRoleState:
+            return self._link_error(
+                'INCONSISTENT_BUSINESS_ROLES',
+                'El estado de roles de negocio es inconsistente.',
+                status.HTTP_409_CONFLICT,
+            )
+        except (PersonalAccessConflict, PersonalLinkConflict):
+            return self._link_error(
+                'PERSONAL_ACCESS_CONFLICT',
+                'La creación de acceso entra en conflicto con otra operación.',
+                status.HTTP_409_CONFLICT,
+            )
+
+        return Response({
+            'created': result.changed,
+            'personal_id': result.personal_id,
+            'usuario_id': result.user_id,
+            'email': result.email,
+            'rol': result.role,
+            'personal_activo': result.personal_active,
+            'usuario_activo': result.user_active,
+        }, status=status.HTTP_201_CREATED)
 
     @staticmethod
     def _link_error(code, detail, status_code, fields=None):
