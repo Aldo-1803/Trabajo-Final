@@ -42,7 +42,8 @@ from .serializers import (
     CategoriaServicioSerializer, ServicioSerializer, TurnoSerializer, RutinaSerializer, RutinaClienteSerializer,
     RutinaClienteCreateSerializer, ReglaDiagnosticoSerializer, NotificacionSerializer, ProductoSerializer, ImagenProductoSerializer, EquipamientoSerializer,
     UsuarioAdminSerializer, AgendaCuidadosSerializer, HorarioLaboralSerializer, BloqueoAgendaSerializer, PersonalSerializer,
-    PersonalAccessCreateCommandSerializer, PersonalUserLinkCommandSerializer,
+    PersonalAccessCreateCommandSerializer, PersonalStatusChangeCommandSerializer,
+    PersonalUserLinkCommandSerializer,
     PagoSerializer,
     TipoEquipamientoSerializer, FichaTecnicaSerializer, RequisitoServicioSerializer, DiagnosticoCapilarSerializer,
     CategoriaProductoSerializer, PromocionSerializer, ConfiguracionSerializer, ConfiguracionRetoqueSummarySerializer,
@@ -57,16 +58,21 @@ from .personal_access_services import (
     InvalidPersonalLinkReason,
     InvalidPersonalLinkTarget,
     InvalidPersonalLinkUser,
+    InvalidPersonalStatusReason,
     InvalidTemporaryPassword,
     PermissionDeniedForPersonalLink,
+    PermissionDeniedForPersonalStatusChange,
     PersonalAccessConflict,
     PersonalAlreadyLinked,
     PersonalAlreadyHasAccess,
     PersonalInactiveForAccess,
     PersonalLinkConflict,
+    PersonalStatusConflict,
     UserAlreadyLinkedToPersonal,
     create_access_for_personal,
+    deactivate_personal,
     link_user_to_personal,
+    reactivate_personal,
 )
 from usuarios.access_services import (
     InconsistentBusinessRoleState,
@@ -452,7 +458,12 @@ class PersonalViewSet(viewsets.ModelViewSet):
     ordering_fields = ['nombre']
 
     def get_permissions(self):
-        if self.action in ['vincular_usuario', 'crear_acceso']:
+        if self.action in [
+            'vincular_usuario',
+            'crear_acceso',
+            'desactivar',
+            'reactivar',
+        ]:
             permission_classes = [IsAuthenticated]
         elif self.action in ['list', 'retrieve']:
             permission_classes = [IsAuthenticated]
@@ -688,6 +699,90 @@ class PersonalViewSet(viewsets.ModelViewSet):
             'personal_activo': result.personal_active,
             'usuario_activo': result.user_active,
         }, status=status.HTTP_201_CREATED)
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='desactivar',
+        permission_classes=[IsAuthenticated],
+    )
+    def desactivar(self, request, pk=None):
+        return self._change_status(request, deactivate_personal)
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='reactivar',
+        permission_classes=[IsAuthenticated],
+    )
+    def reactivar(self, request, pk=None):
+        return self._change_status(request, reactivate_personal)
+
+    def _change_status(self, request, service):
+        try:
+            personal = self.get_object()
+        except Http404:
+            return self._link_error(
+                'PERSONAL_NOT_FOUND',
+                'El Personal solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        command = PersonalStatusChangeCommandSerializer(data=request.data)
+        if not command.is_valid():
+            error_code = (
+                'INVALID_REASON'
+                if set(command.errors) == {'motivo'}
+                else 'INVALID_PAYLOAD'
+            )
+            return self._link_error(
+                error_code,
+                'El payload de cambio de estado es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+                fields=command.errors,
+            )
+
+        try:
+            result = service(
+                actor=request.user,
+                personal=personal,
+                reason=command.validated_data['motivo'],
+            )
+        except PermissionDeniedForPersonalStatusChange:
+            return self._link_error(
+                'PERMISSION_DENIED',
+                'No tiene permisos para cambiar el estado del Personal.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except InvalidPersonalStatusReason:
+            return self._link_error(
+                'INVALID_REASON',
+                'El motivo del cambio de estado es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except InvalidPersonalLinkTarget:
+            return self._link_error(
+                'PERSONAL_NOT_FOUND',
+                'El Personal solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+        except PersonalStatusConflict:
+            return self._link_error(
+                'PERSONAL_STATUS_CONFLICT',
+                'El estado del Personal cambió durante la operación.',
+                status.HTTP_409_CONFLICT,
+            )
+
+        return Response({
+            'changed': result.changed,
+            'personal_id': result.personal_id,
+            'activo_anterior': result.previous_active,
+            'activo_actual': result.current_active,
+            'usuario_id': result.user_id,
+            'usuario_activo': result.user_active,
+            'rol': result.current_role,
+            'warnings': list(result.warnings),
+        }, status=status.HTTP_200_OK)
 
     @staticmethod
     def _link_error(code, detail, status_code, fields=None):

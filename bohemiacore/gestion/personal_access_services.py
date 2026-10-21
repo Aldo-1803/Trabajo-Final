@@ -16,6 +16,7 @@ from usuarios.roles import (
     BusinessPermission,
     BusinessRole,
     get_business_role,
+    get_business_roles,
     has_inconsistent_business_roles,
 )
 
@@ -30,6 +31,15 @@ PERSONAL_ACCESS_AUDIT_SOURCE = (
     'gestion.personal_access_services.create_access_for_personal'
 )
 PERSONAL_ACCESS_AUDIT_TABLE = 'PersonalAccess'
+PERSONAL_STATUS_AUDIT_TABLE = 'PersonalStatus'
+PERSONAL_DEACTIVATED_EVENT = 'PERSONAL_DEACTIVATED'
+PERSONAL_REACTIVATED_EVENT = 'PERSONAL_REACTIVATED'
+PERSONAL_DEACTIVATED_SOURCE = (
+    'gestion.personal_access_services.deactivate_personal'
+)
+PERSONAL_REACTIVATED_SOURCE = (
+    'gestion.personal_access_services.reactivate_personal'
+)
 MIN_REASON_LENGTH = 3
 MAX_REASON_LENGTH = 500
 ALLOWED_PERSONAL_ACCESS_ROLES = (
@@ -103,6 +113,22 @@ class PersonalAccessConflict(PersonalAccessCreateError):
     pass
 
 
+class PersonalStatusChangeError(Exception):
+    pass
+
+
+class PermissionDeniedForPersonalStatusChange(PersonalStatusChangeError):
+    pass
+
+
+class InvalidPersonalStatusReason(PersonalStatusChangeError):
+    pass
+
+
+class PersonalStatusConflict(PersonalStatusChangeError):
+    pass
+
+
 @dataclass(frozen=True)
 class PersonalLinkResult:
     changed: bool
@@ -127,6 +153,111 @@ class PersonalAccessCreateResult:
     link_audit_id: int
     role_audit_id: int
     access_audit_id: int
+
+
+@dataclass(frozen=True)
+class PersonalStatusChangeResult:
+    changed: bool
+    personal_id: int
+    previous_active: bool
+    current_active: bool
+    user_id: int | None
+    user_active: bool | None
+    current_role: str | None
+    audit_id: int | None
+    warnings: tuple[str, ...]
+
+
+def deactivate_personal(actor, personal, reason):
+    return _change_personal_status(
+        actor=actor,
+        personal=personal,
+        reason=reason,
+        target_active=False,
+        event=PERSONAL_DEACTIVATED_EVENT,
+        source=PERSONAL_DEACTIVATED_SOURCE,
+    )
+
+
+def reactivate_personal(actor, personal, reason):
+    return _change_personal_status(
+        actor=actor,
+        personal=personal,
+        reason=reason,
+        target_active=True,
+        event=PERSONAL_REACTIVATED_EVENT,
+        source=PERSONAL_REACTIVATED_SOURCE,
+    )
+
+
+@transaction.atomic
+def _change_personal_status(
+    *,
+    actor,
+    personal,
+    reason,
+    target_active,
+    event,
+    source,
+):
+    normalized_reason = _validate_reason(
+        reason,
+        error_class=InvalidPersonalStatusReason,
+        operation='personnel status change',
+    )
+    user_model = get_user_model()
+    current_actor = _get_personal_manager_actor(actor, user_model)
+    locked_personal = _get_locked_personal(personal)
+    previous_active = locked_personal.activo
+
+    if previous_active == target_active:
+        return _build_status_result(
+            personal=locked_personal,
+            changed=False,
+            previous_active=previous_active,
+            current_active=target_active,
+        )
+
+    updated = Personal.objects.filter(
+        pk=locked_personal.pk,
+        activo=previous_active,
+    ).update(activo=target_active)
+    if updated != 1:
+        raise PersonalStatusConflict(
+            'The personnel status conflicts with another operation.'
+        )
+
+    locked_personal.activo = target_active
+    audit = Auditoria.objects.create(
+        tabla=PERSONAL_STATUS_AUDIT_TABLE,
+        registro_id=locked_personal.pk,
+        usuario=current_actor,
+        accion='MODIFICACION',
+        valor_anterior={
+            'event': event,
+            'personal_id': locked_personal.pk,
+            'user_id': locked_personal.usuario_id,
+            'active': previous_active,
+        },
+        valor_nuevo={
+            'event': event,
+            'source': source,
+            'actor_id': current_actor.pk,
+            'personal_id': locked_personal.pk,
+            'user_id': locked_personal.usuario_id,
+            'previous_active': previous_active,
+            'current_active': target_active,
+            'reason': normalized_reason,
+        },
+    )
+
+    return _build_status_result(
+        personal=locked_personal,
+        changed=True,
+        previous_active=previous_active,
+        current_active=target_active,
+        audit_id=audit.pk,
+    )
 
 
 @transaction.atomic
@@ -329,13 +460,18 @@ def link_user_to_personal(actor, personal, user, reason):
     )
 
 
-def _validate_reason(reason):
+def _validate_reason(
+    reason,
+    *,
+    error_class=InvalidPersonalLinkReason,
+    operation='personnel link',
+):
     if not isinstance(reason, str):
-        raise InvalidPersonalLinkReason('A personnel-link reason is required.')
+        raise error_class(f'A reason is required for the {operation}.')
 
     normalized_reason = reason.strip()
     if not MIN_REASON_LENGTH <= len(normalized_reason) <= MAX_REASON_LENGTH:
-        raise InvalidPersonalLinkReason(
+        raise error_class(
             f'The reason must contain between {MIN_REASON_LENGTH} and '
             f'{MAX_REASON_LENGTH} characters.'
         )
@@ -395,6 +531,33 @@ def _get_authorized_actor(actor, user_model):
     ):
         raise PermissionDeniedForPersonalLink(
             'The actor cannot link users to personnel records.'
+        )
+    return current_actor
+
+
+def _get_personal_manager_actor(actor, user_model):
+    if (
+        not isinstance(actor, user_model)
+        or actor.pk is None
+        or not actor.is_authenticated
+    ):
+        raise PermissionDeniedForPersonalStatusChange(
+            'A valid authenticated actor is required.'
+        )
+
+    try:
+        current_actor = user_model.objects.get(pk=actor.pk)
+    except user_model.DoesNotExist as exc:
+        raise PermissionDeniedForPersonalStatusChange(
+            'A valid authenticated actor is required.'
+        ) from exc
+
+    if (
+        not current_actor.is_active
+        or not current_actor.has_perm(BusinessPermission.MANAGE_PERSONAL)
+    ):
+        raise PermissionDeniedForPersonalStatusChange(
+            'The actor cannot change personnel status.'
         )
     return current_actor
 
@@ -466,4 +629,42 @@ def _build_result(
         business_role=business_role,
         warnings=tuple(warnings),
         audit_id=audit_id,
+    )
+
+
+def _build_status_result(
+    *,
+    personal,
+    changed,
+    previous_active,
+    current_active,
+    audit_id=None,
+):
+    user = personal.usuario if personal.usuario_id is not None else None
+    warnings = []
+    current_role = None
+
+    if user is None:
+        warnings.append('NO_LINKED_USER')
+    else:
+        roles = get_business_roles(user)
+        if len(roles) == 1:
+            current_role = roles[0]
+        elif len(roles) > 1:
+            warnings.append('INCONSISTENT_BUSINESS_ROLES')
+        else:
+            warnings.append('NO_BUSINESS_ROLE')
+        if not user.is_active:
+            warnings.append('USER_INACTIVE')
+
+    return PersonalStatusChangeResult(
+        changed=changed,
+        personal_id=personal.pk,
+        previous_active=previous_active,
+        current_active=current_active,
+        user_id=user.pk if user is not None else None,
+        user_active=user.is_active if user is not None else None,
+        current_role=current_role,
+        audit_id=audit_id,
+        warnings=tuple(warnings),
     )
