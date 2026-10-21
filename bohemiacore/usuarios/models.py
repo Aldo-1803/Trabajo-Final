@@ -57,6 +57,10 @@ class Usuario(AbstractUser):
 
     class Meta:
         verbose_name_plural = 'Usuarios'
+        permissions = [
+            ('manage_users', 'Can manage users'),
+            ('assign_roles', 'Can assign business roles'),
+        ]
 
     def __str__(self):
         return self.email
@@ -132,6 +136,10 @@ class Cliente(models.Model):
     class Meta:
         verbose_name = 'Cliente'
         verbose_name_plural = 'Clientes'
+        permissions = [
+            ('create_walkin_client', 'Can create walk-in clients'),
+            ('view_clients', 'Can view clients'),
+        ]
 
     def __str__(self):
         return self.usuario.email

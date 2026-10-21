@@ -61,6 +61,10 @@ class Personal(models.Model):
     class Meta:
         verbose_name = "Personal / Staff"
         verbose_name_plural = "Personal"
+        permissions = [
+            ('manage_personal', 'Can manage personnel'),
+            ('manage_skills', 'Can manage personnel skills'),
+        ]
 
     def __str__(self):
         return f"{self.nombre} ({self.get_rol_display()})"
@@ -188,6 +192,9 @@ class Servicio(models.Model):
         verbose_name = "Servicio"
         verbose_name_plural = "Servicios"
         ordering = ['nombre']
+        permissions = [
+            ('manage_prices', 'Can manage prices'),
+        ]
 
     def __str__(self):
         if self.categoria:
@@ -335,6 +342,11 @@ class Producto(models.Model):
 
     class Meta:
         ordering = ['nombre']
+        permissions = [
+            ('manage_products', 'Can manage products'),
+            ('view_stock', 'Can view stock'),
+            ('manage_stock', 'Can manage stock'),
+        ]
 
     def __str__(self):
         return f"{self.marca} - {self.nombre} ({self.stock_disponible} ud.)"
@@ -524,6 +536,9 @@ class Promocion(models.Model):
         verbose_name = "Promoción"
         verbose_name_plural = "Promociones"
         ordering = ['-fecha_inicio']
+        permissions = [
+            ('manage_promotions', 'Can manage promotions'),
+        ]
 
     def __str__(self):
         return f"{self.get_tipo_display()} - {self.nombre}"
@@ -888,6 +903,9 @@ class Rutina(models.Model):
         verbose_name = "Rutina"
         verbose_name_plural = "Rutinas"
         ordering = ['-fecha_creacion']
+        permissions = [
+            ('assign_routines', 'Can assign routines'),
+        ]
 
     def actualizar_version(self):
         self.version += 1
@@ -1205,6 +1223,10 @@ class Configuracion(models.Model):
         verbose_name = "Configuración del Sistema"
         verbose_name_plural = "Configuración"
         ordering = ['id']  # Elimina UnorderedObjectListWarning en paginación
+        permissions = [
+            ('manage_payment_configuration', 'Can manage payment configuration'),
+            ('manage_configuration', 'Can manage configuration'),
+        ]
 
     def save(self, *args, **kwargs):
         """
@@ -1413,6 +1435,15 @@ class Turno(models.Model):
         verbose_name_plural = "Turnos"
         ordering = ['fecha', 'hora_inicio']
         unique_together = ['fecha', 'hora_inicio', 'cliente']
+        permissions = [
+            ('view_global_agenda', 'Can view the global agenda'),
+            ('create_turno_for_client', 'Can create appointments for clients'),
+            ('register_arrival', 'Can register client arrival'),
+            ('reprogram_any_turno', 'Can reschedule any appointment'),
+            ('cancel_any_turno', 'Can cancel any appointment'),
+            ('finalize_service', 'Can finalize services'),
+            ('confirm_deposit', 'Can confirm deposits'),
+        ]
 
     def __str__(self):
         return f"Turno {self.fecha} {self.hora_inicio} - {self.cliente}"
@@ -1500,6 +1531,10 @@ class FichaTecnica(models.Model):
     class Meta:
         verbose_name = "Ficha Técnica"
         verbose_name_plural = "Fichas Técnicas"
+        permissions = [
+            ('manage_technical_record', 'Can manage technical records'),
+            ('manage_formulas', 'Can manage formulas'),
+        ]
 
 
 class ListaEspera(models.Model):
@@ -1615,6 +1650,9 @@ class ContenidoEducativo(models.Model):
         verbose_name = "Contenido Educativo"
         verbose_name_plural = "Contenidos Educativos"
         ordering = ['-fecha_publicacion']
+        permissions = [
+            ('manage_content', 'Can manage educational content'),
+        ]
         indexes = [
             models.Index(fields=['estado', '-fecha_publicacion']),
             models.Index(fields=['autor', '-fecha_publicacion']),
@@ -1938,6 +1976,9 @@ class DiagnosticoCapilar(models.Model):
         verbose_name = "Diagnóstico Capilar"
         verbose_name_plural = "Diagnósticos Capilares"
         ordering = ['-fecha_diagnostico']
+        permissions = [
+            ('create_diagnosis', 'Can create diagnoses'),
+        ]
     
     def __str__(self):
         return f"Diagnóstico {self.cliente} - {self.fecha_diagnostico.strftime('%d/%m/%Y')}"
@@ -2055,6 +2096,12 @@ class Auditoria(models.Model):
         verbose_name = "Auditoría"
         verbose_name_plural = "Auditorías"
         ordering = ['-fecha_hora']
+        permissions = [
+            ('view_reports', 'Can view reports'),
+            ('view_financial_reports', 'Can view financial reports'),
+            ('view_audit', 'Can view audit records'),
+            ('revert_audit', 'Can revert audited changes'),
+        ]
         indexes = [
             models.Index(fields=['tabla', '-fecha_hora']),
             models.Index(fields=['usuario', '-fecha_hora']),
@@ -2189,6 +2236,9 @@ class Pago(models.Model):
         verbose_name = "Pago"
         verbose_name_plural = "Pagos"
         ordering = ['-fecha_pago']
+        permissions = [
+            ('register_payment', 'Can register payments'),
+        ]
 
     def __str__(self):
         return f"Pago {self.id} - {self.orden.codigo} - ${self.monto}"
