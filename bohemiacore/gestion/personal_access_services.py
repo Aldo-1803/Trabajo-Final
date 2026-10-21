@@ -8,14 +8,19 @@ from django.db import IntegrityError, transaction
 
 from gestion.models import Auditoria, Personal
 from usuarios.access_services import (
+    AccountDeactivationConflict,
     InconsistentBusinessRoleState,
+    InvalidAccountDeactivationReason,
+    InvalidAccountDeactivationTarget,
     InvalidRoleAssignmentTarget,
     InvalidRoleChangeReason,
     MissingClientProfile,
+    PermissionDeniedForAccountDeactivation,
     PermissionDeniedForRoleAssignment,
     ProtectedSuperuser,
     SelfRoleAssignmentNotAllowed,
     assign_validated_business_role,
+    deactivate_account,
 )
 from usuarios.roles import (
     BusinessPermission,
@@ -51,6 +56,14 @@ WORK_ACCESS_REVOKED_KEEP_CLIENT_EVENT = (
 )
 WORK_ACCESS_REVOCATION_SOURCE = (
     'gestion.personal_access_services.revoke_work_access_keep_client'
+)
+FULL_WORK_ACCESS_REVOCATION_AUDIT_TABLE = 'FullWorkAccessRevocation'
+WORK_ACCESS_REVOKED_ACCOUNT_DISABLED_EVENT = (
+    'WORK_ACCESS_REVOKED_ACCOUNT_DISABLED'
+)
+FULL_WORK_ACCESS_REVOCATION_SOURCE = (
+    'gestion.personal_access_services.'
+    'revoke_work_access_and_disable_account'
 )
 MIN_REASON_LENGTH = 3
 MAX_REASON_LENGTH = 500
@@ -169,6 +182,24 @@ class WorkAccessRevocationConflict(WorkAccessRevocationError):
     pass
 
 
+class FullWorkAccessRevocationError(Exception):
+    pass
+
+
+class PermissionDeniedForFullWorkAccessRevocation(
+    FullWorkAccessRevocationError
+):
+    pass
+
+
+class InvalidFullWorkAccessRevocationReason(FullWorkAccessRevocationError):
+    pass
+
+
+class FullWorkAccessRevocationConflict(FullWorkAccessRevocationError):
+    pass
+
+
 @dataclass(frozen=True)
 class PersonalLinkResult:
     changed: bool
@@ -223,6 +254,172 @@ class WorkAccessRevocationResult:
     status_audit_id: int | None
     role_audit_id: int | None
     warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class FullWorkAccessRevocationResult:
+    changed: bool
+    personal_id: int
+    user_id: int
+    previous_personal_active: bool
+    current_personal_active: bool
+    previous_user_active: bool
+    current_user_active: bool
+    current_role: str | None
+    audit_id: int | None
+    status_audit_id: int | None
+    account_audit_id: int | None
+    warnings: tuple[str, ...]
+
+
+@transaction.atomic
+def revoke_work_access_and_disable_account(actor, personal, reason):
+    normalized_reason = _validate_reason(
+        reason,
+        error_class=InvalidFullWorkAccessRevocationReason,
+        operation='full work-access revocation',
+    )
+    user_model = get_user_model()
+    current_actor = _get_full_work_revocation_actor(actor, user_model)
+    personal_snapshot = _get_personal_snapshot(personal)
+
+    if personal_snapshot.usuario_id is None:
+        locked_personal = _get_locked_personal(personal_snapshot)
+        if locked_personal.usuario_id is None:
+            raise PersonalHasNoUser(
+                'The personnel record has no linked user.'
+            )
+        raise FullWorkAccessRevocationConflict(
+            'The personnel link changed during the operation.'
+        )
+
+    try:
+        target_user = user_model.objects.get(
+            pk=personal_snapshot.usuario_id
+        )
+    except user_model.DoesNotExist as exc:
+        raise FullWorkAccessRevocationConflict(
+            'The linked user no longer exists.'
+        ) from exc
+
+    try:
+        account_result = deactivate_account(
+            actor=current_actor,
+            target_user=target_user,
+            reason=normalized_reason,
+        )
+    except PermissionDeniedForAccountDeactivation as exc:
+        raise PermissionDeniedForFullWorkAccessRevocation(
+            'The actor cannot revoke personnel and account access.'
+        ) from exc
+    except (
+        AccountDeactivationConflict,
+        InvalidAccountDeactivationReason,
+        InvalidAccountDeactivationTarget,
+    ) as exc:
+        raise FullWorkAccessRevocationConflict(
+            'The linked account could not be deactivated.'
+        ) from exc
+
+    locked_personal = _get_locked_personal(personal_snapshot)
+    if locked_personal.usuario_id is None:
+        raise PersonalHasNoUser(
+            'The personnel record has no linked user.'
+        )
+    if locked_personal.usuario_id != account_result.user_id:
+        raise FullWorkAccessRevocationConflict(
+            'The personnel link changed during the operation.'
+        )
+
+    previous_personal_active = locked_personal.activo
+    status_result = None
+    if previous_personal_active:
+        try:
+            status_result = deactivate_personal(
+                actor=current_actor,
+                personal=locked_personal,
+                reason=normalized_reason,
+            )
+        except PermissionDeniedForPersonalStatusChange as exc:
+            raise PermissionDeniedForFullWorkAccessRevocation(
+                'The actor cannot revoke personnel and account access.'
+            ) from exc
+        except (
+            InvalidPersonalStatusReason,
+            InvalidPersonalLinkTarget,
+            PersonalStatusConflict,
+        ) as exc:
+            raise FullWorkAccessRevocationConflict(
+                'The personnel status could not be changed.'
+            ) from exc
+
+    changed = account_result.changed or status_result is not None
+    if not changed:
+        return FullWorkAccessRevocationResult(
+            changed=False,
+            personal_id=locked_personal.pk,
+            user_id=account_result.user_id,
+            previous_personal_active=False,
+            current_personal_active=False,
+            previous_user_active=False,
+            current_user_active=False,
+            current_role=account_result.current_role,
+            audit_id=None,
+            status_audit_id=None,
+            account_audit_id=None,
+            warnings=account_result.warnings,
+        )
+
+    roles = get_business_roles(target_user)
+    audit = Auditoria.objects.create(
+        tabla=FULL_WORK_ACCESS_REVOCATION_AUDIT_TABLE,
+        registro_id=locked_personal.pk,
+        usuario=current_actor,
+        accion='MODIFICACION',
+        valor_anterior={
+            'event': WORK_ACCESS_REVOKED_ACCOUNT_DISABLED_EVENT,
+            'personal_id': locked_personal.pk,
+            'user_id': account_result.user_id,
+            'personal_active': previous_personal_active,
+            'user_active': account_result.previous_active,
+            'business_roles': list(roles),
+        },
+        valor_nuevo={
+            'event': WORK_ACCESS_REVOKED_ACCOUNT_DISABLED_EVENT,
+            'source': FULL_WORK_ACCESS_REVOCATION_SOURCE,
+            'actor_id': current_actor.pk,
+            'personal_id': locked_personal.pk,
+            'user_id': account_result.user_id,
+            'previous_personal_active': previous_personal_active,
+            'current_personal_active': False,
+            'previous_user_active': account_result.previous_active,
+            'current_user_active': False,
+            'current_business_role': account_result.current_role,
+            'business_roles': list(roles),
+            'reason': normalized_reason,
+            'status_audit_id': (
+                status_result.audit_id if status_result is not None else None
+            ),
+            'account_audit_id': account_result.audit_id,
+        },
+    )
+
+    return FullWorkAccessRevocationResult(
+        changed=True,
+        personal_id=locked_personal.pk,
+        user_id=account_result.user_id,
+        previous_personal_active=previous_personal_active,
+        current_personal_active=False,
+        previous_user_active=account_result.previous_active,
+        current_user_active=False,
+        current_role=account_result.current_role,
+        audit_id=audit.pk,
+        status_audit_id=(
+            status_result.audit_id if status_result is not None else None
+        ),
+        account_audit_id=account_result.audit_id,
+        warnings=account_result.warnings,
+    )
 
 
 @transaction.atomic
@@ -809,6 +1006,37 @@ def _get_personal_manager_actor(actor, user_model):
     ):
         raise PermissionDeniedForPersonalStatusChange(
             'The actor cannot change personnel status.'
+        )
+    return current_actor
+
+
+def _get_full_work_revocation_actor(actor, user_model):
+    if (
+        not isinstance(actor, user_model)
+        or actor.pk is None
+        or not actor.is_authenticated
+    ):
+        raise PermissionDeniedForFullWorkAccessRevocation(
+            'A valid authenticated actor is required.'
+        )
+
+    try:
+        current_actor = user_model.objects.get(pk=actor.pk)
+    except user_model.DoesNotExist as exc:
+        raise PermissionDeniedForFullWorkAccessRevocation(
+            'A valid authenticated actor is required.'
+        ) from exc
+
+    required_permissions = (
+        BusinessPermission.MANAGE_PERSONAL,
+        BusinessPermission.MANAGE_USERS,
+    )
+    if not current_actor.is_active or not all(
+        current_actor.has_perm(permission)
+        for permission in required_permissions
+    ):
+        raise PermissionDeniedForFullWorkAccessRevocation(
+            'The actor cannot revoke personnel and account access.'
         )
     return current_actor
 

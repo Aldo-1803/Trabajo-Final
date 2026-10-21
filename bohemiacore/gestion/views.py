@@ -54,7 +54,9 @@ from .serializers import (
 from .personal_access_services import (
     ClientProfileRequired,
     EmailAlreadyExists,
+    FullWorkAccessRevocationConflict,
     InactiveUserForWorkAccessRevocation,
+    InvalidFullWorkAccessRevocationReason,
     InvalidPersonalAccessEmail,
     InvalidPersonalAccessRole,
     InvalidPersonalLinkReason,
@@ -65,6 +67,7 @@ from .personal_access_services import (
     InvalidWorkAccessRevocationReason,
     PermissionDeniedForPersonalLink,
     PermissionDeniedForPersonalStatusChange,
+    PermissionDeniedForFullWorkAccessRevocation,
     PermissionDeniedForWorkAccessRevocation,
     PersonalAccessConflict,
     PersonalAlreadyLinked,
@@ -78,12 +81,15 @@ from .personal_access_services import (
     deactivate_personal,
     link_user_to_personal,
     reactivate_personal,
+    revoke_work_access_and_disable_account,
     revoke_work_access_keep_client,
     WorkAccessRevocationConflict,
 )
 from usuarios.access_services import (
     InconsistentBusinessRoleState,
+    LastActiveAdministrator,
     ProtectedSuperuser,
+    SelfDeactivationNotAllowed,
 )
 
 from .services import DisponibilidadService 
@@ -471,6 +477,7 @@ class PersonalViewSet(viewsets.ModelViewSet):
             'desactivar',
             'reactivar',
             'revocar_acceso_laboral',
+            'revocar_acceso_total',
         ]:
             permission_classes = [IsAuthenticated]
         elif self.action in ['list', 'retrieve']:
@@ -893,6 +900,103 @@ class PersonalViewSet(viewsets.ModelViewSet):
             'personal_activo_actual': result.current_personal_active,
             'usuario_activo': result.user_active,
             'cliente_id': result.client_id,
+            'warnings': list(result.warnings),
+        }, status=status.HTTP_200_OK)
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='revocar-acceso-total',
+        permission_classes=[IsAuthenticated],
+    )
+    def revocar_acceso_total(self, request, pk=None):
+        try:
+            personal = self.get_object()
+        except Http404:
+            return self._link_error(
+                'PERSONAL_NOT_FOUND',
+                'El Personal solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        command = PersonalStatusChangeCommandSerializer(data=request.data)
+        if not command.is_valid():
+            error_code = (
+                'INVALID_REASON'
+                if set(command.errors) == {'motivo'}
+                else 'INVALID_PAYLOAD'
+            )
+            return self._link_error(
+                error_code,
+                'El payload de baja total es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+                fields=command.errors,
+            )
+
+        try:
+            result = revoke_work_access_and_disable_account(
+                actor=request.user,
+                personal=personal,
+                reason=command.validated_data['motivo'],
+            )
+        except PermissionDeniedForFullWorkAccessRevocation:
+            return self._link_error(
+                'PERMISSION_DENIED',
+                'No tiene permisos para realizar la baja total.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except ProtectedSuperuser:
+            return self._link_error(
+                'PROTECTED_SUPERUSER',
+                'El Usuario protegido no puede gestionarse mediante esta acción.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except SelfDeactivationNotAllowed:
+            return self._link_error(
+                'SELF_DEACTIVATION_NOT_ALLOWED',
+                'No puede desactivar su propia cuenta mediante esta acción.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except LastActiveAdministrator:
+            return self._link_error(
+                'LAST_ACTIVE_ADMIN',
+                'No puede desactivarse el último administrador activo.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except InvalidFullWorkAccessRevocationReason:
+            return self._link_error(
+                'INVALID_REASON',
+                'El motivo de baja total es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except InvalidPersonalLinkTarget:
+            return self._link_error(
+                'PERSONAL_NOT_FOUND',
+                'El Personal solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+        except PersonalHasNoUser:
+            return self._link_error(
+                'PERSONAL_HAS_NO_USER',
+                'El Personal no tiene un Usuario vinculado.',
+                status.HTTP_409_CONFLICT,
+            )
+        except FullWorkAccessRevocationConflict:
+            return self._link_error(
+                'WORK_ACCESS_REVOCATION_CONFLICT',
+                'La baja total entra en conflicto con otra operación.',
+                status.HTTP_409_CONFLICT,
+            )
+
+        return Response({
+            'changed': result.changed,
+            'personal_id': result.personal_id,
+            'usuario_id': result.user_id,
+            'personal_activo_anterior': result.previous_personal_active,
+            'personal_activo_actual': result.current_personal_active,
+            'usuario_activo_anterior': result.previous_user_active,
+            'usuario_activo_actual': result.current_user_active,
+            'rol_actual': result.current_role,
             'warnings': list(result.warnings),
         }, status=status.HTTP_200_OK)
 

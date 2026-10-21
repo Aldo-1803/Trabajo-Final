@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group
 from django.db import transaction
 
 from gestion.models import Auditoria
@@ -10,6 +11,7 @@ from usuarios.roles import (
     BusinessRole,
     assign_business_role,
     get_business_role,
+    get_business_roles,
     has_inconsistent_business_roles,
 )
 
@@ -17,6 +19,9 @@ from usuarios.roles import (
 ROLE_AUDIT_EVENT = 'BUSINESS_ROLE_CHANGED'
 ROLE_AUDIT_SOURCE = 'usuarios.access_services.assign_validated_business_role'
 ROLE_AUDIT_TABLE = 'UsuarioBusinessRole'
+ACCOUNT_DEACTIVATED_EVENT = 'ACCOUNT_DEACTIVATED'
+ACCOUNT_DEACTIVATION_SOURCE = 'usuarios.access_services.deactivate_account'
+ACCOUNT_DEACTIVATION_AUDIT_TABLE = 'UsuarioAccountStatus'
 MIN_REASON_LENGTH = 3
 MAX_REASON_LENGTH = 500
 
@@ -65,12 +70,146 @@ class InvalidRoleAssignmentTarget(RoleAssignmentError):
     pass
 
 
+class AccountDeactivationError(Exception):
+    pass
+
+
+class PermissionDeniedForAccountDeactivation(AccountDeactivationError):
+    pass
+
+
+class InvalidAccountDeactivationReason(AccountDeactivationError):
+    pass
+
+
+class InvalidAccountDeactivationTarget(AccountDeactivationError):
+    pass
+
+
+class SelfDeactivationNotAllowed(AccountDeactivationError):
+    pass
+
+
+class LastActiveAdministrator(AccountDeactivationError):
+    pass
+
+
+class AccountDeactivationConflict(AccountDeactivationError):
+    pass
+
+
 @dataclass(frozen=True)
 class RoleAssignmentResult:
     changed: bool
     previous_role: str | None
     new_role: str
     audit_id: int | None
+
+
+@dataclass(frozen=True)
+class AccountDeactivationResult:
+    changed: bool
+    user_id: int
+    previous_active: bool
+    current_active: bool
+    current_role: str | None
+    audit_id: int | None
+    warnings: tuple[str, ...]
+
+
+@transaction.atomic
+def deactivate_account(actor, target_user, reason):
+    """Deactivate one account without changing roles, profiles, or flags."""
+    normalized_reason = _validate_account_deactivation_reason(reason)
+    user_model = get_user_model()
+    current_actor = _get_account_manager_actor(actor, user_model)
+    locked_target = _get_locked_account_target(target_user, user_model)
+
+    if current_actor.pk == locked_target.pk:
+        raise SelfDeactivationNotAllowed(
+            'Users cannot deactivate their own account.'
+        )
+    if locked_target.is_superuser:
+        raise ProtectedSuperuser(
+            'Superusers cannot be managed through account deactivation.'
+        )
+
+    roles = get_business_roles(locked_target)
+    warnings = (
+        ('INCONSISTENT_BUSINESS_ROLES',)
+        if len(roles) > 1
+        else ()
+    )
+    current_role = roles[0] if len(roles) == 1 else None
+    previous_active = locked_target.is_active
+
+    if not previous_active:
+        return AccountDeactivationResult(
+            changed=False,
+            user_id=locked_target.pk,
+            previous_active=False,
+            current_active=False,
+            current_role=current_role,
+            audit_id=None,
+            warnings=warnings,
+        )
+
+    if BusinessRole.ADMINISTRADOR in roles:
+        administrator_group = Group.objects.select_for_update().get(
+            name=BusinessRole.ADMINISTRADOR
+        )
+        another_active_administrator_exists = user_model.objects.filter(
+            is_active=True,
+            groups=administrator_group,
+        ).exclude(pk=locked_target.pk).exists()
+        if not another_active_administrator_exists:
+            raise LastActiveAdministrator(
+                'The last active business administrator cannot be deactivated.'
+            )
+
+    updated = user_model.objects.filter(
+        pk=locked_target.pk,
+        is_active=True,
+    ).update(is_active=False)
+    if updated != 1:
+        raise AccountDeactivationConflict(
+            'The account status conflicts with another operation.'
+        )
+
+    locked_target.is_active = False
+    audit = Auditoria.objects.create(
+        tabla=ACCOUNT_DEACTIVATION_AUDIT_TABLE,
+        registro_id=locked_target.pk,
+        usuario=current_actor,
+        accion='MODIFICACION',
+        valor_anterior={
+            'event': ACCOUNT_DEACTIVATED_EVENT,
+            'target_user_id': locked_target.pk,
+            'active': previous_active,
+            'business_roles': list(roles),
+        },
+        valor_nuevo={
+            'event': ACCOUNT_DEACTIVATED_EVENT,
+            'source': ACCOUNT_DEACTIVATION_SOURCE,
+            'actor_id': current_actor.pk,
+            'target_user_id': locked_target.pk,
+            'previous_active': previous_active,
+            'current_active': False,
+            'current_business_role': current_role,
+            'business_roles': list(roles),
+            'reason': normalized_reason,
+        },
+    )
+
+    return AccountDeactivationResult(
+        changed=True,
+        user_id=locked_target.pk,
+        previous_active=previous_active,
+        current_active=False,
+        current_role=current_role,
+        audit_id=audit.pk,
+        warnings=warnings,
+    )
 
 
 @transaction.atomic
@@ -167,6 +306,21 @@ def _validate_reason(reason):
     return normalized_reason
 
 
+def _validate_account_deactivation_reason(reason):
+    if not isinstance(reason, str):
+        raise InvalidAccountDeactivationReason(
+            'An account-deactivation reason is required.'
+        )
+
+    normalized_reason = reason.strip()
+    if not MIN_REASON_LENGTH <= len(normalized_reason) <= MAX_REASON_LENGTH:
+        raise InvalidAccountDeactivationReason(
+            f'The reason must contain between {MIN_REASON_LENGTH} and '
+            f'{MAX_REASON_LENGTH} characters.'
+        )
+    return normalized_reason
+
+
 def _get_authorized_actor(actor, user_model):
     if (
         not isinstance(actor, user_model)
@@ -194,6 +348,33 @@ def _get_authorized_actor(actor, user_model):
     return current_actor
 
 
+def _get_account_manager_actor(actor, user_model):
+    if (
+        not isinstance(actor, user_model)
+        or actor.pk is None
+        or not actor.is_authenticated
+    ):
+        raise PermissionDeniedForAccountDeactivation(
+            'A valid authenticated actor is required.'
+        )
+
+    try:
+        current_actor = user_model.objects.get(pk=actor.pk)
+    except user_model.DoesNotExist as exc:
+        raise PermissionDeniedForAccountDeactivation(
+            'A valid authenticated actor is required.'
+        ) from exc
+
+    if (
+        not current_actor.is_active
+        or not current_actor.has_perm(BusinessPermission.MANAGE_USERS)
+    ):
+        raise PermissionDeniedForAccountDeactivation(
+            'The actor cannot deactivate user accounts.'
+        )
+    return current_actor
+
+
 def _get_locked_target(target_user, user_model):
     if not isinstance(target_user, user_model) or target_user.pk is None:
         raise InvalidRoleAssignmentTarget('A valid target user is required.')
@@ -202,6 +383,20 @@ def _get_locked_target(target_user, user_model):
         return user_model.objects.select_for_update().get(pk=target_user.pk)
     except user_model.DoesNotExist as exc:
         raise InvalidRoleAssignmentTarget(
+            'A valid target user is required.'
+        ) from exc
+
+
+def _get_locked_account_target(target_user, user_model):
+    if not isinstance(target_user, user_model) or target_user.pk is None:
+        raise InvalidAccountDeactivationTarget(
+            'A valid target user is required.'
+        )
+
+    try:
+        return user_model.objects.select_for_update().get(pk=target_user.pk)
+    except user_model.DoesNotExist as exc:
+        raise InvalidAccountDeactivationTarget(
             'A valid target user is required.'
         ) from exc
 

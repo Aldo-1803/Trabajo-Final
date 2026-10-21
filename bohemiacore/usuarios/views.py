@@ -94,14 +94,14 @@ class LoginView(APIView):
 
         try:
             usuario = Usuario.objects.get(email=email)
-            if usuario.check_password(password):
+            if usuario.check_password(password) and usuario.is_active:
                 refresh = RefreshToken.for_user(usuario)
                 return Response({
                     'access': str(refresh.access_token),
                     'refresh': str(refresh),
                 }, status=status.HTTP_200_OK)
             else:
-                print(f"[LOGIN] Contraseña incorrecta para {email}")
+                print(f"[LOGIN] Credenciales inválidas para {email}")
                 return Response({'detail': 'Credenciales inválidas.'}, status=status.HTTP_401_UNAUTHORIZED)
         except Usuario.DoesNotExist:
             print(f"[LOGIN] Usuario no encontrado: {email}")
