@@ -52,7 +52,9 @@ from .serializers import (
     #PasoRutinaSerializer,
 )
 from .personal_access_services import (
+    ClientProfileRequired,
     EmailAlreadyExists,
+    InactiveUserForWorkAccessRevocation,
     InvalidPersonalAccessEmail,
     InvalidPersonalAccessRole,
     InvalidPersonalLinkReason,
@@ -60,12 +62,15 @@ from .personal_access_services import (
     InvalidPersonalLinkUser,
     InvalidPersonalStatusReason,
     InvalidTemporaryPassword,
+    InvalidWorkAccessRevocationReason,
     PermissionDeniedForPersonalLink,
     PermissionDeniedForPersonalStatusChange,
+    PermissionDeniedForWorkAccessRevocation,
     PersonalAccessConflict,
     PersonalAlreadyLinked,
     PersonalAlreadyHasAccess,
     PersonalInactiveForAccess,
+    PersonalHasNoUser,
     PersonalLinkConflict,
     PersonalStatusConflict,
     UserAlreadyLinkedToPersonal,
@@ -73,6 +78,8 @@ from .personal_access_services import (
     deactivate_personal,
     link_user_to_personal,
     reactivate_personal,
+    revoke_work_access_keep_client,
+    WorkAccessRevocationConflict,
 )
 from usuarios.access_services import (
     InconsistentBusinessRoleState,
@@ -463,6 +470,7 @@ class PersonalViewSet(viewsets.ModelViewSet):
             'crear_acceso',
             'desactivar',
             'reactivar',
+            'revocar_acceso_laboral',
         ]:
             permission_classes = [IsAuthenticated]
         elif self.action in ['list', 'retrieve']:
@@ -781,6 +789,110 @@ class PersonalViewSet(viewsets.ModelViewSet):
             'usuario_id': result.user_id,
             'usuario_activo': result.user_active,
             'rol': result.current_role,
+            'warnings': list(result.warnings),
+        }, status=status.HTTP_200_OK)
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='revocar-acceso-laboral',
+        permission_classes=[IsAuthenticated],
+    )
+    def revocar_acceso_laboral(self, request, pk=None):
+        try:
+            personal = self.get_object()
+        except Http404:
+            return self._link_error(
+                'PERSONAL_NOT_FOUND',
+                'El Personal solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        command = PersonalStatusChangeCommandSerializer(data=request.data)
+        if not command.is_valid():
+            error_code = (
+                'INVALID_REASON'
+                if set(command.errors) == {'motivo'}
+                else 'INVALID_PAYLOAD'
+            )
+            return self._link_error(
+                error_code,
+                'El payload de revocación laboral es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+                fields=command.errors,
+            )
+
+        try:
+            result = revoke_work_access_keep_client(
+                actor=request.user,
+                personal=personal,
+                reason=command.validated_data['motivo'],
+            )
+        except PermissionDeniedForWorkAccessRevocation:
+            return self._link_error(
+                'PERMISSION_DENIED',
+                'No tiene permisos para revocar acceso laboral.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except ProtectedSuperuser:
+            return self._link_error(
+                'PROTECTED_SUPERUSER',
+                'El Usuario protegido no puede gestionarse mediante esta acción.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except InvalidWorkAccessRevocationReason:
+            return self._link_error(
+                'INVALID_REASON',
+                'El motivo de revocación laboral es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except InvalidPersonalLinkTarget:
+            return self._link_error(
+                'PERSONAL_NOT_FOUND',
+                'El Personal solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+        except PersonalHasNoUser:
+            return self._link_error(
+                'PERSONAL_HAS_NO_USER',
+                'El Personal no tiene un Usuario vinculado.',
+                status.HTTP_409_CONFLICT,
+            )
+        except ClientProfileRequired:
+            return self._link_error(
+                'CLIENT_PROFILE_REQUIRED',
+                'El Usuario debe tener un perfil Cliente existente.',
+                status.HTTP_409_CONFLICT,
+            )
+        except InactiveUserForWorkAccessRevocation:
+            return self._link_error(
+                'USER_INACTIVE',
+                'El Usuario está inactivo y no puede conservar acceso Cliente.',
+                status.HTTP_409_CONFLICT,
+            )
+        except InconsistentBusinessRoleState:
+            return self._link_error(
+                'INCONSISTENT_BUSINESS_ROLES',
+                'El Usuario tiene múltiples roles de negocio.',
+                status.HTTP_409_CONFLICT,
+            )
+        except (WorkAccessRevocationConflict, PersonalStatusConflict):
+            return self._link_error(
+                'WORK_ACCESS_REVOCATION_CONFLICT',
+                'La revocación entra en conflicto con otra operación.',
+                status.HTTP_409_CONFLICT,
+            )
+
+        return Response({
+            'changed': result.changed,
+            'personal_id': result.personal_id,
+            'usuario_id': result.user_id,
+            'rol_anterior': result.previous_role,
+            'rol_actual': result.current_role,
+            'personal_activo_anterior': result.previous_personal_active,
+            'personal_activo_actual': result.current_personal_active,
+            'usuario_activo': result.user_active,
+            'cliente_id': result.client_id,
             'warnings': list(result.warnings),
         }, status=status.HTTP_200_OK)
 

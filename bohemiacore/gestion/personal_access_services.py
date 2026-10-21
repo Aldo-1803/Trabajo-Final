@@ -9,7 +9,12 @@ from django.db import IntegrityError, transaction
 from gestion.models import Auditoria, Personal
 from usuarios.access_services import (
     InconsistentBusinessRoleState,
+    InvalidRoleAssignmentTarget,
+    InvalidRoleChangeReason,
+    MissingClientProfile,
+    PermissionDeniedForRoleAssignment,
     ProtectedSuperuser,
+    SelfRoleAssignmentNotAllowed,
     assign_validated_business_role,
 )
 from usuarios.roles import (
@@ -39,6 +44,13 @@ PERSONAL_DEACTIVATED_SOURCE = (
 )
 PERSONAL_REACTIVATED_SOURCE = (
     'gestion.personal_access_services.reactivate_personal'
+)
+WORK_ACCESS_REVOCATION_AUDIT_TABLE = 'WorkAccessRevocation'
+WORK_ACCESS_REVOKED_KEEP_CLIENT_EVENT = (
+    'WORK_ACCESS_REVOKED_KEEP_CLIENT'
+)
+WORK_ACCESS_REVOCATION_SOURCE = (
+    'gestion.personal_access_services.revoke_work_access_keep_client'
 )
 MIN_REASON_LENGTH = 3
 MAX_REASON_LENGTH = 500
@@ -129,6 +141,34 @@ class PersonalStatusConflict(PersonalStatusChangeError):
     pass
 
 
+class WorkAccessRevocationError(Exception):
+    pass
+
+
+class PermissionDeniedForWorkAccessRevocation(WorkAccessRevocationError):
+    pass
+
+
+class InvalidWorkAccessRevocationReason(WorkAccessRevocationError):
+    pass
+
+
+class PersonalHasNoUser(WorkAccessRevocationError):
+    pass
+
+
+class ClientProfileRequired(WorkAccessRevocationError):
+    pass
+
+
+class InactiveUserForWorkAccessRevocation(WorkAccessRevocationError):
+    pass
+
+
+class WorkAccessRevocationConflict(WorkAccessRevocationError):
+    pass
+
+
 @dataclass(frozen=True)
 class PersonalLinkResult:
     changed: bool
@@ -166,6 +206,213 @@ class PersonalStatusChangeResult:
     current_role: str | None
     audit_id: int | None
     warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class WorkAccessRevocationResult:
+    changed: bool
+    personal_id: int
+    user_id: int
+    previous_role: str | None
+    current_role: str
+    previous_personal_active: bool
+    current_personal_active: bool
+    user_active: bool
+    client_id: int
+    audit_id: int | None
+    status_audit_id: int | None
+    role_audit_id: int | None
+    warnings: tuple[str, ...]
+
+
+@transaction.atomic
+def revoke_work_access_keep_client(actor, personal, reason):
+    normalized_reason = _validate_reason(
+        reason,
+        error_class=InvalidWorkAccessRevocationReason,
+        operation='work-access revocation',
+    )
+    user_model = get_user_model()
+    current_actor = _get_authorized_actor(
+        actor,
+        user_model,
+        error_class=PermissionDeniedForWorkAccessRevocation,
+        error_message='The actor cannot revoke personnel work access.',
+    )
+    personal_snapshot = _get_personal_snapshot(personal)
+
+    if personal_snapshot.usuario_id is None:
+        locked_personal = _get_locked_personal(personal_snapshot)
+        if locked_personal.usuario_id is None:
+            raise PersonalHasNoUser(
+                'The personnel record has no linked user.'
+            )
+        raise WorkAccessRevocationConflict(
+            'The personnel link changed during the operation.'
+        )
+
+    try:
+        locked_user = user_model.objects.select_for_update().get(
+            pk=personal_snapshot.usuario_id
+        )
+    except user_model.DoesNotExist as exc:
+        raise WorkAccessRevocationConflict(
+            'The linked user no longer exists.'
+        ) from exc
+
+    locked_personal = _get_locked_personal(personal_snapshot)
+    if locked_personal.usuario_id is None:
+        raise PersonalHasNoUser(
+            'The personnel record has no linked user.'
+        )
+    if locked_personal.usuario_id != locked_user.pk:
+        raise WorkAccessRevocationConflict(
+            'The personnel link changed during the operation.'
+        )
+    if locked_user.is_superuser:
+        raise ProtectedSuperuser(
+            'Superusers cannot be managed through work-access revocation.'
+        )
+    if not locked_user.is_active:
+        raise InactiveUserForWorkAccessRevocation(
+            'An inactive user cannot retain client access.'
+        )
+    if has_inconsistent_business_roles(locked_user):
+        raise InconsistentBusinessRoleState(
+            'The target user has multiple business roles.'
+        )
+
+    from usuarios.models import Cliente
+
+    client = (
+        Cliente.objects.select_for_update()
+        .filter(usuario=locked_user)
+        .first()
+    )
+    if client is None:
+        raise ClientProfileRequired(
+            'A client profile is required to retain client access.'
+        )
+
+    previous_role = get_business_role(locked_user)
+    previous_personal_active = locked_personal.activo
+    personal_needs_change = previous_personal_active
+    role_needs_change = previous_role != BusinessRole.CLIENTE
+
+    if not personal_needs_change and not role_needs_change:
+        return WorkAccessRevocationResult(
+            changed=False,
+            personal_id=locked_personal.pk,
+            user_id=locked_user.pk,
+            previous_role=previous_role,
+            current_role=BusinessRole.CLIENTE,
+            previous_personal_active=previous_personal_active,
+            current_personal_active=False,
+            user_active=locked_user.is_active,
+            client_id=client.pk,
+            audit_id=None,
+            status_audit_id=None,
+            role_audit_id=None,
+            warnings=(),
+        )
+
+    status_result = None
+    if personal_needs_change:
+        try:
+            status_result = deactivate_personal(
+                actor=current_actor,
+                personal=locked_personal,
+                reason=normalized_reason,
+            )
+        except PermissionDeniedForPersonalStatusChange as exc:
+            raise PermissionDeniedForWorkAccessRevocation(
+                'The actor cannot revoke personnel work access.'
+            ) from exc
+        except (InvalidPersonalStatusReason, InvalidPersonalLinkTarget) as exc:
+            raise WorkAccessRevocationConflict(
+                'The personnel status could not be changed.'
+            ) from exc
+
+    role_result = None
+    if role_needs_change:
+        try:
+            role_result = assign_validated_business_role(
+                actor=current_actor,
+                target_user=locked_user,
+                target_role=BusinessRole.CLIENTE,
+                reason=normalized_reason,
+            )
+        except PermissionDeniedForRoleAssignment as exc:
+            raise PermissionDeniedForWorkAccessRevocation(
+                'The actor cannot revoke personnel work access.'
+            ) from exc
+        except MissingClientProfile as exc:
+            raise ClientProfileRequired(
+                'A client profile is required to retain client access.'
+            ) from exc
+        except (
+            InvalidRoleAssignmentTarget,
+            InvalidRoleChangeReason,
+            SelfRoleAssignmentNotAllowed,
+        ) as exc:
+            raise WorkAccessRevocationConflict(
+                'The business role could not be changed.'
+            ) from exc
+
+    audit = Auditoria.objects.create(
+        tabla=WORK_ACCESS_REVOCATION_AUDIT_TABLE,
+        registro_id=locked_personal.pk,
+        usuario=current_actor,
+        accion='MODIFICACION',
+        valor_anterior={
+            'event': WORK_ACCESS_REVOKED_KEEP_CLIENT_EVENT,
+            'personal_id': locked_personal.pk,
+            'user_id': locked_user.pk,
+            'business_role': previous_role,
+            'personal_active': previous_personal_active,
+            'user_active': locked_user.is_active,
+        },
+        valor_nuevo={
+            'event': WORK_ACCESS_REVOKED_KEEP_CLIENT_EVENT,
+            'source': WORK_ACCESS_REVOCATION_SOURCE,
+            'actor_id': current_actor.pk,
+            'personal_id': locked_personal.pk,
+            'user_id': locked_user.pk,
+            'client_id': client.pk,
+            'previous_role': previous_role,
+            'current_role': BusinessRole.CLIENTE,
+            'previous_personal_active': previous_personal_active,
+            'current_personal_active': False,
+            'user_active': locked_user.is_active,
+            'reason': normalized_reason,
+            'status_audit_id': (
+                status_result.audit_id if status_result is not None else None
+            ),
+            'role_audit_id': (
+                role_result.audit_id if role_result is not None else None
+            ),
+        },
+    )
+
+    return WorkAccessRevocationResult(
+        changed=True,
+        personal_id=locked_personal.pk,
+        user_id=locked_user.pk,
+        previous_role=previous_role,
+        current_role=BusinessRole.CLIENTE,
+        previous_personal_active=previous_personal_active,
+        current_personal_active=False,
+        user_active=locked_user.is_active,
+        client_id=client.pk,
+        audit_id=audit.pk,
+        status_audit_id=(
+            status_result.audit_id if status_result is not None else None
+        ),
+        role_audit_id=(
+            role_result.audit_id if role_result is not None else None
+        ),
+        warnings=(),
+    )
 
 
 def deactivate_personal(actor, personal, reason):
@@ -504,20 +751,26 @@ def _validate_temporary_password(raw_password, candidate_user):
         ) from exc
 
 
-def _get_authorized_actor(actor, user_model):
+def _get_authorized_actor(
+    actor,
+    user_model,
+    *,
+    error_class=PermissionDeniedForPersonalLink,
+    error_message='The actor cannot link users to personnel records.',
+):
     if (
         not isinstance(actor, user_model)
         or actor.pk is None
         or not actor.is_authenticated
     ):
-        raise PermissionDeniedForPersonalLink(
+        raise error_class(
             'A valid authenticated actor is required.'
         )
 
     try:
         current_actor = user_model.objects.get(pk=actor.pk)
     except user_model.DoesNotExist as exc:
-        raise PermissionDeniedForPersonalLink(
+        raise error_class(
             'A valid authenticated actor is required.'
         ) from exc
 
@@ -529,9 +782,7 @@ def _get_authorized_actor(actor, user_model):
         current_actor.has_perm(permission)
         for permission in required_permissions
     ):
-        raise PermissionDeniedForPersonalLink(
-            'The actor cannot link users to personnel records.'
-        )
+        raise error_class(error_message)
     return current_actor
 
 
@@ -582,6 +833,20 @@ def _get_locked_personal(personal):
 
     try:
         return Personal.objects.select_for_update().get(pk=personal.pk)
+    except Personal.DoesNotExist as exc:
+        raise InvalidPersonalLinkTarget(
+            'A valid existing personnel record is required.'
+        ) from exc
+
+
+def _get_personal_snapshot(personal):
+    if not isinstance(personal, Personal) or personal.pk is None:
+        raise InvalidPersonalLinkTarget(
+            'A valid existing personnel record is required.'
+        )
+
+    try:
+        return Personal.objects.only('pk', 'usuario_id').get(pk=personal.pk)
     except Personal.DoesNotExist as exc:
         raise InvalidPersonalLinkTarget(
             'A valid existing personnel record is required.'
