@@ -594,6 +594,26 @@ class PersonalSerializer(serializers.ModelSerializer):
             }
             for h in horarios
         ]
+
+
+class PersonalUserLinkCommandSerializer(serializers.Serializer):
+    usuario_id = serializers.IntegerField(min_value=1)
+    motivo = serializers.CharField(
+        min_length=3,
+        max_length=500,
+        allow_blank=False,
+        trim_whitespace=True,
+    )
+
+    def to_internal_value(self, data):
+        if hasattr(data, 'keys'):
+            unexpected_fields = set(data.keys()) - set(self.fields)
+            if unexpected_fields:
+                raise serializers.ValidationError({
+                    field: ['Este campo no está permitido.']
+                    for field in sorted(unexpected_fields)
+                })
+        return super().to_internal_value(data)
     
 class AgendaCuidadosSerializer(serializers.ModelSerializer):
     class Meta:

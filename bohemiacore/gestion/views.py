@@ -22,6 +22,7 @@ from uuid import uuid4
 import mercadopago
 
 from django.conf import settings
+from django.http import Http404
 
 # Configurar logger global
 logger = logging.getLogger(__name__)
@@ -41,12 +42,27 @@ from .serializers import (
     CategoriaServicioSerializer, ServicioSerializer, TurnoSerializer, RutinaSerializer, RutinaClienteSerializer,
     RutinaClienteCreateSerializer, ReglaDiagnosticoSerializer, NotificacionSerializer, ProductoSerializer, ImagenProductoSerializer, EquipamientoSerializer,
     UsuarioAdminSerializer, AgendaCuidadosSerializer, HorarioLaboralSerializer, BloqueoAgendaSerializer, PersonalSerializer,
+    PersonalUserLinkCommandSerializer,
     PagoSerializer,
     TipoEquipamientoSerializer, FichaTecnicaSerializer, RequisitoServicioSerializer, DiagnosticoCapilarSerializer,
     CategoriaProductoSerializer, PromocionSerializer, ConfiguracionSerializer, ConfiguracionRetoqueSummarySerializer,
     CarritoSerializer, CarritoItemSerializer, ContenidoEducativoSerializer, MeGustaSerializer, ContenidoGuardadoSerializer,
     OrdenPendienteSerializer, OrdenCompraSerializer, OrdenItemSerializer, ConfiguracionDiagnosticoSerializer,
     #PasoRutinaSerializer,
+)
+from .personal_access_services import (
+    InvalidPersonalLinkReason,
+    InvalidPersonalLinkTarget,
+    InvalidPersonalLinkUser,
+    PermissionDeniedForPersonalLink,
+    PersonalAlreadyLinked,
+    PersonalLinkConflict,
+    UserAlreadyLinkedToPersonal,
+    link_user_to_personal,
+)
+from usuarios.access_services import (
+    InconsistentBusinessRoleState,
+    ProtectedSuperuser,
 )
 
 from .services import DisponibilidadService 
@@ -428,11 +444,133 @@ class PersonalViewSet(viewsets.ModelViewSet):
     ordering_fields = ['nombre']
 
     def get_permissions(self):
-        if self.action in ['list', 'retrieve']:
+        if self.action == 'vincular_usuario':
+            permission_classes = [IsAuthenticated]
+        elif self.action in ['list', 'retrieve']:
             permission_classes = [IsAuthenticated]
         else:
             permission_classes = [IsAdminUser]
         return [permission() for permission in permission_classes]
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='vincular-usuario',
+        permission_classes=[IsAuthenticated],
+    )
+    def vincular_usuario(self, request, pk=None):
+        try:
+            personal = self.get_object()
+        except Http404:
+            return self._link_error(
+                'PERSONAL_NOT_FOUND',
+                'El Personal solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        command = PersonalUserLinkCommandSerializer(data=request.data)
+        if not command.is_valid():
+            error_code = (
+                'INVALID_REASON'
+                if set(command.errors) == {'motivo'}
+                else 'INVALID_PAYLOAD'
+            )
+            return self._link_error(
+                error_code,
+                'El payload de vinculación es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+                fields=command.errors,
+            )
+
+        try:
+            user = Usuario.objects.get(
+                pk=command.validated_data['usuario_id']
+            )
+        except Usuario.DoesNotExist:
+            return self._link_error(
+                'USER_NOT_FOUND',
+                'El Usuario solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            result = link_user_to_personal(
+                actor=request.user,
+                personal=personal,
+                user=user,
+                reason=command.validated_data['motivo'],
+            )
+        except PermissionDeniedForPersonalLink:
+            return self._link_error(
+                'PERMISSION_DENIED',
+                'No tiene permisos para vincular usuarios a Personal.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except ProtectedSuperuser:
+            return self._link_error(
+                'PROTECTED_SUPERUSER',
+                'El Usuario protegido no puede vincularse mediante esta acción.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except PersonalAlreadyLinked:
+            return self._link_error(
+                'PERSONAL_ALREADY_LINKED',
+                'El Personal ya está vinculado a otro Usuario.',
+                status.HTTP_409_CONFLICT,
+            )
+        except UserAlreadyLinkedToPersonal:
+            return self._link_error(
+                'USER_ALREADY_LINKED_TO_PERSONAL',
+                'El Usuario ya está vinculado a otro Personal.',
+                status.HTTP_409_CONFLICT,
+            )
+        except InconsistentBusinessRoleState:
+            return self._link_error(
+                'INCONSISTENT_BUSINESS_ROLES',
+                'El Usuario tiene múltiples roles de negocio.',
+                status.HTTP_409_CONFLICT,
+            )
+        except PersonalLinkConflict:
+            return self._link_error(
+                'PERSONAL_LINK_CONFLICT',
+                'El vínculo entra en conflicto con otra operación.',
+                status.HTTP_409_CONFLICT,
+            )
+        except InvalidPersonalLinkTarget:
+            return self._link_error(
+                'PERSONAL_NOT_FOUND',
+                'El Personal solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+        except InvalidPersonalLinkUser:
+            return self._link_error(
+                'USER_NOT_FOUND',
+                'El Usuario solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+        except InvalidPersonalLinkReason:
+            return self._link_error(
+                'INVALID_REASON',
+                'El motivo de vinculación es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response({
+            'changed': result.changed,
+            'personal_id': result.personal_id,
+            'usuario_id': result.user_id,
+            'personal_activo': result.personal_is_active,
+            'usuario_activo': result.user_is_active,
+            'rol': result.business_role,
+            'warnings': list(result.warnings),
+        }, status=status.HTTP_200_OK)
+
+    @staticmethod
+    def _link_error(code, detail, status_code, fields=None):
+        error = {'code': code, 'detail': detail}
+        if fields is not None:
+            error['fields'] = fields
+        return Response({'error': error}, status=status_code)
     
     def perform_destroy(self, instance):
         """
