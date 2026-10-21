@@ -2,13 +2,20 @@ import axios from 'axios';
 
 // Configurar la URL base de axios
 axios.defaults.baseURL = 'http://127.0.0.1:8000';
+axios.defaults.withCredentials = false;
+
+const getStoredToken = () => localStorage.getItem('access_token');
 
 // Interceptor de Request - Agregar token a cada petición
 axios.interceptors.request.use(
     (config) => {
-        const token = localStorage.getItem('access_token');
+        config.headers = config.headers || {};
+
+        const token = getStoredToken();
         if (token) {
             config.headers['Authorization'] = `Bearer ${token}`;
+        } else {
+            delete config.headers['Authorization'];
         }
         return config;
     },
@@ -26,6 +33,7 @@ axios.interceptors.response.use(
             console.error('Token no válido, redirigiendo al login...');
             localStorage.removeItem('access_token');
             localStorage.removeItem('refresh_token');
+            localStorage.removeItem('user_info');
             delete axios.defaults.headers.common['Authorization'];
             window.location.href = '/login';
         }

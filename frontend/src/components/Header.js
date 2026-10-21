@@ -50,7 +50,8 @@ const Header = () => {
     const handleLogout = () => {
         localStorage.removeItem('access_token');
         localStorage.removeItem('refresh_token');
-        axios.defaults.headers.common['Authorization'] = null;
+        localStorage.removeItem('user_info');
+        delete axios.defaults.headers.common['Authorization'];
         setUser(null);
         navigate(AUTH_ROUTES.LOGIN);
     };
@@ -58,7 +59,8 @@ const Header = () => {
     const handleChangeUser = () => {
         localStorage.removeItem('access_token');
         localStorage.removeItem('refresh_token');
-        axios.defaults.headers.common['Authorization'] = null;
+        localStorage.removeItem('user_info');
+        delete axios.defaults.headers.common['Authorization'];
         setUser(null);
         navigate(AUTH_ROUTES.LOGIN);
     };

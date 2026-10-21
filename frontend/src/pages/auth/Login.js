@@ -73,7 +73,6 @@ const Login = () => {
             // 2. GUARDADO: Persistimos sesión
             localStorage.setItem('access_token', access);
             localStorage.setItem('refresh_token', refresh);
-            axios.defaults.headers.common['Authorization'] = `Bearer ${access}`;
 
             console.log('Tokens saved to localStorage');
 

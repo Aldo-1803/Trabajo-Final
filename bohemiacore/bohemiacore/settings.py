@@ -158,8 +158,8 @@ CORS_ALLOWED_ORIGINS = [
     'http://127.0.0.1:5173',
 ]
 
-# Permitir que el navegador incluya credenciales (cookies/Authorization) en peticiones CORS
-CORS_ALLOW_CREDENTIALS = True
+# JWT via Authorization header only; no cookies/session credentials in CORS requests.
+CORS_ALLOW_CREDENTIALS = False
 
 CSRF_TRUSTED_ORIGINS = [
     'http://localhost:3000',
@@ -176,3 +176,33 @@ EMAIL_USE_TLS = True
 EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
 DEFAULT_FROM_EMAIL = f'Bohemia Hair <{os.getenv("EMAIL_HOST_USER", "")}>'
+
+# Mercado Pago
+MERCADO_PAGO_ACCESS_TOKEN = config(
+    'MERCADO_PAGO_ACCESS_TOKEN',
+    default=config('MERCADOPAGO_ACCESS_TOKEN', default='')
+)
+MERCADO_PAGO_PUBLIC_KEY = config(
+    'MERCADO_PAGO_PUBLIC_KEY',
+    default=config('MERCADOPAGO_PUBLIC_KEY', default='')
+)
+MERCADO_PAGO_PUBLIC_BASE_URL = config(
+    'MERCADO_PAGO_PUBLIC_BASE_URL',
+    default='https://garland-bucked-mauve.ngrok-free.dev'
+)
+MERCADO_PAGO_WEBHOOK_URL = config(
+    'MERCADO_PAGO_WEBHOOK_URL',
+    default=f'{MERCADO_PAGO_PUBLIC_BASE_URL}/api/gestion/checkout/webhook/'
+)
+MERCADO_PAGO_BACK_SUCCESS_URL = config(
+    'MERCADO_PAGO_BACK_SUCCESS_URL',
+    default=f'{MERCADO_PAGO_PUBLIC_BASE_URL}/api/gestion/compra-exitosa/'
+)
+MERCADO_PAGO_BACK_FAILURE_URL = config(
+    'MERCADO_PAGO_BACK_FAILURE_URL',
+    default=f'{MERCADO_PAGO_PUBLIC_BASE_URL}/api/gestion/compra-fallida/'
+)
+MERCADO_PAGO_BACK_PENDING_URL = config(
+    'MERCADO_PAGO_BACK_PENDING_URL',
+    default=f'{MERCADO_PAGO_PUBLIC_BASE_URL}/api/gestion/compra-pendiente/'
+)

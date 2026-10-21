@@ -165,6 +165,19 @@ class Servicio(models.Model):
         help_text="Estado general en el que quedará el cabello (ej: Seco, Dañado)."
     )
 
+    es_quimico_agresivo = models.BooleanField(
+        default=False,
+        help_text="Marca si el servicio produce un impacto químico agresivo sobre el cabello."
+    )
+    dias_espera_bloqueo = models.PositiveIntegerField(
+        default=0,
+        help_text="Cantidad mínima de días de espera antes de repetir otro servicio químico agresivo."
+    )
+    dias_espera_minima = models.IntegerField(
+        default=0,
+        help_text="Cantidad mínima de días recomendada antes de repetir un servicio de la misma categoría."
+    )
+
     activo = models.BooleanField(default=True)
     puntaje_base = models.IntegerField(default=0)
     fecha_creacion = models.DateTimeField(auto_now_add=True)
@@ -1300,6 +1313,16 @@ class Turno(models.Model):
         PENDIENTE = 'pendiente', 'Pendiente'
         EN_PROCESO = 'en_proceso', 'En Proceso'
 
+    class CanalOrigen(models.TextChoices):
+        WEB = 'web', 'Web (Cliente)'
+        PRESENCIAL = 'presencial', 'Presencial (Profesional)'
+
+    class TipoPagoRegistro(models.TextChoices):
+        SENA = 'sena', 'Seña Parcial'
+        TOTAL = 'total', 'Pago Total Anticipado'
+        EFECTIVO = 'efectivo', 'Efectivo en Salón'
+        TRANSFERENCIA = 'transferencia', 'Transferencia Directa'
+
     # Relaciones
     cliente = models.ForeignKey(
         'usuarios.Cliente', 
@@ -1331,12 +1354,41 @@ class Turno(models.Model):
         choices=Estado.choices, 
         default=Estado.SOLICITADO
     )
+    alerta_daño_capilar = models.BooleanField(
+        default=False,
+        help_text="Indica si el turno requiere revisión profesional por posible riesgo capilar."
+    )
+    canal_origen = models.CharField(
+        max_length=20,
+        choices=CanalOrigen.choices,
+        default=CanalOrigen.WEB,
+        help_text="Indica si el turno fue solicitado por la web o cargado presencialmente."
+    )
 
     # Seña y pago
     fecha_limite_pago = models.DateTimeField(
         null=True, 
         blank=True, 
         help_text="Fecha y hora máxima para recibir el comprobante"
+    )
+    tipo_pago_registro = models.CharField(
+        max_length=20,
+        choices=TipoPagoRegistro.choices,
+        null=True,
+        blank=True,
+        help_text="Tipo de pago registrado para auditoría contable."
+    )
+    monto_abonado = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0.00,
+        help_text="Monto abonado por el cliente para auditoría contable."
+    )
+    saldo_pendiente = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0.00,
+        help_text="Saldo pendiente de pago asociado al turno."
     )
     
     # Auditoría
@@ -2069,7 +2121,9 @@ class Auditoria(models.Model):
 class OrdenCompra(models.Model):
     ESTADOS = (
         ('PENDIENTE', 'Pendiente'),
+        ('ESPERANDO_PAGO', 'Esperando Pago'),
         ('COMPLETADO', 'Completado'),
+        ('RECHAZADO', 'Rechazado'),
         ('CANCELADO', 'Cancelado'),
     )
     
@@ -2080,6 +2134,7 @@ class OrdenCompra(models.Model):
         related_name='ordenes_compra'
     )
     estado = models.CharField(max_length=20, choices=ESTADOS, default='PENDIENTE')
+    preference_id = models.CharField(max_length=255, null=True, blank=True)
     total = models.DecimalField(max_digits=10, decimal_places=2)
     notas = models.TextField(blank=True, null=True)
     creado_at = models.DateTimeField(auto_now_add=True)
@@ -2100,6 +2155,7 @@ class Pago(models.Model):
     METODO_PAGO_CHOICES = (
         ('EFECTIVO', 'Efectivo'),
         ('TRANSFERENCIA', 'Transferencia'),
+        ('MERCADO_PAGO', 'Mercado Pago'),
     )
 
     orden = models.ForeignKey(
@@ -2118,6 +2174,7 @@ class Pago(models.Model):
     )
     monto = models.DecimalField(max_digits=10, decimal_places=2)
     metodo_pago = models.CharField(max_length=20, choices=METODO_PAGO_CHOICES)
+    transaccion_id = models.CharField(max_length=255, null=True, blank=True, unique=True)
     fecha_pago = models.DateTimeField(default=timezone.now)
     comprobante_foto = models.ImageField(
         upload_to='pagos/comprobantes/',
@@ -2220,5 +2277,3 @@ class OrdenPendiente(models.Model):
     def __str__(self):
         cliente_nombre = self.cliente.usuario.get_full_name() if self.cliente else "Anónimo"
         return f"Orden {self.id} - {cliente_nombre} - ${self.monto_total}"
-
-

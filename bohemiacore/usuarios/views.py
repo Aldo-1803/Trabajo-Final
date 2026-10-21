@@ -6,6 +6,7 @@ from rest_framework import permissions
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework import viewsets
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
@@ -111,6 +112,7 @@ class PerfilView(APIView):
     Endpoint para LEER (GET) y ACTUALIZAR (PUT) el perfil del usuario.
     Responde a /api/usuarios/perfil/
     """
+    authentication_classes = [JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -329,4 +331,3 @@ class ClienteViewSet(viewsets.ReadOnlyModelViewSet):
         Esto previene desincronización cuando se "desactivan" usuarios.
         """
         return Cliente.objects.filter(usuario__is_active=True).select_related('usuario')
-

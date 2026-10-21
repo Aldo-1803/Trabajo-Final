@@ -2,6 +2,7 @@ from rest_framework import serializers
 from django.db import transaction
 from .models import Usuario, Cliente
 from django.contrib.auth.password_validation import validate_password
+import re
 from gestion.models import (
     TipoCabello,
     GrosorCabello,
@@ -253,6 +254,19 @@ class RegistroSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         if attrs['password'] != attrs['password2']:
             raise serializers.ValidationError({"password": "Las contraseñas no coinciden."})
+
+        numero = attrs.get('numero', '')
+        if numero and not numero.isdigit():
+            raise serializers.ValidationError({"numero": "El teléfono solo debe contener números."})
+
+        password = attrs['password']
+        if not re.search(r'[A-Za-z]', password):
+            raise serializers.ValidationError({"password": "La contraseña debe incluir al menos una letra."})
+        if not re.search(r'\d', password):
+            raise serializers.ValidationError({"password": "La contraseña debe incluir al menos un número."})
+        if not re.search(r'[^A-Za-z0-9]', password):
+            raise serializers.ValidationError({"password": "La contraseña debe incluir al menos un signo especial."})
+
         validate_password(attrs['password'])
         return attrs
 

@@ -11,11 +11,12 @@ from .models import (
     #PasoRutina, #PasoRutinaCliente,
 )
 
-from .services import DisponibilidadService
+from .services import DisponibilidadService, SaludCapilarService
 from usuarios.models import Usuario, Cliente
 import os
 from django.core.exceptions import ValidationError 
 from datetime import datetime
+from decimal import Decimal
 from django.db import transaction
 
 # 1. EL SERIALIZER BASE (El "Molde")
@@ -66,6 +67,7 @@ class ServicioSerializer(serializers.ModelSerializer):
             'duracion_estimada', 'precio_base',
             'rutina_recomendada', 'rutina_nombre',
             'impacto_porosidad', 'impacto_estado',
+            'es_quimico_agresivo', 'dias_espera_bloqueo', 'dias_espera_minima',
             'plantilla_formula',
             'requisitos_equipamiento',
             'activo'
@@ -100,6 +102,10 @@ class DetalleTurnoSerializer(serializers.ModelSerializer):
 
 
 class TurnoSerializer(serializers.ModelSerializer):
+    cliente = serializers.PrimaryKeyRelatedField(
+        queryset=Cliente.objects.all(),
+        required=False
+    )
     # Nested serializer para los detalles/servicios del turno
     detalles = DetalleTurnoSerializer(many=True, required=False, allow_null=True)
     # Campo para servicio simple (cuando el frontend envía servicio_id)
@@ -118,11 +124,13 @@ class TurnoSerializer(serializers.ModelSerializer):
         model = Turno
         fields = [
             'id', 'cliente', 'cliente_nombre', 'profesional', 'profesional_nombre', 
-            'equipamiento', 'fecha', 'hora_inicio', 'estado', 'detalles', 'servicio', 
+            'equipamiento', 'fecha', 'hora_inicio', 'estado', 'alerta_daño_capilar', 'canal_origen',
+            'tipo_pago_registro', 'monto_abonado', 'saldo_pendiente', 'detalles', 'servicio', 
             'servicio_nombre', 'comprobante_pago', 'expired', 'horas_transcurridas', 'puede_modificar',
             'cancelado_por', 'cancelado_por_nombre', 'motivo_cancelacion'
         ]
-        read_only_fields = ['cliente', 'expired', 'horas_transcurridas', 'puede_modificar', 'cancelado_por', 'cancelado_por_nombre']
+        read_only_fields = ['alerta_daño_capilar', 'canal_origen', 'saldo_pendiente', 'expired', 'horas_transcurridas', 'puede_modificar', 'cancelado_por', 'cancelado_por_nombre']
+        validators = []
     
     def get_cliente_nombre(self, obj):
         """Retorna el nombre completo del cliente"""
@@ -172,79 +180,203 @@ class TurnoSerializer(serializers.ModelSerializer):
         expired = self.get_expired(obj)
         return not expired and obj.estado in ['solicitado', 'esperando_sena']
 
+    def _obtener_servicios_nuevos_ids(self, data):
+        """
+        Extrae los IDs de servicios solicitados desde el campo simple 'servicio'
+        o desde el listado anidado 'detalles'.
+        """
+        servicios_ids = []
+
+        servicio_id = data.get('servicio')
+        if servicio_id:
+            servicios_ids.append(servicio_id)
+
+        detalles = data.get('detalles') or []
+        for detalle in detalles:
+            servicio = detalle.get('servicio')
+            if hasattr(servicio, 'id'):
+                servicios_ids.append(servicio.id)
+            elif isinstance(servicio, dict):
+                servicio_detalle_id = servicio.get('id')
+                if servicio_detalle_id:
+                    servicios_ids.append(servicio_detalle_id)
+            elif servicio:
+                servicios_ids.append(servicio)
+
+        return list(dict.fromkeys(servicios_ids))
+
+    def _requiere_alerta_dano_capilar(self, cliente, servicios_solicitados):
+        """
+        Soft block UC-19: si el último turno realizado de la misma categoría
+        está dentro de la espera mínima del servicio solicitado, marca alerta.
+        """
+        from django.utils import timezone
+
+        for servicio in servicios_solicitados:
+            if not servicio or not servicio.categoria_id or servicio.dias_espera_minima <= 0:
+                continue
+
+            ultimo_turno = (
+                Turno.objects
+                .filter(
+                    cliente=cliente,
+                    estado=Turno.Estado.REALIZADO,
+                    detalles__servicio__categoria_id=servicio.categoria_id,
+                )
+                .order_by('-fecha', '-hora_inicio')
+                .first()
+            )
+
+            if not ultimo_turno:
+                continue
+
+            ultimo_turno_dt = datetime.combine(ultimo_turno.fecha, ultimo_turno.hora_inicio)
+            if timezone.is_naive(ultimo_turno_dt):
+                ultimo_turno_dt = timezone.make_aware(
+                    ultimo_turno_dt,
+                    timezone.get_current_timezone()
+                )
+
+            dias_transcurridos = (timezone.now() - ultimo_turno_dt).days
+            if dias_transcurridos < servicio.dias_espera_minima:
+                return True
+
+        return False
+
     def validate(self, data):
         """Validar según el tipo de operación"""
         request = self.context.get('request')
         
         # En POST (crear nuevo turno), validar no duplicado
         if request and request.method == 'POST' and request.user:
-            try:
-                cliente = request.user.cliente
-                # Verificar si ya existe un turno con la misma fecha, hora y cliente
-                existe = Turno.objects.filter(
-                    cliente=cliente,
-                    fecha=data.get('fecha'),
-                    hora_inicio=data.get('hora_inicio')
-                ).exists()
-                
-                if existe:
+            user = request.user
+            es_staff = user.is_staff
+
+            if es_staff:
+                cliente = data.get('cliente')
+                if not cliente:
                     raise serializers.ValidationError(
+                        {"cliente": "Debe seleccionar un cliente para registrar un turno presencial."}
+                    )
+
+                monto_abonado = data.get('monto_abonado') or Decimal('0.00')
+                if monto_abonado < 0:
+                    raise serializers.ValidationError(
+                        {"monto_abonado": "El monto abonado no puede ser negativo."}
+                    )
+            else:
+                try:
+                    cliente = user.cliente
+                except Cliente.DoesNotExist:
+                    raise serializers.ValidationError(
+                        {"cliente": "El usuario no tiene perfil de cliente."}
+                    )
+
+            existe = Turno.objects.filter(
+                cliente=cliente,
+                fecha=data.get('fecha'),
+                hora_inicio=data.get('hora_inicio')
+            ).exists()
+
+            if existe:
+                raise serializers.ValidationError({
+                    "non_field_errors": [
                         "Ya tienes un turno solicitado para esa fecha y hora. "
                         "Por favor, elige otro horario."
-                    )
-            except Exception as e:
-                if "Ya tienes un turno" in str(e):
-                    raise
-                pass
-        
+                    ]
+                })
+
         return data
 
     def create(self, validated_data):
-        from .models import Servicio, DetalleTurno
-        from django.contrib.auth.models import User
-        
-        # Obtener el cliente del usuario autenticado
         request = self.context.get('request')
-        if request and request.user:
-            try:
-                cliente = request.user.cliente
-                validated_data['cliente'] = cliente
-            except:
-                raise serializers.ValidationError("El usuario no tiene perfil de cliente.")
-        else:
+        if not request or not request.user:
             raise serializers.ValidationError("Usuario no autenticado.")
-        
-        # Sacar servicio_id si vino (compatibilidad con frontend simple)
-        servicio_id = validated_data.pop('servicio', None)
-        
-        # Sacar detalles si vinieron
-        detalles_data = validated_data.pop('detalles', [])
-        
-        # Si no hay detalles pero sí hay servicio_id, crear detalle automáticamente
-        if not detalles_data and servicio_id:
-            try:
-                servicio = Servicio.objects.get(id=servicio_id)
-                detalles_data = [{
-                    'servicio': servicio,
-                    'precio_historico': servicio.precio_base or 0,
-                    'duracion_minutos': servicio.duracion_estimada or 60
-                }]
-            except Servicio.DoesNotExist:
-                raise serializers.ValidationError(f"Servicio {servicio_id} no existe.")
-        
-        # Crear el Turno principal
-        turno = Turno.objects.create(**validated_data)
-        
-        # Crear cada detalle en la tabla intermedia
-        for detalle_data in detalles_data:
-            if isinstance(detalle_data.get('servicio'), dict):
-                # Si viene serializado, extraer el ID
-                servicio_id = detalle_data['servicio'].get('id')
-                detalle_data['servicio'] = Servicio.objects.get(id=servicio_id)
-            
-            DetalleTurno.objects.create(turno=turno, **detalle_data)
-        
-        return turno
+
+        with transaction.atomic():
+            user = request.user
+            es_staff = user.is_staff
+
+            if es_staff:
+                cliente_payload = validated_data.pop('cliente', None)
+                if not cliente_payload:
+                    raise serializers.ValidationError(
+                        "Debe seleccionar un cliente para registrar un turno presencial."
+                    )
+                cliente = Cliente.objects.select_for_update().get(pk=cliente_payload.pk)
+            else:
+                validated_data.pop('cliente', None)
+                try:
+                    cliente = Cliente.objects.select_for_update().get(
+                        pk=user.cliente.pk
+                    )
+                except Cliente.DoesNotExist:
+                    raise serializers.ValidationError(
+                        "El usuario no tiene perfil de cliente."
+                    )
+
+            validated_data['cliente'] = cliente
+
+            servicio_id = validated_data.pop('servicio', None)
+            detalles_data = validated_data.pop('detalles', [])
+            servicios_solicitados = []
+
+            if not detalles_data and servicio_id:
+                try:
+                    servicio = Servicio.objects.get(id=servicio_id)
+                    servicios_solicitados.append(servicio)
+                    detalles_data = [{
+                        'servicio': servicio,
+                        'precio_historico': servicio.precio_base or 0,
+                        'duracion_minutos': servicio.duracion_estimada or 60
+                    }]
+                except Servicio.DoesNotExist:
+                    raise serializers.ValidationError(
+                        f"Servicio {servicio_id} no existe."
+                    )
+
+            for detalle_data in detalles_data:
+                servicio = detalle_data.get('servicio')
+                if isinstance(servicio, dict):
+                    servicio = Servicio.objects.get(id=servicio.get('id'))
+                    detalle_data['servicio'] = servicio
+                elif not hasattr(servicio, 'id') and servicio:
+                    servicio = Servicio.objects.get(id=servicio)
+                    detalle_data['servicio'] = servicio
+
+                if servicio:
+                    servicios_solicitados.append(servicio)
+
+            validated_data['alerta_daño_capilar'] = self._requiere_alerta_dano_capilar(
+                cliente,
+                servicios_solicitados
+            )
+
+            total_servicios = sum((servicio.precio_base or Decimal('0.00')) for servicio in servicios_solicitados)
+
+            if es_staff:
+                monto_abonado = validated_data.get('monto_abonado') or Decimal('0.00')
+                validated_data['canal_origen'] = Turno.CanalOrigen.PRESENCIAL
+                validated_data['monto_abonado'] = monto_abonado
+                validated_data['saldo_pendiente'] = max(Decimal('0.00'), total_servicios - monto_abonado)
+                validated_data['estado'] = (
+                    Turno.Estado.CONFIRMADO
+                    if validated_data['saldo_pendiente'] == Decimal('0.00')
+                    else Turno.Estado.ESPERANDO_SENA
+                )
+            else:
+                validated_data['canal_origen'] = Turno.CanalOrigen.WEB
+                validated_data['estado'] = Turno.Estado.SOLICITADO
+                validated_data['tipo_pago_registro'] = None
+                validated_data['monto_abonado'] = Decimal('0.00')
+                validated_data['saldo_pendiente'] = Decimal('0.00')
+
+            turno = Turno.objects.create(**validated_data)
+
+            for detalle_data in detalles_data:
+                DetalleTurno.objects.create(turno=turno, **detalle_data)
+
+            return turno
     
     def update(self, instance, validated_data):
         """Actualizar un turno existente"""

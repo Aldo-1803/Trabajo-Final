@@ -1,0 +1,77 @@
+@startuml
+title UC-40 Consultar Notificaciones (DSS)
+
+actor Cliente
+participant ":Sistema"
+
+'==================== PRECONDICIÓN ====================
+note over Cliente,":Sistema"
+Precondición: cliente ha iniciado sesión.
+Objetivo: consultar lista de notificaciones importantes del salón.
+IRQ: Notificaciones.
+end note
+
+'==================== SECUENCIA NORMAL =================
+Cliente -> ":Sistema": accederSeccionNotificaciones()  ' clic icono campana
+activate ":Sistema"
+":Sistema" -> ":Sistema": consultarNotificaciones(clienteId)
+
+alt cliente tiene notificaciones
+  ":Sistema" -> ":Sistema": ordenarPorFecha(notificaciones[])\naplicarEstados(leido, noLeido)
+  ":Sistema" --> Cliente: mostrarListaNotificaciones(notificaciones[])\nindicadores = "leído/no leído"
+  deactivate ":Sistema"
+
+else cliente NO tiene notificaciones
+  ":Sistema" --> Cliente: mostrarMensajeVacio()\nmensaje = "No hay notificaciones nuevas"
+  deactivate ":Sistema"
+end
+
+Cliente -> ":Sistema": seleccionarNotificacion(notificacionId)
+activate ":Sistema"
+":Sistema" -> ":Sistema": obtenerDetalleNotificacion(notificacionId)
+":Sistema" -> ":Sistema": marcarComoLeida(notificacionId)
+":Sistema" --> Cliente: mostrarDetalleNotificacion(contenido, tipo, fecha)
+deactivate ":Sistema"
+
+'==================== TIPOS DE NOTIFICACIONES ====================
+note right of ":Sistema"
+**Tipos de Notificaciones:**
+1. Recordatorio de turno
+2. Rutina actualizada
+3. Promoción / Oferta
+4. Seña vencida
+5. Turno cancelado
+6. Turno confirmado
+7. Nueva rutina disponible
+8. Contenido educativo nuevo
+end note
+
+'==================== POSTCONDICIÓN ====================
+note over Cliente,":Sistema"
+Postcondición (flujo exitoso):
+- Cliente ha consultado sus notificaciones pendientes.
+- Notificaciones seleccionadas marcadas como "leídas".
+end note
+
+'==================== RENDIMIENTO ======================
+note right of ":Sistema"
+Rendimiento (paso 3):
+Carga de lista de notificaciones <= 500 ms.
+end note
+
+'==================== COMENTARIOS ======================
+note over ":Sistema"
+Tecnología:
+- Tipología de notificaciones soportada en PostgreSQL.
+- Modelo Notificacion con campos:
+  * tipo (enum)
+  * usuario_id (FK)
+  * titulo, mensaje
+  * estado (pendiente, enviado, leído)
+  * fecha_envio
+  * canal (in-app, email, WhatsApp)
+- Ordenamiento DESC por fecha_envio.
+- Badge con contador de notificaciones no leídas en UI.
+- Posible paginación si hay muchas notificaciones.
+end note
+@enduml

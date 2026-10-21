@@ -72,7 +72,8 @@ const Registro = () => {
     }, []);
 
     const handleChange = (e) => {
-        const { name, value } = e.target;
+        const { name } = e.target;
+        const value = name === 'numero' ? e.target.value.replace(/\D/g, '') : e.target.value;
         setFormData(prevState => ({
             ...prevState,
             [name]: value,

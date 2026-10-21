@@ -19,6 +19,9 @@ import logging
 import datetime as dt
 import os
 from uuid import uuid4
+import mercadopago
+
+from django.conf import settings
 
 # Configurar logger global
 logger = logging.getLogger(__name__)
@@ -47,6 +50,7 @@ from .serializers import (
 )
 
 from .services import DisponibilidadService 
+from .services import MercadoPagoService
 from usuarios.models import Usuario, Cliente
 from usuarios.filters import UsuarioFilter
 from .filters import (
@@ -111,6 +115,157 @@ def upload_imagen(request):
             {'error': f'Error al guardar la imagen: {str(e)}'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+def _crear_checkout_mercadopago_para_usuario(user):
+    """
+    Crea la OrdenCompra en estado ESPERANDO_PAGO, genera la preferencia de Mercado Pago
+    y vacía el carrito. Se reutiliza desde la acción del carrito y desde la APIView.
+    """
+    cliente = Cliente.objects.get(usuario=user)
+    carrito = Carrito.objects.get_or_create(cliente=cliente)[0]
+
+    if not carrito.items.exists():
+        raise ValidationError('El carrito está vacío o no existe.')
+
+    items_carrito = list(carrito.items.select_related('producto'))
+
+    with transaction.atomic():
+        orden = OrdenCompra.objects.create(
+            codigo=f"ORD-{uuid4().hex[:8].upper()}",
+            cliente=cliente,
+            estado='ESPERANDO_PAGO',
+            total=carrito.total_carrito,
+        )
+
+        for item in items_carrito:
+            OrdenItem.objects.create(
+                orden=orden,
+                producto=item.producto,
+                cantidad=item.cantidad,
+                precio_historico=item.producto.precio,
+            )
+
+        url_pago = MercadoPagoService().crear_preferencia(orden)
+        carrito.items.all().delete()
+
+    return orden, url_pago, len(items_carrito)
+
+
+class GenerarPagoMercadoPagoView(APIView):
+    """
+    Endpoint para convertir el carrito actual en una OrdenCompra y generar
+    el link oficial de Mercado Pago.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            orden, url_pago, items_count = _crear_checkout_mercadopago_para_usuario(request.user)
+
+            logger.info(
+                f"Orden Mercado Pago generada para {request.user.email} | "
+                f"Orden: {orden.codigo} | Total: ${orden.total}"
+            )
+
+            return Response(
+                {
+                    'mensaje': 'Orden creada con éxito. Redirigiendo a Mercado Pago...',
+                    'init_point': url_pago,
+                    'orden_codigo': orden.codigo,
+                    'orden_id': orden.id,
+                    'preference_id': orden.preference_id,
+                    'total': float(orden.total),
+                    'items_count': items_count,
+                },
+                status=status.HTTP_200_OK
+            )
+
+        except Cliente.DoesNotExist:
+            return Response(
+                {'error': 'El usuario no tiene perfil de cliente.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except ValidationError as e:
+            mensaje = str(e.detail[0]) if hasattr(e, 'detail') and e.detail else str(e)
+            return Response({'error': mensaje}, status=status.HTTP_400_BAD_REQUEST)
+        except ValueError as e:
+            logger.error(f"Error al generar preferencia de Mercado Pago: {str(e)}")
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as e:
+            logger.error(f"Error generando pago Mercado Pago: {str(e)}", exc_info=True)
+            return Response(
+                {'error': 'Error al generar el pago de Mercado Pago'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class WebhookMercadoPagoView(APIView):
+    """
+    Endpoint que recibe las notificaciones de Mercado Pago (Server-to-Server).
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        payment_id = request.data.get('data', {}).get('id') or request.GET.get('data.id') or request.GET.get('id')
+        tipo_evento = request.data.get('type') or request.data.get('topic') or request.GET.get('topic')
+
+        if tipo_evento != 'payment' or not payment_id:
+            return Response({'status': 'recibido'}, status=status.HTTP_200_OK)
+
+        try:
+            sdk = mercadopago.SDK(settings.MERCADO_PAGO_ACCESS_TOKEN)
+            pago_info = sdk.payment().get(payment_id)
+            pago_oficial = pago_info.get('response', {})
+
+            estado_pago = pago_oficial.get('status')
+            orden_id = pago_oficial.get('external_reference')
+            monto_pagado = pago_oficial.get('transaction_amount')
+
+            if not orden_id:
+                logger.warning(f'Webhook MP sin external_reference. Payment ID: {payment_id}')
+                return Response({'status': 'recibido'}, status=status.HTTP_200_OK)
+
+            with transaction.atomic():
+                orden = OrdenCompra.objects.select_for_update().get(id=orden_id)
+
+                if estado_pago == 'approved':
+                    Pago.objects.get_or_create(
+                        transaccion_id=str(payment_id),
+                        defaults={
+                            'orden': orden,
+                            'metodo_pago': 'MERCADO_PAGO',
+                            'monto': monto_pagado,
+                        },
+                    )
+
+                    if orden.estado != 'COMPLETADO':
+                        for item in orden.items.select_related('producto'):
+                            producto = item.producto
+                            producto.stock_real = max(0, producto.stock_real - item.cantidad)
+                            producto.save(update_fields=['stock_real'])
+
+                        orden.estado = 'COMPLETADO'
+                        orden.save(update_fields=['estado', 'actualizado_at'])
+
+                elif estado_pago in ('rejected', 'cancelled'):
+                    orden.estado = 'RECHAZADO'
+                    orden.save(update_fields=['estado', 'actualizado_at'])
+
+                elif estado_pago in ('pending', 'in_process') and orden.estado == 'PENDIENTE':
+                    orden.estado = 'ESPERANDO_PAGO'
+                    orden.save(update_fields=['estado', 'actualizado_at'])
+
+            return Response({'status': 'recibido'}, status=status.HTTP_200_OK)
+
+        except OrdenCompra.DoesNotExist:
+            logger.warning(
+                f"Webhook MP: pago {payment_id} aprobado, pero la orden {orden_id} no existe."
+            )
+            return Response({'status': 'recibido'}, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Error en Webhook MP: {str(e)}", exc_info=True)
+            return Response(status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class ConfiguracionViewSet(viewsets.ModelViewSet):
@@ -462,13 +617,13 @@ class TurnoViewSet(viewsets.ModelViewSet):
                 logging.error(f"Error auto-cancelando turno {turno.id}: {str(e)}")
 
     def get_queryset(self):
-        # ✅ NUEVO: Auto-limpiar turnos expirados cada vez que se consulta
+        #NUEVO: Auto-limpiar turnos expirados cada vez que se consulta
         self._auto_cancel_expired_turnos()
         
         queryset = super().get_queryset()
         ahora = timezone.now()
 
-        # Si es el profesional/admin, ocultamos por defecto los pendientes que ya pasaron
+        #Si es el profesional/admin, ocultamos por defecto los pendientes que ya pasaron
         if self.request.user.is_staff:
             # Solo mostramos SOLICITADOS o ESPERANDO_SENA si son de HOY en adelante
             queryset = queryset.exclude(
@@ -482,15 +637,60 @@ class TurnoViewSet(viewsets.ModelViewSet):
             # Usuario sin cliente, no ve nada
             queryset = queryset.none()
              
-        # Filtro opcional por estado
+        #Filtro opcional por estado
         estado = self.request.query_params.get('estado')
         if estado:
             queryset = queryset.filter(estado=estado)
         
-        # ✅ Ordenar por fecha y hora
+        #Ordenar por fecha y hora
         queryset = queryset.order_by('-fecha', '-hora_inicio')
         
         return queryset
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+
+        turno = serializer.instance
+        headers = self.get_success_headers(serializer.data)
+        es_staff = request.user.is_staff
+
+        advertencia = None
+        if turno.alerta_daño_capilar:
+            advertencia = (
+                "Su turno requiere evaluación profesional por posible riesgo capilar."
+            )
+
+        if es_staff:
+            return Response(
+                {
+                    'mensaje': f'Turno presencial creado correctamente. Estado actual: {turno.estado}.',
+                    'turno': serializer.data,
+                    'canal_origen': turno.canal_origen,
+                    'estado': turno.estado,
+                    'alerta_daño_capilar': turno.alerta_daño_capilar,
+                    'advertencia': advertencia,
+                    'tipo_pago_registro': turno.tipo_pago_registro,
+                    'monto_abonado': float(turno.monto_abonado),
+                    'saldo_pendiente': float(turno.saldo_pendiente),
+                },
+                status=status.HTTP_201_CREATED,
+                headers=headers
+            )
+
+        return Response(
+            {
+                'mensaje': 'Turno solicitado correctamente.',
+                'turno': serializer.data,
+                'canal_origen': turno.canal_origen,
+                'estado': turno.estado,
+                'alerta_daño_capilar': turno.alerta_daño_capilar,
+                'advertencia': advertencia,
+            },
+            status=status.HTTP_201_CREATED,
+            headers=headers
+        )
 
     def perform_create(self, serializer):
         """Crear turno y calcular fecha_limite_pago si es necesario"""
@@ -1037,7 +1237,7 @@ class TurnoViewSet(viewsets.ModelViewSet):
         return True
 
     # =====================================================================
-    # ✅ NUEVO: VERIFICAR SI TURNO ESTÁ EXPIRADO
+    # NUEVO: VERIFICAR SI TURNO ESTÁ EXPIRADO
     # =====================================================================
     @action(detail=True, methods=['get'], url_path='verificar-expiracion')
     def verificar_expiracion(self, request, pk=None):
@@ -1419,7 +1619,7 @@ class TurnoViewSet(viewsets.ModelViewSet):
         turno = self.get_object()
         usuario = request.user
         
-        # ✅ VERIFICAR PERMISOS: Solo profesionales y admins pueden usar este endpoint
+        # VERIFICAR PERMISOS: Solo profesionales y admins pueden usar este endpoint
         es_profesional = hasattr(usuario, 'profesional')
         es_admin = usuario.is_staff
         
@@ -3787,6 +3987,7 @@ class CarritoViewSet(viewsets.ModelViewSet):
     - POST /api/carrito/eliminar_producto/ - Elimina un producto
     - DELETE /api/carrito/vaciar/ - Vacía todo el carrito
     - POST /api/carrito/finalizar_compra/ - Procesa la compra
+    - POST /api/carrito/generar_pago_mercadopago/ - Crea orden y link de pago
     """
     serializer_class = CarritoSerializer
     permission_classes = [IsAuthenticated]
@@ -4279,6 +4480,50 @@ class CarritoViewSet(viewsets.ModelViewSet):
             logger.error(f"Error registrando intención de compra: {str(e)}", exc_info=True)
             return Response(
                 {'error': 'Error al registrar la orden'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['post'], url_path='generar-pago-mercadopago')
+    def generar_pago_mercadopago(self, request):
+        try:
+            orden, url_pago, items_count = _crear_checkout_mercadopago_para_usuario(request.user)
+
+            logger.info(
+                f"Orden Mercado Pago generada para {request.user.email} | "
+                f"Orden: {orden.codigo} | Total: ${orden.total}"
+            )
+
+            return Response(
+                {
+                    'mensaje': 'Orden creada con éxito. Redirigiendo a Mercado Pago...',
+                    'init_point': url_pago,
+                    'orden_codigo': orden.codigo,
+                    'orden_id': orden.id,
+                    'preference_id': orden.preference_id,
+                    'total': float(orden.total),
+                    'items_count': items_count,
+                },
+                status=status.HTTP_200_OK
+            )
+
+        except Cliente.DoesNotExist:
+            return Response(
+                {'error': 'El usuario no tiene perfil de cliente.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except ValidationError as e:
+            mensaje = str(e.detail[0]) if hasattr(e, 'detail') and e.detail else str(e)
+            return Response({'error': mensaje}, status=status.HTTP_400_BAD_REQUEST)
+        except ValueError as e:
+            logger.error(f"Error al generar preferencia de Mercado Pago: {str(e)}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        except Exception as e:
+            logger.error(f"Error generando pago Mercado Pago: {str(e)}", exc_info=True)
+            return Response(
+                {'error': 'Error al generar el pago de Mercado Pago'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

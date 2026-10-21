@@ -1,4 +1,5 @@
 from django.urls import path, include
+from django.http import HttpResponseRedirect
 from rest_framework.routers import DefaultRouter
 from . import views
 from .views import (
@@ -8,7 +9,7 @@ from .views import (
     RutinaClienteViewSet, TipoEquipamientoViewSet, FichaTecnicaViewSet, RequisitoServicioViewSet, DiagnosticoCapilarViewSet,
     CategoriaProductoViewSet, ProductoViewSet, ImagenProductoViewSet, PromocionViewSet, ConfiguracionViewSet, CarritoViewSet,
     ContenidoEducativoViewSet, MeGustaViewSet, ContenidoGuardadoViewSet, upload_imagen, OrdenPendienteViewSet, OrdenCompraViewSet,
-    PagoViewSet, ConfiguracionDiagnosticoViewSet,
+    PagoViewSet, ConfiguracionDiagnosticoViewSet, GenerarPagoMercadoPagoView, WebhookMercadoPagoView,
     #ListaEsperaCreateView,
     # ViewSets
     #PasoRutinaViewSet,
@@ -63,9 +64,29 @@ router.register(r'stats', DashboardStatsViewSet, basename='dashboard-stats')
 # --- AUDITORÍA ---
 router.register(r'auditoria', AuditoriaViewSet, basename='auditoria')
 router.register(r'auditoria-historial', HistorialAuditoriaViewSet, basename='auditoria-historial')
+
+
+def redirigir_react_exito(request):
+    return HttpResponseRedirect("http://localhost:3000/compra-exitosa")
+
+
+def redirigir_react_fallo(request):
+    return HttpResponseRedirect("http://localhost:3000/compra-fallida")
+
+
+def redirigir_react_pendiente(request):
+    return HttpResponseRedirect("http://localhost:3000/compra-pendiente")
+
+
 # Las URLs se generan automáticamente
 urlpatterns = [
     path('', include(router.urls)),
+
+    path('checkout/iniciar-pago/', GenerarPagoMercadoPagoView.as_view(), name='iniciar_pago_mp'),
+    path('checkout/webhook/', WebhookMercadoPagoView.as_view(), name='webhook_mp'),
+    path('compra-exitosa/', redirigir_react_exito, name='redirigir_react_exito'),
+    path('compra-fallida/', redirigir_react_fallo, name='redirigir_react_fallo'),
+    path('compra-pendiente/', redirigir_react_pendiente, name='redirigir_react_pendiente'),
     
     # Upload de imágenes
     path('upload-imagen/', upload_imagen, name='upload-imagen'),
