@@ -426,6 +426,13 @@ class PersonalViewSet(viewsets.ModelViewSet):
     filterset_class = PersonalFilter
     search_fields = ['nombre']
     ordering_fields = ['nombre']
+
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve']:
+            permission_classes = [IsAuthenticated]
+        else:
+            permission_classes = [IsAdminUser]
+        return [permission() for permission in permission_classes]
     
     def perform_destroy(self, instance):
         """

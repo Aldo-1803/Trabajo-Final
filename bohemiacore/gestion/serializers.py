@@ -580,6 +580,7 @@ class PersonalSerializer(serializers.ModelSerializer):
             'realiza_diagnostico', 'realiza_lavado', 'realiza_color',
             'usuario_email', 'horarios'
         ]
+        read_only_fields = ['usuario']
 
     def get_horarios(self, obj):
         """Obtiene los horarios laborales asociados"""
@@ -594,19 +595,6 @@ class PersonalSerializer(serializers.ModelSerializer):
             for h in horarios
         ]
     
-    def create(self, validated_data):
-        """Crear Personal y marcar el usuario como is_staff=True"""
-        usuario = validated_data.get('usuario')
-        
-        # Marcar el usuario como staff
-        if usuario:
-            usuario.is_staff = True
-            usuario.save()
-        
-        # Crear el Personal normalmente
-        personal = Personal.objects.create(**validated_data)
-        return personal
-
 class AgendaCuidadosSerializer(serializers.ModelSerializer):
     class Meta:
         model = AgendaCuidados
