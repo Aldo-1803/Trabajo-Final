@@ -13,6 +13,7 @@ from .models import (
 
 from .services import DisponibilidadService, SaludCapilarService
 from usuarios.models import Usuario, Cliente
+from usuarios.roles import BusinessRole
 import os
 from django.core.exceptions import ValidationError 
 from datetime import datetime
@@ -694,11 +695,23 @@ class ReglaDiagnosticoSerializer(serializers.ModelSerializer):
         ]
     
 
-# --- A. SERIALIZER USUARIOS (ADMIN) ---
+# --- A. SERIALIZERS USUARIOS (ADMIN) ---
+class StrictInputFieldsMixin:
+    """Reject fields outside the explicit command contract."""
+
+    def to_internal_value(self, data):
+        if hasattr(data, 'keys'):
+            unexpected_fields = set(data.keys()) - set(self.fields)
+            if unexpected_fields:
+                raise serializers.ValidationError({
+                    field: ['Este campo no está permitido.']
+                    for field in sorted(unexpected_fields)
+                })
+        return super().to_internal_value(data)
+
+
 class UsuarioAdminSerializer(serializers.ModelSerializer):
-    """
-    Permite al admin crear/editar usuarios profesionales.
-    """
+    """Legacy create serializer kept temporarily for the current frontend."""
     password = serializers.CharField(write_only=True, required=False)
 
     class Meta:
@@ -715,14 +728,54 @@ class UsuarioAdminSerializer(serializers.ModelSerializer):
         return user
 
     def update(self, instance, validated_data):
-        password = validated_data.pop('password', None)
-        # Actualización estándar
-        for attr, value in validated_data.items():
-            setattr(instance, attr, value)
-        if password:
-            instance.set_password(password)
-        instance.save()
-        return instance
+        raise serializers.ValidationError(
+            'Este serializer legacy solo puede utilizarse para crear usuarios.'
+        )
+
+
+class UsuarioAdminReadSerializer(serializers.ModelSerializer):
+    business_role = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Usuario
+        fields = [
+            'id',
+            'email',
+            'first_name',
+            'last_name',
+            # Compatibilidad temporal de lectura con GestionUsuarios.js.
+            'is_staff',
+            'is_active',
+            'business_role',
+        ]
+        read_only_fields = fields
+
+    def get_business_role(self, obj):
+        group_names = {group.name for group in obj.groups.all()}
+        roles = tuple(
+            role for role in BusinessRole.ALL if role in group_names
+        )
+        return roles[0] if len(roles) == 1 else None
+
+
+class UsuarioAdminIdentityUpdateSerializer(
+    StrictInputFieldsMixin,
+    serializers.ModelSerializer,
+):
+    class Meta:
+        model = Usuario
+        fields = ['email', 'first_name', 'last_name']
+
+
+class UsuarioAdminLegacyStatusSerializer(
+    StrictInputFieldsMixin,
+    serializers.ModelSerializer,
+):
+    """Temporary compatibility path for PATCH {"is_active": ...} only."""
+
+    class Meta:
+        model = Usuario
+        fields = ['is_active']
 
 # --- B. SERIALIZER PRODUCTOS ---
 class CategoriaProductoSerializer(serializers.ModelSerializer):

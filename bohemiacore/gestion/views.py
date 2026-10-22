@@ -41,7 +41,9 @@ from .serializers import (
     TipoCabelloSerializer, GrosorCabelloSerializer, PorosidadCabelloSerializer, CueroCabelludoSerializer, EstadoGeneralSerializer,
     CategoriaServicioSerializer, ServicioSerializer, TurnoSerializer, RutinaSerializer, RutinaClienteSerializer,
     RutinaClienteCreateSerializer, ReglaDiagnosticoSerializer, NotificacionSerializer, ProductoSerializer, ImagenProductoSerializer, EquipamientoSerializer,
-    UsuarioAdminSerializer, AgendaCuidadosSerializer, HorarioLaboralSerializer, BloqueoAgendaSerializer, PersonalSerializer,
+    UsuarioAdminIdentityUpdateSerializer, UsuarioAdminLegacyStatusSerializer,
+    UsuarioAdminReadSerializer, UsuarioAdminSerializer, AgendaCuidadosSerializer,
+    HorarioLaboralSerializer, BloqueoAgendaSerializer, PersonalSerializer,
     PersonalAccessCreateCommandSerializer, PersonalStatusChangeCommandSerializer,
     PersonalUserLinkCommandSerializer,
     PagoSerializer,
@@ -105,6 +107,7 @@ from .services import DisponibilidadService
 from .services import MercadoPagoService
 from usuarios.models import Usuario, Cliente
 from usuarios.filters import UsuarioFilter
+from usuarios.roles import BusinessPermission
 from .filters import (
     ProductoFilter, TurnoFilter, PersonalFilter, ServicioFilter, 
     ClienteFilter, RutinaFilter, TipoEquipamientoFilter, EquipamientoFilter, DiagnosticoCapilarFilter,
@@ -3103,8 +3106,20 @@ class AdminUsuarioViewSet(viewsets.ModelViewSet):
     ordering_fields = ['date_joined', 'email', 'first_name', 'last_name']
     ordering = ['-date_joined']  # Por defecto, mostrar primero los más nuevos
 
+    def get_serializer_class(self):
+        if self.action in ['list', 'retrieve']:
+            return UsuarioAdminReadSerializer
+        if self.action == 'update':
+            return UsuarioAdminIdentityUpdateSerializer
+        if self.action == 'partial_update':
+            if self._is_legacy_status_payload(self.request.data):
+                return UsuarioAdminLegacyStatusSerializer
+            return UsuarioAdminIdentityUpdateSerializer
+        # POST remains legacy until its frontend consumer is migrated.
+        return UsuarioAdminSerializer
+
     def get_permissions(self):
-        if self.action == 'reactivar_cuenta':
+        if self.action in ['update', 'partial_update', 'reactivar_cuenta']:
             permission_classes = [IsAuthenticated]
         else:
             permission_classes = [IsAdminUser]
@@ -3114,7 +3129,56 @@ class AdminUsuarioViewSet(viewsets.ModelViewSet):
         """
         Retornar todos los usuarios y dejar que django-filter haga el filtrado.
         """
-        return Usuario.objects.all()
+        return Usuario.objects.prefetch_related('groups')
+
+    def update(self, request, *args, **kwargs):
+        if (
+            not request.user.is_active
+            or not request.user.has_perm(BusinessPermission.MANAGE_USERS)
+        ):
+            return self._command_error(
+                'PERMISSION_DENIED',
+                'No tiene permisos para actualizar la identidad de usuarios.',
+                status.HTTP_403_FORBIDDEN,
+            )
+
+        instance = self.get_object()
+        if instance.is_superuser:
+            return self._command_error(
+                'PROTECTED_SUPERUSER',
+                'El Usuario protegido no puede gestionarse mediante esta acción.',
+                status.HTTP_403_FORBIDDEN,
+            )
+
+        partial = kwargs.pop('partial', False)
+        serializer = self.get_serializer(
+            instance,
+            data=request.data,
+            partial=partial,
+        )
+        if not serializer.is_valid():
+            return self._command_error(
+                'INVALID_PAYLOAD',
+                'El payload de actualización de Usuario es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+                fields=serializer.errors,
+            )
+
+        self.perform_update(serializer)
+        read_serializer = UsuarioAdminReadSerializer(
+            instance,
+            context=self.get_serializer_context(),
+        )
+        return Response(read_serializer.data, status=status.HTTP_200_OK)
+
+    @staticmethod
+    def _is_legacy_status_payload(data):
+        """
+        Keep the current frontend toggle isolated until account deactivation
+        has its dedicated semantic action. It still requires manage_users and
+        cannot be combined with identity or privilege fields.
+        """
+        return hasattr(data, 'keys') and set(data.keys()) == {'is_active'}
 
     @action(
         detail=True,
