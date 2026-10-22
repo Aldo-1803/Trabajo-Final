@@ -24,7 +24,18 @@ from django.utils.encoding import force_str
 
 from django.db.models import Min
 from .serializers import (
-    UsuarioPerfilReadSerializer, UsuarioPerfilUpdateSerializer, RegistroSerializer, ClienteListSerializer, SetNewPasswordSerializer
+    AdminClientAccountCreateCommandSerializer, ClienteListSerializer,
+    RegistroSerializer, SetNewPasswordSerializer, UsuarioPerfilReadSerializer,
+    UsuarioPerfilUpdateSerializer,
+)
+from .client_account_services import (
+    ClientAccountCreationConflict,
+    EmailAlreadyExists,
+    InvalidClientAccountPassword,
+    InvalidClientAccountPayload,
+    InvalidClientAccountReason,
+    PermissionDeniedForClientAccountCreation,
+    create_client_account_by_staff,
 )
 from .cliente_filters import ClienteFilter
 
@@ -42,6 +53,92 @@ from gestion.serializers import DiagnosticoCapilarSerializer
 # Vista para redirigir a la pantalla de registro
 def home(request):
     return redirect('registro')  # Redirige al nombre de la ruta 'registro'
+
+
+class AdminClientAccountCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        command = AdminClientAccountCreateCommandSerializer(data=request.data)
+        if not command.is_valid():
+            error_fields = set(command.errors)
+            if error_fields == {'password_temporal'}:
+                error_code = 'INVALID_PASSWORD'
+            elif error_fields == {'motivo'}:
+                error_code = 'INVALID_REASON'
+            else:
+                error_code = 'INVALID_PAYLOAD'
+            return self._command_error(
+                error_code,
+                'El payload de alta administrativa de Cliente es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+                fields=command.errors,
+            )
+
+        data = command.validated_data
+        try:
+            result = create_client_account_by_staff(
+                actor=request.user,
+                email=data['email'],
+                first_name=data['first_name'],
+                last_name=data['last_name'],
+                raw_password=data['password_temporal'],
+                reason=data['motivo'],
+                telefono=data.get('telefono'),
+                zona=data.get('zona'),
+            )
+        except PermissionDeniedForClientAccountCreation:
+            return self._command_error(
+                'PERMISSION_DENIED',
+                'No tiene permisos para crear clientes.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except InvalidClientAccountPassword:
+            return self._command_error(
+                'INVALID_PASSWORD',
+                'La contraseña temporal no cumple los requisitos de seguridad.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except InvalidClientAccountReason:
+            return self._command_error(
+                'INVALID_REASON',
+                'El motivo de alta es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except InvalidClientAccountPayload:
+            return self._command_error(
+                'INVALID_PAYLOAD',
+                'Los datos proporcionados son inválidos.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except EmailAlreadyExists:
+            return self._command_error(
+                'EMAIL_ALREADY_EXISTS',
+                'Ya existe una cuenta con ese email.',
+                status.HTTP_409_CONFLICT,
+            )
+        except ClientAccountCreationConflict:
+            return self._command_error(
+                'CLIENT_ACCOUNT_CREATION_CONFLICT',
+                'El alta entra en conflicto con otra operación.',
+                status.HTTP_409_CONFLICT,
+            )
+
+        return Response({
+            'created': result.created,
+            'usuario_id': result.user_id,
+            'cliente_id': result.cliente_id,
+            'email': result.email,
+            'rol': result.role,
+            'usuario_activo': result.user_active,
+        }, status=status.HTTP_201_CREATED)
+
+    @staticmethod
+    def _command_error(code, detail, status_code, fields=None):
+        error = {'code': code, 'detail': detail}
+        if fields is not None:
+            error['fields'] = fields
+        return Response({'error': error}, status=status_code)
 
 class LogoutView(APIView):
     """
@@ -76,9 +173,7 @@ class RegistroView(APIView):
         """
         serializer = RegistroSerializer(data=request.data)
         if serializer.is_valid():
-            usuario = serializer.save() # Guarda el usuario y cliente asociado
-            usuario.es_cliente = True  # Asigna automáticamente el rol de cliente
-            usuario.save()
+            serializer.save()  # Guarda usuario, cliente y rol CLIENTE.
             return Response(
                 {"mensaje": "Usuario registrado exitosamente."},
                 status=status.HTTP_201_CREATED

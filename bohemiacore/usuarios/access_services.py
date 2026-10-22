@@ -19,6 +19,8 @@ from usuarios.roles import (
 ROLE_AUDIT_EVENT = 'BUSINESS_ROLE_CHANGED'
 ROLE_AUDIT_SOURCE = 'usuarios.access_services.assign_validated_business_role'
 ROLE_AUDIT_TABLE = 'UsuarioBusinessRole'
+INITIAL_CLIENT_ROLE_AUDIT_EVENT = 'INITIAL_CLIENT_ROLE_ASSIGNED'
+INITIAL_CLIENT_ROLE_AUDIT_TABLE = 'UsuarioBusinessRole'
 ACCOUNT_DEACTIVATED_EVENT = 'ACCOUNT_DEACTIVATED'
 ACCOUNT_DEACTIVATION_SOURCE = 'usuarios.access_services.deactivate_account'
 ACCOUNT_DEACTIVATION_AUDIT_TABLE = 'UsuarioAccountStatus'
@@ -70,6 +72,10 @@ class SelfRoleAssignmentNotAllowed(RoleAssignmentError):
 
 
 class InvalidRoleAssignmentTarget(RoleAssignmentError):
+    pass
+
+
+class InitialBusinessRoleAlreadyAssigned(RoleAssignmentError):
     pass
 
 
@@ -134,6 +140,15 @@ class RoleAssignmentResult:
 
 
 @dataclass(frozen=True)
+class InitialClientRoleAssignmentResult:
+    changed: bool
+    user_id: int
+    cliente_id: int
+    role: str
+    audit_id: int
+
+
+@dataclass(frozen=True)
 class AccountDeactivationResult:
     changed: bool
     user_id: int
@@ -153,6 +168,75 @@ class AccountReactivationResult:
     current_role: str
     audit_id: int | None
     warnings: tuple[str, ...]
+
+
+@transaction.atomic
+def assign_initial_client_role(
+    user,
+    source,
+    target_role=BusinessRole.CLIENTE,
+):
+    """Assign the initial CLIENTE role without requiring an admin actor."""
+    if target_role != BusinessRole.CLIENTE:
+        raise InvalidBusinessRole(
+            'Initial client-role assignment can only assign CLIENTE.'
+        )
+    if not isinstance(source, str) or not source.strip():
+        raise InvalidRoleAssignmentTarget(
+            'A source is required for initial client-role assignment.'
+        )
+
+    user_model = get_user_model()
+    locked_user = _get_locked_target(user, user_model)
+    try:
+        cliente = Cliente.objects.select_for_update().get(usuario=locked_user)
+    except Cliente.DoesNotExist as exc:
+        raise MissingClientProfile(
+            'The CLIENTE role requires a client profile.'
+        ) from exc
+
+    current_roles = get_business_roles(locked_user)
+    if current_roles and current_roles != (BusinessRole.CLIENTE,):
+        raise InitialBusinessRoleAlreadyAssigned(
+            'A different business role is already assigned to the user.'
+        )
+
+    changed = not current_roles
+    if changed:
+        assign_business_role(locked_user, BusinessRole.CLIENTE)
+
+    if get_business_roles(locked_user) != (BusinessRole.CLIENTE,):
+        raise InconsistentBusinessRoleState(
+            'Initial assignment must leave exactly one CLIENTE role.'
+        )
+
+    audit = Auditoria.objects.create(
+        tabla=INITIAL_CLIENT_ROLE_AUDIT_TABLE,
+        registro_id=locked_user.pk,
+        usuario=None,
+        accion='ALTA',
+        valor_anterior={
+            'event': INITIAL_CLIENT_ROLE_AUDIT_EVENT,
+            'target_user_id': locked_user.pk,
+            'business_roles': list(current_roles),
+        },
+        valor_nuevo={
+            'event': INITIAL_CLIENT_ROLE_AUDIT_EVENT,
+            'source': source.strip(),
+            'actor_id': None,
+            'user_id': locked_user.pk,
+            'cliente_id': cliente.pk,
+            'business_role': BusinessRole.CLIENTE,
+        },
+    )
+
+    return InitialClientRoleAssignmentResult(
+        changed=changed,
+        user_id=locked_user.pk,
+        cliente_id=cliente.pk,
+        role=BusinessRole.CLIENTE,
+        audit_id=audit.pk,
+    )
 
 
 @transaction.atomic
