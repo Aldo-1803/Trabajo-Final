@@ -27,6 +27,13 @@ const GestionPersonal = () => {
     const [accionSemantica, setAccionSemantica] = useState(null);
     const [motivoAccion, setMotivoAccion] = useState('');
     const [procesandoAccion, setProcesandoAccion] = useState(false);
+    const [personalRolAcceso, setPersonalRolAcceso] = useState(null);
+    const [modalCambiarRol, setModalCambiarRol] = useState(false);
+    const [cambiandoRol, setCambiandoRol] = useState(false);
+    const [formRolAcceso, setFormRolAcceso] = useState({
+        role: 'EMPLEADO',
+        motivo: ''
+    });
     
     const [form, setForm] = useState({
         nombre: '',
@@ -182,6 +189,64 @@ const GestionPersonal = () => {
             notify.error(message || `No se pudo completar: ${config.titulo.toLowerCase()}.`);
         } finally {
             setProcesandoAccion(false);
+        }
+    };
+
+    const abrirCambiarRolAcceso = (item) => {
+        setPersonalRolAcceso(item);
+        setFormRolAcceso({
+            role: ['EMPLEADO', 'PROFESIONAL'].includes(item.usuario_business_role)
+                ? item.usuario_business_role
+                : 'EMPLEADO',
+            motivo: ''
+        });
+        setModalCambiarRol(true);
+    };
+
+    const cerrarCambiarRolAcceso = () => {
+        if (cambiandoRol) return;
+        setModalCambiarRol(false);
+        setPersonalRolAcceso(null);
+        setFormRolAcceso({ role: 'EMPLEADO', motivo: '' });
+    };
+
+    const cambiarRolAcceso = async (event) => {
+        event.preventDefault();
+        if (!personalRolAcceso) return;
+
+        setCambiandoRol(true);
+        try {
+            const token = localStorage.getItem('access_token');
+            const response = await axios.post(
+                `http://127.0.0.1:8000/api/gestion/personal/${personalRolAcceso.id}/cambiar-rol-acceso/`,
+                formRolAcceso,
+                { headers: { 'Authorization': `Bearer ${token}` } }
+            );
+            setModalCambiarRol(false);
+            setPersonalRolAcceso(null);
+            setFormRolAcceso({ role: 'EMPLEADO', motivo: '' });
+            await cargarPersonal();
+            notify.success(
+                response.data?.changed === false
+                    ? 'El rol de acceso ya estaba asignado.'
+                    : `Rol de acceso actualizado a ${response.data?.new_role || formRolAcceso.role}.`
+            );
+        } catch (error) {
+            const errorCode = error.response?.data?.error?.code;
+            const messages = {
+                PERSONAL_WITHOUT_USER: 'El Personal no tiene una cuenta vinculada.',
+                PERSONAL_INACTIVE: 'Debe reactivar el Personal antes de cambiar su rol de acceso.',
+                INVALID_TARGET_ROLE: 'El rol solicitado no está permitido.',
+                MULTIPLE_BUSINESS_ROLES: 'La cuenta tiene múltiples roles de negocio y requiere revisión.',
+                ROLE_CHANGE_NOT_ALLOWED: 'El rol actual no puede cambiarse desde esta acción.',
+                PERMISSION_DENIED: 'No tiene permisos para cambiar roles de acceso.'
+            };
+            notify.error(
+                messages[errorCode]
+                || 'No se pudo cambiar el rol de acceso. Intente nuevamente.'
+            );
+        } finally {
+            setCambiandoRol(false);
         }
     };
 
@@ -431,6 +496,16 @@ const GestionPersonal = () => {
                                                         </span>
                                                     </div>
                                                     <div><strong>Rol:</strong> {p.usuario_business_role || 'Sin rol asignado'}</div>
+                                                    {p.activo && p.usuario_business_role !== 'ADMINISTRADOR' && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => abrirCambiarRolAcceso(p)}
+                                                            className="mt-2 px-2 py-1 rounded text-xs font-semibold border"
+                                                            style={{ borderColor: '#817773', color: '#817773' }}
+                                                        >
+                                                            Cambiar rol de acceso
+                                                        </button>
+                                                    )}
                                                 </div>
                                             ) : (
                                                 <div className="space-y-2">
@@ -628,6 +703,78 @@ const GestionPersonal = () => {
                                         style={{ backgroundColor: '#817773' }}
                                     >
                                         {procesandoAccion ? 'Procesando...' : 'Confirmar'}
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                )}
+
+                {modalCambiarRol && personalRolAcceso && (
+                    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+                        <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6" style={{ borderTop: '4px solid #817773' }}>
+                            <h2 className="text-2xl font-bold text-gray-800 mb-2">Cambiar rol de acceso</h2>
+                            <p className="text-sm text-gray-600 mb-2">
+                                {personalRolAcceso.nombre} {personalRolAcceso.apellido}
+                            </p>
+                            <p className="text-sm text-gray-600 mb-5">
+                                Rol actual: <strong>{personalRolAcceso.usuario_business_role || 'Sin rol asignado'}</strong>
+                            </p>
+                            <form onSubmit={cambiarRolAcceso} className="space-y-4">
+                                <div>
+                                    <label htmlFor="access-business-role" className="block text-sm font-medium text-gray-700 mb-1">
+                                        Rol de acceso *
+                                    </label>
+                                    <select
+                                        id="access-business-role"
+                                        value={formRolAcceso.role}
+                                        onChange={(event) => setFormRolAcceso((current) => ({
+                                            ...current,
+                                            role: event.target.value
+                                        }))}
+                                        className="w-full border border-gray-300 rounded-lg p-2"
+                                    >
+                                        <option value="EMPLEADO">Empleado</option>
+                                        <option value="PROFESIONAL">Profesional</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label htmlFor="access-role-reason" className="block text-sm font-medium text-gray-700 mb-1">
+                                        Motivo del cambio *
+                                    </label>
+                                    <textarea
+                                        id="access-role-reason"
+                                        value={formRolAcceso.motivo}
+                                        onChange={(event) => setFormRolAcceso((current) => ({
+                                            ...current,
+                                            motivo: event.target.value
+                                        }))}
+                                        required
+                                        minLength={3}
+                                        maxLength={500}
+                                        rows={3}
+                                        className="w-full border border-gray-300 rounded-lg p-2"
+                                    />
+                                </div>
+                                <p className="text-xs text-gray-500">
+                                    La función laboral y los perfiles Cliente y Personal no se modificarán.
+                                </p>
+                                <div className="flex justify-end gap-3 pt-4 border-t">
+                                    <button
+                                        type="button"
+                                        onClick={cerrarCambiarRolAcceso}
+                                        disabled={cambiandoRol}
+                                        className="px-4 py-2 border rounded-lg font-medium"
+                                    >
+                                        Cancelar
+                                    </button>
+                                    <button
+                                        type="submit"
+                                        disabled={cambiandoRol}
+                                        className="px-4 py-2 rounded-lg font-bold text-white disabled:opacity-60"
+                                        style={{ backgroundColor: '#817773' }}
+                                    >
+                                        {cambiandoRol ? 'Cambiando...' : 'Confirmar cambio'}
                                     </button>
                                 </div>
                             </form>

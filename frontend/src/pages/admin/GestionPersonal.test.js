@@ -56,6 +56,23 @@ const personalConUsuario = {
     realiza_color: true
 };
 
+const personalClienteVinculado = {
+    id: 30,
+    nombre: 'Cliente',
+    apellido: 'Incorporado',
+    rol: 'asistente',
+    email: 'cliente-incorporado@test.com',
+    telefono: '333',
+    activo: true,
+    usuario: 77,
+    usuario_email: 'cliente@test.com',
+    usuario_activo: true,
+    usuario_business_role: 'CLIENTE',
+    realiza_diagnostico: false,
+    realiza_lavado: true,
+    realiza_color: false
+};
+
 const usuarios = [
     {
         id: 50,
@@ -81,7 +98,11 @@ const setupApi = () => {
             return Promise.resolve({ data: { results: usuarios } });
         }
         return Promise.resolve({
-            data: [personalSinUsuario, personalConUsuario]
+            data: [
+                personalSinUsuario,
+                personalConUsuario,
+                personalClienteVinculado
+            ]
         });
     });
     axios.post.mockResolvedValue({ data: {} });
@@ -145,6 +166,12 @@ describe('GestionPersonal access UI', () => {
         expect(within(linkedRow).getByRole('button', { name: 'Reactivar' })).toBeInTheDocument();
         expect(within(linkedRow).getByRole('button', { name: 'Revocar acceso laboral' })).toBeInTheDocument();
         expect(within(linkedRow).getByRole('button', { name: 'Revocar acceso total' })).toBeInTheDocument();
+        expect(within(linkedRow).queryByRole('button', { name: 'Cambiar rol de acceso' })).not.toBeInTheDocument();
+
+        const clientRow = screen.getByText('Cliente Incorporado').closest('tr');
+        expect(clientRow).toHaveTextContent('Rol: CLIENTE');
+        expect(clientRow).toHaveTextContent('Asistente / Lavado');
+        expect(within(clientRow).getByRole('button', { name: 'Cambiar rol de acceso' })).toBeInTheDocument();
     });
 
     test('no ofrece Eliminar ni dispone de un consumidor axios.delete', async () => {
@@ -195,6 +222,105 @@ describe('GestionPersonal access UI', () => {
                 { headers: { Authorization: 'Bearer test-token' } }
             );
         });
+    });
+
+    test('modal de rol ofrece solo EMPLEADO y PROFESIONAL', async () => {
+        await renderLoaded();
+        const row = screen.getByText('Cliente Incorporado').closest('tr');
+        fireEvent.click(within(row).getByRole('button', { name: 'Cambiar rol de acceso' }));
+
+        expect(screen.getByRole('heading', { name: 'Cambiar rol de acceso' })).toBeInTheDocument();
+        expect(screen.getByText(/Rol actual:/)).toHaveTextContent('CLIENTE');
+        const roleSelect = screen.getByLabelText('Rol de acceso *');
+        expect(within(roleSelect).getAllByRole('option')).toHaveLength(2);
+        expect(within(roleSelect).getByRole('option', { name: 'Empleado' })).toBeInTheDocument();
+        expect(within(roleSelect).getByRole('option', { name: 'Profesional' })).toBeInTheDocument();
+        expect(within(roleSelect).queryByRole('option', { name: 'Cliente' })).not.toBeInTheDocument();
+        expect(within(roleSelect).queryByRole('option', { name: 'Administrador' })).not.toBeInTheDocument();
+    });
+
+    test('envía solo role y motivo, recarga y muestra el nuevo BusinessRole', async () => {
+        axios.get.mockReset();
+        axios.get
+            .mockResolvedValueOnce({
+                data: [personalSinUsuario, personalConUsuario, personalClienteVinculado]
+            })
+            .mockResolvedValueOnce({
+                data: [
+                    personalSinUsuario,
+                    personalConUsuario,
+                    {
+                        ...personalClienteVinculado,
+                        usuario_business_role: 'PROFESIONAL'
+                    }
+                ]
+            });
+        axios.post.mockResolvedValue({
+            data: {
+                changed: true,
+                personal_id: 30,
+                usuario_id: 77,
+                previous_role: 'CLIENTE',
+                new_role: 'PROFESIONAL'
+            }
+        });
+        await renderLoaded();
+        const row = screen.getByText('Cliente Incorporado').closest('tr');
+        fireEvent.click(within(row).getByRole('button', { name: 'Cambiar rol de acceso' }));
+        fireEvent.change(screen.getByLabelText('Rol de acceso *'), {
+            target: { value: 'PROFESIONAL' }
+        });
+        fireEvent.change(screen.getByLabelText('Motivo del cambio *'), {
+            target: { value: 'Cliente incorporado al equipo técnico' }
+        });
+        fireEvent.click(screen.getByRole('button', { name: 'Confirmar cambio' }));
+
+        await waitFor(() => {
+            expect(axios.post).toHaveBeenCalledWith(
+                'http://127.0.0.1:8000/api/gestion/personal/30/cambiar-rol-acceso/',
+                {
+                    role: 'PROFESIONAL',
+                    motivo: 'Cliente incorporado al equipo técnico'
+                },
+                { headers: { Authorization: 'Bearer test-token' } }
+            );
+        });
+        const payload = axios.post.mock.calls[0][1];
+        expect(payload).not.toHaveProperty('is_staff');
+        expect(payload).not.toHaveProperty('is_superuser');
+        expect(payload).not.toHaveProperty('is_active');
+        expect(payload).not.toHaveProperty('groups');
+        expect(payload).not.toHaveProperty('user_permissions');
+        expect(payload).not.toHaveProperty('usuario_id');
+        expect(payload).not.toHaveProperty('personal_id');
+        await waitFor(() => {
+            const updatedRow = screen.getByText('Cliente Incorporado').closest('tr');
+            expect(updatedRow).toHaveTextContent('Rol: PROFESIONAL');
+            expect(updatedRow).toHaveTextContent('Asistente / Lavado');
+        });
+        expect(screen.queryByRole('heading', { name: 'Cambiar rol de acceso' })).not.toBeInTheDocument();
+    });
+
+    test('error de cambio de rol muestra mensaje seguro y conserva el modal', async () => {
+        axios.post.mockRejectedValue({
+            response: {
+                data: { error: { code: 'MULTIPLE_BUSINESS_ROLES' } }
+            }
+        });
+        await renderLoaded();
+        const row = screen.getByText('Cliente Incorporado').closest('tr');
+        fireEvent.click(within(row).getByRole('button', { name: 'Cambiar rol de acceso' }));
+        fireEvent.change(screen.getByLabelText('Motivo del cambio *'), {
+            target: { value: 'Cambio administrativo solicitado' }
+        });
+        fireEvent.click(screen.getByRole('button', { name: 'Confirmar cambio' }));
+
+        await waitFor(() => {
+            expect(notify.error).toHaveBeenCalledWith(
+                'La cuenta tiene múltiples roles de negocio y requiere revisión.'
+            );
+        });
+        expect(screen.getByRole('heading', { name: 'Cambiar rol de acceso' })).toBeInTheDocument();
     });
 
     test('Crear acceso abre modal y envía exclusivamente el contrato laboral', async () => {
@@ -266,11 +392,12 @@ describe('GestionPersonal access UI', () => {
         const row = screen.getByText('Sin Acceso').closest('tr');
         fireEvent.click(within(row).getByRole('button', { name: 'Vincular cuenta existente' }));
 
-        expect(await screen.findByRole('heading', { name: 'Vincular cuenta existente' })).toBeInTheDocument();
-        expect(await screen.findByText('cliente@test.com')).toBeInTheDocument();
-        expect(screen.queryByText('Ya Vinculado')).not.toBeInTheDocument();
-        expect(screen.getByText(/Rol: CLIENTE/)).toBeInTheDocument();
-        expect(screen.getByText(/Cuenta: Activa/)).toBeInTheDocument();
+        const heading = await screen.findByRole('heading', { name: 'Vincular cuenta existente' });
+        const modal = heading.closest('.bg-white');
+        expect(within(modal).getByText('cliente@test.com')).toBeInTheDocument();
+        expect(within(modal).queryByText('Ya Vinculado')).not.toBeInTheDocument();
+        expect(within(modal).getByText(/Rol: CLIENTE/)).toBeInTheDocument();
+        expect(within(modal).getByText(/Cuenta: Activa/)).toBeInTheDocument();
     });
 
     test('vincula con usuario_id y motivo, conserva CLIENTE y muestra advertencia', async () => {

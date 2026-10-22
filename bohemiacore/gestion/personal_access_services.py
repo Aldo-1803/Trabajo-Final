@@ -41,6 +41,11 @@ PERSONAL_ACCESS_AUDIT_SOURCE = (
     'gestion.personal_access_services.create_access_for_personal'
 )
 PERSONAL_ACCESS_AUDIT_TABLE = 'PersonalAccess'
+PERSONAL_BUSINESS_ROLE_AUDIT_EVENT = 'PERSONAL_BUSINESS_ROLE_CHANGED'
+PERSONAL_BUSINESS_ROLE_AUDIT_SOURCE = (
+    'gestion.personal_access_services.change_personal_business_role'
+)
+PERSONAL_BUSINESS_ROLE_AUDIT_TABLE = 'PersonalBusinessRole'
 PERSONAL_STATUS_AUDIT_TABLE = 'PersonalStatus'
 PERSONAL_DEACTIVATED_EVENT = 'PERSONAL_DEACTIVATED'
 PERSONAL_REACTIVATED_EVENT = 'PERSONAL_REACTIVATED'
@@ -71,6 +76,10 @@ ALLOWED_PERSONAL_ACCESS_ROLES = (
     BusinessRole.EMPLEADO,
     BusinessRole.PROFESIONAL,
     BusinessRole.ADMINISTRADOR,
+)
+ALLOWED_PERSONAL_ROLE_CHANGES = (
+    BusinessRole.EMPLEADO,
+    BusinessRole.PROFESIONAL,
 )
 
 
@@ -135,6 +144,44 @@ class InvalidPersonalAccessEmail(PersonalAccessCreateError):
 
 
 class PersonalAccessConflict(PersonalAccessCreateError):
+    pass
+
+
+class PersonalBusinessRoleChangeError(Exception):
+    pass
+
+
+class PermissionDeniedForPersonalBusinessRoleChange(
+    PersonalBusinessRoleChangeError
+):
+    pass
+
+
+class InvalidPersonalBusinessRoleReason(PersonalBusinessRoleChangeError):
+    pass
+
+
+class InvalidPersonalBusinessRoleTarget(PersonalBusinessRoleChangeError):
+    pass
+
+
+class PersonalWithoutUserForRoleChange(PersonalBusinessRoleChangeError):
+    pass
+
+
+class PersonalInactiveForRoleChange(PersonalBusinessRoleChangeError):
+    pass
+
+
+class MultiplePersonalBusinessRoles(PersonalBusinessRoleChangeError):
+    pass
+
+
+class PersonalBusinessRoleChangeNotAllowed(PersonalBusinessRoleChangeError):
+    pass
+
+
+class PersonalBusinessRoleChangeConflict(PersonalBusinessRoleChangeError):
     pass
 
 
@@ -227,6 +274,18 @@ class PersonalAccessCreateResult:
 
 
 @dataclass(frozen=True)
+class PersonalBusinessRoleChangeResult:
+    changed: bool
+    personal_id: int
+    user_id: int
+    previous_role: str | None
+    new_role: str
+    client_id: int | None
+    role_audit_id: int | None
+    audit_id: int | None
+
+
+@dataclass(frozen=True)
 class PersonalStatusChangeResult:
     changed: bool
     personal_id: int
@@ -270,6 +329,194 @@ class FullWorkAccessRevocationResult:
     status_audit_id: int | None
     account_audit_id: int | None
     warnings: tuple[str, ...]
+
+
+@transaction.atomic
+def change_personal_business_role(actor, personal, target_role, reason):
+    """Assign one labor BusinessRole to the user linked to active Personal.
+
+    A roleless linked user is accepted. Existing Cliente and Personal profiles
+    are preserved; ADMINISTRADOR is intentionally outside this operation.
+    """
+    normalized_reason = _validate_reason(
+        reason,
+        error_class=InvalidPersonalBusinessRoleReason,
+        operation='personnel business-role change',
+    )
+    if target_role not in ALLOWED_PERSONAL_ROLE_CHANGES:
+        raise InvalidPersonalBusinessRoleTarget(
+            'Only EMPLEADO or PROFESIONAL can be assigned by this operation.'
+        )
+
+    user_model = get_user_model()
+    current_actor = _get_authorized_actor(
+        actor,
+        user_model,
+        error_class=PermissionDeniedForPersonalBusinessRoleChange,
+        error_message=(
+            'The actor cannot change personnel business roles.'
+        ),
+    )
+    personal_snapshot = _get_personal_snapshot(personal)
+
+    if personal_snapshot.usuario_id is None:
+        locked_personal = _get_locked_personal(personal_snapshot)
+        if locked_personal.usuario_id is None:
+            raise PersonalWithoutUserForRoleChange(
+                'The personnel record has no linked user.'
+            )
+        raise PersonalBusinessRoleChangeConflict(
+            'The personnel link changed during the operation.'
+        )
+
+    try:
+        locked_user = user_model.objects.select_for_update().get(
+            pk=personal_snapshot.usuario_id
+        )
+    except user_model.DoesNotExist as exc:
+        raise PersonalBusinessRoleChangeConflict(
+            'The linked user no longer exists.'
+        ) from exc
+
+    locked_personal = _get_locked_personal(personal_snapshot)
+    if locked_personal.usuario_id is None:
+        raise PersonalWithoutUserForRoleChange(
+            'The personnel record has no linked user.'
+        )
+    if locked_personal.usuario_id != locked_user.pk:
+        raise PersonalBusinessRoleChangeConflict(
+            'The personnel link changed during the operation.'
+        )
+    if not locked_personal.activo:
+        raise PersonalInactiveForRoleChange(
+            'Active personnel is required for a labor business role.'
+        )
+
+    current_roles = get_business_roles(locked_user)
+    if len(current_roles) > 1:
+        raise MultiplePersonalBusinessRoles(
+            'The linked user has multiple business roles.'
+        )
+    previous_role = current_roles[0] if current_roles else None
+    if previous_role == BusinessRole.ADMINISTRADOR:
+        raise PersonalBusinessRoleChangeNotAllowed(
+            'ADMINISTRADOR cannot be changed by this operation.'
+        )
+    if current_actor.pk == locked_user.pk:
+        raise PersonalBusinessRoleChangeNotAllowed(
+            'Users cannot change their own business role here.'
+        )
+    if locked_user.is_superuser:
+        raise PersonalBusinessRoleChangeNotAllowed(
+            'Superusers cannot be managed by this operation.'
+        )
+
+    from usuarios.models import Cliente
+
+    client = (
+        Cliente.objects.select_for_update()
+        .filter(usuario=locked_user)
+        .first()
+    )
+    if previous_role == target_role:
+        return PersonalBusinessRoleChangeResult(
+            changed=False,
+            personal_id=locked_personal.pk,
+            user_id=locked_user.pk,
+            previous_role=previous_role,
+            new_role=target_role,
+            client_id=client.pk if client is not None else None,
+            role_audit_id=None,
+            audit_id=None,
+        )
+
+    try:
+        role_result = assign_validated_business_role(
+            actor=current_actor,
+            target_user=locked_user,
+            target_role=target_role,
+            reason=normalized_reason,
+        )
+    except PermissionDeniedForRoleAssignment as exc:
+        raise PermissionDeniedForPersonalBusinessRoleChange(
+            'The actor cannot change personnel business roles.'
+        ) from exc
+    except InconsistentBusinessRoleState as exc:
+        raise MultiplePersonalBusinessRoles(
+            'The linked user has multiple business roles.'
+        ) from exc
+    except (
+        InvalidRoleAssignmentTarget,
+        InvalidRoleChangeReason,
+        SelfRoleAssignmentNotAllowed,
+    ) as exc:
+        raise PersonalBusinessRoleChangeConflict(
+            'The business role could not be changed.'
+        ) from exc
+
+    audit = _write_personal_business_role_audit(
+        actor=current_actor,
+        personal=locked_personal,
+        user=locked_user,
+        client=client,
+        previous_role=previous_role,
+        new_role=target_role,
+        reason=normalized_reason,
+        role_audit_id=role_result.audit_id,
+    )
+    return PersonalBusinessRoleChangeResult(
+        changed=True,
+        personal_id=locked_personal.pk,
+        user_id=locked_user.pk,
+        previous_role=previous_role,
+        new_role=target_role,
+        client_id=client.pk if client is not None else None,
+        role_audit_id=role_result.audit_id,
+        audit_id=audit.pk,
+    )
+
+
+def _write_personal_business_role_audit(
+    *,
+    actor,
+    personal,
+    user,
+    client,
+    previous_role,
+    new_role,
+    reason,
+    role_audit_id,
+):
+    return Auditoria.objects.create(
+        tabla=PERSONAL_BUSINESS_ROLE_AUDIT_TABLE,
+        registro_id=personal.pk,
+        usuario=actor,
+        accion='MODIFICACION',
+        valor_anterior={
+            'event': PERSONAL_BUSINESS_ROLE_AUDIT_EVENT,
+            'personal_id': personal.pk,
+            'user_id': user.pk,
+            'business_role': previous_role,
+            'client_id': client.pk if client is not None else None,
+            'personal_active': personal.activo,
+        },
+        valor_nuevo={
+            'event': PERSONAL_BUSINESS_ROLE_AUDIT_EVENT,
+            'source': PERSONAL_BUSINESS_ROLE_AUDIT_SOURCE,
+            'actor_id': actor.pk,
+            'personal_id': personal.pk,
+            'user_id': user.pk,
+            'previous_role': previous_role,
+            'new_role': new_role,
+            'reason': reason,
+            'client_id': client.pk if client is not None else None,
+            'client_profile_preserved': client is not None,
+            'personal_profile_preserved': True,
+            'personal_active': personal.activo,
+            'user_active': user.is_active,
+            'role_audit_id': role_audit_id,
+        },
+    )
 
 
 @transaction.atomic

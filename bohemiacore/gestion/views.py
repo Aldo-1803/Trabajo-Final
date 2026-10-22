@@ -48,7 +48,9 @@ from .serializers import (
     UsuarioAccountStatusCommandSerializer, UsuarioAdminIdentityUpdateSerializer,
     UsuarioAdminReadSerializer, UsuarioAdminSerializer, AgendaCuidadosSerializer,
     HorarioLaboralSerializer, BloqueoAgendaSerializer, PersonalSerializer,
-    PersonalAccessCreateCommandSerializer, PersonalStatusChangeCommandSerializer,
+    PersonalAccessCreateCommandSerializer,
+    PersonalBusinessRoleChangeCommandSerializer,
+    PersonalStatusChangeCommandSerializer,
     PersonalUserLinkCommandSerializer,
     PagoSerializer,
     TipoEquipamientoSerializer, FichaTecnicaSerializer, RequisitoServicioSerializer, DiagnosticoCapilarSerializer,
@@ -65,6 +67,8 @@ from .personal_access_services import (
     InvalidFullWorkAccessRevocationReason,
     InvalidPersonalAccessEmail,
     InvalidPersonalAccessRole,
+    InvalidPersonalBusinessRoleReason,
+    InvalidPersonalBusinessRoleTarget,
     InvalidPersonalLinkReason,
     InvalidPersonalLinkTarget,
     InvalidPersonalLinkUser,
@@ -72,18 +76,25 @@ from .personal_access_services import (
     InvalidTemporaryPassword,
     InvalidWorkAccessRevocationReason,
     PermissionDeniedForPersonalLink,
+    PermissionDeniedForPersonalBusinessRoleChange,
     PermissionDeniedForPersonalStatusChange,
     PermissionDeniedForFullWorkAccessRevocation,
     PermissionDeniedForWorkAccessRevocation,
     PersonalAccessConflict,
     PersonalAlreadyLinked,
     PersonalAlreadyHasAccess,
+    PersonalBusinessRoleChangeConflict,
+    PersonalBusinessRoleChangeNotAllowed,
     PersonalInactiveForAccess,
+    PersonalInactiveForRoleChange,
     PersonalHasNoUser,
     PersonalLinkConflict,
     PersonalStatusConflict,
+    PersonalWithoutUserForRoleChange,
+    MultiplePersonalBusinessRoles,
     UserAlreadyLinkedToPersonal,
     create_access_for_personal,
+    change_personal_business_role,
     deactivate_personal,
     link_user_to_personal,
     reactivate_personal,
@@ -501,6 +512,7 @@ class PersonalViewSet(viewsets.ModelViewSet):
             'destroy',
             'vincular_usuario',
             'crear_acceso',
+            'cambiar_rol_acceso',
             'desactivar',
             'reactivar',
             'revocar_acceso_laboral',
@@ -751,6 +763,111 @@ class PersonalViewSet(viewsets.ModelViewSet):
             'personal_activo': result.personal_active,
             'usuario_activo': result.user_active,
         }, status=status.HTTP_201_CREATED)
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='cambiar-rol-acceso',
+        permission_classes=[IsAuthenticated],
+    )
+    def cambiar_rol_acceso(self, request, pk=None):
+        try:
+            personal = self.get_object()
+        except Http404:
+            return self._link_error(
+                'PERSONAL_NOT_FOUND',
+                'El Personal solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        command = PersonalBusinessRoleChangeCommandSerializer(
+            data=request.data
+        )
+        if not command.is_valid():
+            error_fields = set(command.errors)
+            error_code = (
+                'INVALID_TARGET_ROLE'
+                if error_fields == {'role'}
+                else 'INVALID_REASON'
+                if error_fields == {'motivo'}
+                else 'INVALID_PAYLOAD'
+            )
+            return self._link_error(
+                error_code,
+                'El payload de cambio de rol de acceso es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+                fields=command.errors,
+            )
+
+        try:
+            result = change_personal_business_role(
+                actor=request.user,
+                personal=personal,
+                target_role=command.validated_data['role'],
+                reason=command.validated_data['motivo'],
+            )
+        except PermissionDeniedForPersonalBusinessRoleChange:
+            return self._link_error(
+                'PERMISSION_DENIED',
+                'No tiene permisos para cambiar el rol de acceso.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except InvalidPersonalBusinessRoleTarget:
+            return self._link_error(
+                'INVALID_TARGET_ROLE',
+                'Solo se permite asignar EMPLEADO o PROFESIONAL.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except InvalidPersonalBusinessRoleReason:
+            return self._link_error(
+                'INVALID_REASON',
+                'El motivo del cambio de rol es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except PersonalWithoutUserForRoleChange:
+            return self._link_error(
+                'PERSONAL_WITHOUT_USER',
+                'El Personal no tiene un Usuario vinculado.',
+                status.HTTP_409_CONFLICT,
+            )
+        except PersonalInactiveForRoleChange:
+            return self._link_error(
+                'PERSONAL_INACTIVE',
+                'El Personal debe estar activo para tener un rol laboral.',
+                status.HTTP_409_CONFLICT,
+            )
+        except MultiplePersonalBusinessRoles:
+            return self._link_error(
+                'MULTIPLE_BUSINESS_ROLES',
+                'El Usuario tiene múltiples roles de negocio.',
+                status.HTTP_409_CONFLICT,
+            )
+        except PersonalBusinessRoleChangeNotAllowed:
+            return self._link_error(
+                'ROLE_CHANGE_NOT_ALLOWED',
+                'El rol actual no puede cambiarse mediante esta acción.',
+                status.HTTP_409_CONFLICT,
+            )
+        except InvalidPersonalLinkTarget:
+            return self._link_error(
+                'PERSONAL_NOT_FOUND',
+                'El Personal solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+        except PersonalBusinessRoleChangeConflict:
+            return self._link_error(
+                'ROLE_CHANGE_CONFLICT',
+                'El cambio de rol entra en conflicto con otra operación.',
+                status.HTTP_409_CONFLICT,
+            )
+
+        return Response({
+            'changed': result.changed,
+            'personal_id': result.personal_id,
+            'usuario_id': result.user_id,
+            'previous_role': result.previous_role,
+            'new_role': result.new_role,
+        }, status=status.HTTP_200_OK)
 
     @action(
         detail=True,
