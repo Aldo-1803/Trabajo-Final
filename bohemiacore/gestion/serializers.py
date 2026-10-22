@@ -571,6 +571,11 @@ class RutinaClienteCreateSerializer(serializers.Serializer):
 
 class PersonalSerializer(serializers.ModelSerializer):
     usuario_email = serializers.CharField(source='usuario.email', read_only=True)
+    usuario_activo = serializers.BooleanField(
+        source='usuario.is_active',
+        read_only=True,
+    )
+    usuario_business_role = serializers.SerializerMethodField()
     horarios = serializers.SerializerMethodField()
     
     class Meta:
@@ -579,9 +584,24 @@ class PersonalSerializer(serializers.ModelSerializer):
             'id', 'nombre', 'apellido', 'rol', 'email', 'telefono', 
             'activo', 'color_calendario', 'usuario',
             'realiza_diagnostico', 'realiza_lavado', 'realiza_color',
-            'usuario_email', 'horarios'
+            'usuario_email', 'usuario_activo', 'usuario_business_role',
+            'horarios'
         ]
-        read_only_fields = ['usuario']
+        read_only_fields = [
+            'usuario',
+            'usuario_email',
+            'usuario_activo',
+            'usuario_business_role',
+        ]
+
+    def get_usuario_business_role(self, obj):
+        if obj.usuario_id is None:
+            return None
+        group_names = {group.name for group in obj.usuario.groups.all()}
+        roles = tuple(
+            role for role in BusinessRole.ALL if role in group_names
+        )
+        return roles[0] if len(roles) == 1 else None
 
     def get_horarios(self, obj):
         """Obtiene los horarios laborales asociados"""

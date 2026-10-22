@@ -5,6 +5,7 @@ from rest_framework.test import APITestCase
 
 from gestion.models import Personal
 from usuarios.models import Usuario
+from usuarios.roles import BusinessRole, get_business_roles
 
 
 class PersonalPrivilegeEscalationTests(APITestCase):
@@ -141,6 +142,54 @@ class PersonalPrivilegeEscalationTests(APITestCase):
         self.assertEqual(self.privilege_snapshot(linked_user), privileges_before)
         self.target_user.refresh_from_db()
         self.assertFalse(self.target_user.is_staff)
+
+    def test_digital_access_summary_fields_are_read_only(self):
+        linked_user = Usuario.objects.create_user(
+            email='linked-summary@test.com',
+            password='testpass123',
+            is_active=False,
+        )
+        linked_user.groups.add(
+            Group.objects.get(name=BusinessRole.EMPLEADO)
+        )
+        personal = Personal.objects.create(
+            usuario=linked_user,
+            nombre='Resumen',
+            apellido='Digital',
+            rol='asistente',
+        )
+        self.client.force_authenticate(user=self.staff_user)
+
+        response = self.client.get(
+            reverse('personal-detail', args=[personal.pk])
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['usuario_email'], linked_user.email)
+        self.assertFalse(response.data['usuario_activo'])
+        self.assertEqual(
+            response.data['usuario_business_role'],
+            BusinessRole.EMPLEADO,
+        )
+
+        response = self.client.patch(
+            reverse('personal-detail', args=[personal.pk]),
+            {
+                'usuario_email': 'changed@test.com',
+                'usuario_activo': True,
+                'usuario_business_role': BusinessRole.ADMINISTRADOR,
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        linked_user.refresh_from_db()
+        self.assertEqual(linked_user.email, 'linked-summary@test.com')
+        self.assertFalse(linked_user.is_active)
+        self.assertEqual(
+            get_business_roles(linked_user),
+            (BusinessRole.EMPLEADO,),
+        )
 
     def test_unlinking_or_deleting_personal_does_not_change_privileges(self):
         unlinked_user = Usuario.objects.create_user(

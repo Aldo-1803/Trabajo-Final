@@ -478,7 +478,10 @@ class PersonalViewSet(viewsets.ModelViewSet):
     """
     ViewSet para gestionar el personal / staff del salón (CRUD completo).
     """
-    queryset = Personal.objects.all()
+    queryset = (
+        Personal.objects.select_related('usuario')
+        .prefetch_related('usuario__groups', 'horarios')
+    )
     serializer_class = PersonalSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = None
