@@ -74,6 +74,40 @@ class AdminClientAccountCreateCommandSerializer(
             raise serializers.ValidationError(exc.messages) from exc
         return value
 
+
+class AdminAdministratorAccountCreateCommandSerializer(
+    StrictInputFieldsMixin,
+    serializers.Serializer,
+):
+    first_name = serializers.CharField(
+        max_length=150,
+        allow_blank=False,
+        trim_whitespace=True,
+    )
+    last_name = serializers.CharField(
+        max_length=150,
+        allow_blank=False,
+        trim_whitespace=True,
+    )
+    email = serializers.EmailField()
+    password_temporal = serializers.CharField(
+        write_only=True,
+        trim_whitespace=False,
+    )
+    motivo = serializers.CharField(
+        min_length=3,
+        max_length=500,
+        allow_blank=False,
+        trim_whitespace=True,
+    )
+
+    def validate_password_temporal(self, value):
+        try:
+            validate_password(value)
+        except ValidationError as exc:
+            raise serializers.ValidationError(exc.messages) from exc
+        return value
+
 class UsuarioPerfilReadSerializer(serializers.ModelSerializer):
     """
     Serializer de "solo lectura" (plano) para MOSTRAR el perfil.

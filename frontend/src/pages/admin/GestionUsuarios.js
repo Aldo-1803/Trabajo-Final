@@ -3,25 +3,37 @@ import axios from 'axios';
 import Swal from 'sweetalert2';
 import { useNavigate } from 'react-router-dom';
 import { notify } from '../../utils/notificaciones';
+import { ADMIN_ROUTES } from '../../routes/routes';
+
+
+const EMPTY_ADMIN_FORM = {
+    email: '',
+    first_name: '',
+    last_name: '',
+    password_temporal: '',
+    motivo: ''
+};
+
+const BUSINESS_ROLE_LABELS = {
+    CLIENTE: 'Cliente',
+    EMPLEADO: 'Empleado',
+    PROFESIONAL: 'Profesional',
+    ADMINISTRADOR: 'Administrador'
+};
 
 const GestionUsuarios = () => {
     const [usuarios, setUsuarios] = useState([]);
     const [loading, setLoading] = useState(true);
     const [modalAbierto, setModalAbierto] = useState(false);
+    const [creandoAdministrador, setCreandoAdministrador] = useState(false);
     
     // Filtros
-    const [filtroRol, setFiltroRol] = useState(''); // '', 'cliente', 'staff'
+    const [filtroRol, setFiltroRol] = useState('');
     const [filtroEstado, setFiltroEstado] = useState(''); // '', 'activos', 'inactivos'
     const [busqueda, setBusqueda] = useState(''); // Búsqueda global
     
     // Estado del Formulario
-    const [form, setForm] = useState({
-        email: '',
-        first_name: '',
-        last_name: '',
-        password: '',
-        is_staff: false
-    });
+    const [form, setForm] = useState(EMPTY_ADMIN_FORM);
 
     const navigate = useNavigate();
 
@@ -33,12 +45,6 @@ const GestionUsuarios = () => {
             
             // Construir parámetros de query
             const params = new URLSearchParams();
-            
-            // Filtro por rol (is_staff)
-            if (filtroRol) {
-                const isStaffValue = filtroRol === 'staff' ? 'true' : 'false';
-                params.append('is_staff', isStaffValue);
-            }
             
             // Filtro por estado (is_active)
             if (filtroEstado) {
@@ -77,7 +83,7 @@ const GestionUsuarios = () => {
         } finally {
             setLoading(false);
         }
-    }, [filtroRol, filtroEstado, busqueda, navigate]);
+    }, [filtroEstado, busqueda, navigate]);
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => {
@@ -86,24 +92,35 @@ const GestionUsuarios = () => {
 
     // --- ACCIONES DEL FORMULARIO ---
     const handleChange = (e) => {
-        const value = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
-        setForm({ ...form, [e.target.name]: value });
+        setForm({ ...form, [e.target.name]: e.target.value });
     };
 
-    const crearUsuario = async (e) => {
+    const crearAdministrador = async (e) => {
         e.preventDefault();
+        setCreandoAdministrador(true);
         try {
             const token = localStorage.getItem('access_token');
-            await axios.post('http://127.0.0.1:8000/api/gestion/admin/usuarios/', form, {
+            await axios.post('http://127.0.0.1:8000/api/usuarios/admin/administradores/crear/', form, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
-            notify.success("Usuario creado exitosamente.");
+            notify.success('Administrador creado exitosamente.');
             setModalAbierto(false);
-            setForm({ email: '', first_name: '', last_name: '', password: '', is_staff: false }); // Reset
-            cargarUsuarios();
+            setForm(EMPTY_ADMIN_FORM);
+            await cargarUsuarios();
         } catch (error) {
-            const msg = error.response?.data?.email ? "El email ya existe." : "Error al crear usuario.";
-            notify.error(`${msg}`);
+            const errorCode = error.response?.data?.error?.code;
+            const messages = {
+                EMAIL_ALREADY_EXISTS: 'Ya existe una cuenta con ese email.',
+                INVALID_PASSWORD: 'La contraseña temporal no cumple los requisitos de seguridad.',
+                INVALID_REASON: 'El motivo debe tener entre 3 y 500 caracteres.',
+                PERMISSION_DENIED: 'No tenés permisos para crear administradores.'
+            };
+            notify.error(
+                messages[errorCode]
+                || 'No se pudo crear el administrador. Intentá nuevamente.'
+            );
+        } finally {
+            setCreandoAdministrador(false);
         }
     };
 
@@ -177,23 +194,41 @@ const GestionUsuarios = () => {
         }
     };
 
+    const usuariosVisibles = filtroRol
+        ? usuarios.filter((user) => user.business_role === filtroRol)
+        : usuarios;
+
     return (
         <div className="min-h-screen p-8" style={{ backgroundColor: '#F5F5EB' }}>
             <div className="max-w-7xl mx-auto">
             <div className="flex justify-between items-center mb-6">
                 <div>
                     <h1 className="text-3xl font-bold text-gray-800">Gestión de Usuarios</h1>
-                    <p className="text-gray-500">Administración de Profesionales y Clientes</p>
+                    <p className="text-gray-500">Administración de cuentas y accesos</p>
                 </div>
-                <div className="flex gap-3">
+                <div className="flex flex-wrap justify-end gap-2">
                     <button 
-                        onClick={() => navigate('/admin-dashboard')} 
+                        onClick={() => navigate(ADMIN_ROUTES.DASHBOARD)}
                         className="px-4 py-2 rounded-lg font-medium transition-all"
                         style={{ color: '#817773', borderColor: '#C1B4A4', border: '1px solid' }}
                         onMouseEnter={(e) => e.target.style.backgroundColor = '#F5F5EB'}
                         onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
                     >
                         ← Volver
+                    </button>
+                    <button
+                        onClick={() => navigate(ADMIN_ROUTES.CLIENTES)}
+                        className="px-4 py-2 rounded-lg font-medium border"
+                        style={{ borderColor: '#817773', color: '#817773' }}
+                    >
+                        Nuevo cliente
+                    </button>
+                    <button
+                        onClick={() => navigate(ADMIN_ROUTES.PERSONAL)}
+                        className="px-4 py-2 rounded-lg font-medium border"
+                        style={{ borderColor: '#817773', color: '#817773' }}
+                    >
+                        Nuevo Personal
                     </button>
                     <button 
                         onClick={() => setModalAbierto(true)}
@@ -202,7 +237,7 @@ const GestionUsuarios = () => {
                         onMouseEnter={(e) => e.target.style.backgroundColor = '#6B5F5B'}
                         onMouseLeave={(e) => e.target.style.backgroundColor = '#817773'}
                     >
-                        <span>+</span> Nuevo Usuario
+                        <span>+</span> Nuevo administrador
                     </button>
                 </div>
             </div>
@@ -239,8 +274,10 @@ const GestionUsuarios = () => {
                                 style={{ borderColor: '#D5BDAF' }}
                             >
                                 <option value="">Todos los roles</option>
-                                <option value="cliente">Clientes</option>
-                                <option value="staff">Personal / Staff</option>
+                                <option value="CLIENTE">Clientes</option>
+                                <option value="EMPLEADO">Empleados</option>
+                                <option value="PROFESIONAL">Profesionales</option>
+                                <option value="ADMINISTRADOR">Administradores</option>
                             </select>
                         </div>
 
@@ -285,7 +322,7 @@ const GestionUsuarios = () => {
             <div className="bg-white shadow-lg rounded-lg overflow-hidden border" style={{ borderColor: '#E8DCC4' }}>
                 {loading ? (
                     <div className="p-8 text-center text-gray-500">Cargando usuarios...</div>
-                ) : usuarios.length === 0 ? (
+                ) : usuariosVisibles.length === 0 ? (
                     <div className="p-8 text-center text-gray-500">
                         <p className="text-lg font-medium">No se encontraron usuarios</p>
                         <p className="text-sm mt-2">Intenta cambiar los filtros o búsqueda</p>
@@ -301,7 +338,7 @@ const GestionUsuarios = () => {
                             </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200">
-                            {usuarios.map((user) => (
+                            {usuariosVisibles.map((user) => (
                                 <tr key={user.id} className="hover:bg-gray-50 transition-colors">
                                     <td className="px-6 py-4">
                                         <div className="text-sm font-bold text-gray-900">
@@ -310,15 +347,9 @@ const GestionUsuarios = () => {
                                         <div className="text-xs text-gray-500">{user.email}</div>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap">
-                                        {user.is_staff ? (
-                                            <span className="px-3 py-1 text-xs font-bold rounded-full text-white" style={{ backgroundColor: '#C1B4A4' }}>
-                                                Profesional
-                                            </span>
-                                        ) : (
-                                            <span className="px-3 py-1 text-xs font-bold rounded-full text-white" style={{ backgroundColor: '#A89484' }}>
-                                                Cliente
-                                            </span>
-                                        )}
+                                        <span className="px-3 py-1 text-xs font-bold rounded-full text-white" style={{ backgroundColor: '#A89484' }}>
+                                            {BUSINESS_ROLE_LABELS[user.business_role] || 'Sin rol'}
+                                        </span>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap">
                                         {user.is_active ? (
@@ -350,54 +381,61 @@ const GestionUsuarios = () => {
                 )}
             </div>
 
-            {/* MODAL NUEVO USUARIO */}
+            {/* MODAL NUEVO ADMINISTRADOR */}
             {modalAbierto && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
                     <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6" style={{ borderTop: '4px solid #817773' }}>
-                        <h2 className="text-xl font-bold mb-4" style={{ color: '#817773' }}>Alta de Usuario</h2>
-                        
-                        <form onSubmit={crearUsuario} className="space-y-4">
+                        <h2 className="text-xl font-bold mb-2" style={{ color: '#817773' }}>Nuevo administrador</h2>
+                        <p className="text-sm text-gray-500 mb-4">
+                            Se creará una cuenta administrativa para la SPA, sin acceso a Django Admin.
+                        </p>
+
+                        <form onSubmit={crearAdministrador} className="space-y-4">
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
-                                    <label className="block text-sm font-medium" style={{ color: '#817773' }}>Nombre</label>
-                                    <input type="text" name="first_name" required className="mt-1 block w-full border rounded p-2" style={{ borderColor: '#E8DCC4' }} value={form.first_name} onChange={handleChange} />
+                                    <label htmlFor="admin-first-name" className="block text-sm font-medium" style={{ color: '#817773' }}>Nombre</label>
+                                    <input id="admin-first-name" type="text" name="first_name" required className="mt-1 block w-full border rounded p-2" style={{ borderColor: '#E8DCC4' }} value={form.first_name} onChange={handleChange} />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium" style={{ color: '#817773' }}>Apellido</label>
-                                    <input type="text" name="last_name" required className="mt-1 block w-full border rounded p-2" style={{ borderColor: '#E8DCC4' }} value={form.last_name} onChange={handleChange} />
+                                    <label htmlFor="admin-last-name" className="block text-sm font-medium" style={{ color: '#817773' }}>Apellido</label>
+                                    <input id="admin-last-name" type="text" name="last_name" required className="mt-1 block w-full border rounded p-2" style={{ borderColor: '#E8DCC4' }} value={form.last_name} onChange={handleChange} />
                                 </div>
                             </div>
 
                             <div>
-                                <label className="block text-sm font-medium" style={{ color: '#817773' }}>Email</label>
-                                <input type="email" name="email" required className="mt-1 block w-full border rounded p-2" style={{ borderColor: '#E8DCC4' }} value={form.email} onChange={handleChange} />
+                                <label htmlFor="admin-email" className="block text-sm font-medium" style={{ color: '#817773' }}>Email</label>
+                                <input id="admin-email" type="email" name="email" required className="mt-1 block w-full border rounded p-2" style={{ borderColor: '#E8DCC4' }} value={form.email} onChange={handleChange} />
                             </div>
 
                             <div>
-                                <label className="block text-sm font-medium" style={{ color: '#817773' }}>Contraseña Provisoria</label>
-                                <input type="password" name="password" required className="mt-1 block w-full border rounded p-2" style={{ borderColor: '#E8DCC4' }} value={form.password} onChange={handleChange} />
+                                <label htmlFor="admin-temporary-password" className="block text-sm font-medium" style={{ color: '#817773' }}>Contraseña temporal</label>
+                                <input id="admin-temporary-password" type="password" name="password_temporal" required className="mt-1 block w-full border rounded p-2" style={{ borderColor: '#E8DCC4' }} value={form.password_temporal} onChange={handleChange} />
                             </div>
 
-                            <div className="flex items-center mt-2">
-                                <input 
-                                    id="is_staff"
-                                    name="is_staff" 
-                                    type="checkbox" 
-                                    className="h-4 w-4 rounded border-gray-300"
-                                    style={{ accentColor: '#817773' }}
-                                    checked={form.is_staff}
+                            <div>
+                                <label htmlFor="admin-creation-reason" className="block text-sm font-medium" style={{ color: '#817773' }}>Motivo</label>
+                                <textarea
+                                    id="admin-creation-reason"
+                                    name="motivo"
+                                    required
+                                    minLength={3}
+                                    maxLength={500}
+                                    rows={3}
+                                    className="mt-1 block w-full border rounded p-2"
+                                    style={{ borderColor: '#E8DCC4' }}
+                                    value={form.motivo}
                                     onChange={handleChange}
                                 />
-                                <label htmlFor="is_staff" className="ml-2 block text-sm font-bold" style={{ color: '#817773' }}>
-                                    ¿Es Profesional / Staff?
-                                </label>
                             </div>
-                            <p className="text-xs text-gray-500">Si se marca, tendrá acceso al panel de administración.</p>
 
                             <div className="flex justify-end gap-3 mt-6 border-t pt-4" style={{ borderColor: '#E8DCC4' }}>
                                 <button 
                                     type="button" 
-                                    onClick={() => setModalAbierto(false)} 
+                                    onClick={() => {
+                                        setModalAbierto(false);
+                                        setForm(EMPTY_ADMIN_FORM);
+                                    }}
+                                    disabled={creandoAdministrador}
                                     className="px-4 py-2 border rounded-lg font-medium transition-all"
                                     style={{ borderColor: '#C1B4A4', color: '#817773' }}
                                     onMouseEnter={(e) => e.target.style.backgroundColor = '#F5F5EB'}
@@ -407,12 +445,13 @@ const GestionUsuarios = () => {
                                 </button>
                                 <button 
                                     type="submit" 
+                                    disabled={creandoAdministrador}
                                     className="px-4 py-2 text-white rounded-lg font-bold transition-all"
                                     style={{ backgroundColor: '#817773' }}
                                     onMouseEnter={(e) => e.target.style.backgroundColor = '#6B5F5B'}
                                     onMouseLeave={(e) => e.target.style.backgroundColor = '#817773'}
                                 >
-                                    Crear Usuario
+                                    {creandoAdministrador ? 'Creando...' : 'Crear administrador'}
                                 </button>
                             </div>
                         </form>

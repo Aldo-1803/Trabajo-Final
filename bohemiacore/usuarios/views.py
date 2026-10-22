@@ -24,9 +24,19 @@ from django.utils.encoding import force_str
 
 from django.db.models import Min
 from .serializers import (
+    AdminAdministratorAccountCreateCommandSerializer,
     AdminClientAccountCreateCommandSerializer, ClienteListSerializer,
     RegistroSerializer, SetNewPasswordSerializer, UsuarioPerfilReadSerializer,
     UsuarioPerfilUpdateSerializer,
+)
+from .administrator_account_services import (
+    AdministratorAccountCreationConflict,
+    AdministratorEmailAlreadyExists,
+    InvalidAdministratorAccountPassword,
+    InvalidAdministratorAccountPayload,
+    InvalidAdministratorAccountReason,
+    PermissionDeniedForAdministratorAccountCreation,
+    create_administrator_account,
 )
 from .client_account_services import (
     ClientAccountCreationConflict,
@@ -53,6 +63,91 @@ from gestion.serializers import DiagnosticoCapilarSerializer
 # Vista para redirigir a la pantalla de registro
 def home(request):
     return redirect('registro')  # Redirige al nombre de la ruta 'registro'
+
+
+class AdminAdministratorAccountCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        command = AdminAdministratorAccountCreateCommandSerializer(
+            data=request.data
+        )
+        if not command.is_valid():
+            error_fields = set(command.errors)
+            if error_fields == {'password_temporal'}:
+                error_code = 'INVALID_PASSWORD'
+            elif error_fields == {'motivo'}:
+                error_code = 'INVALID_REASON'
+            else:
+                error_code = 'INVALID_PAYLOAD'
+            return self._command_error(
+                error_code,
+                'El payload de alta de administrador es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+                fields=command.errors,
+            )
+
+        data = command.validated_data
+        try:
+            result = create_administrator_account(
+                actor=request.user,
+                email=data['email'],
+                first_name=data['first_name'],
+                last_name=data['last_name'],
+                raw_password=data['password_temporal'],
+                reason=data['motivo'],
+            )
+        except PermissionDeniedForAdministratorAccountCreation:
+            return self._command_error(
+                'PERMISSION_DENIED',
+                'No tiene permisos para crear administradores.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except InvalidAdministratorAccountPassword:
+            return self._command_error(
+                'INVALID_PASSWORD',
+                'La contraseña temporal no cumple los requisitos de seguridad.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except InvalidAdministratorAccountReason:
+            return self._command_error(
+                'INVALID_REASON',
+                'El motivo de alta es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except InvalidAdministratorAccountPayload:
+            return self._command_error(
+                'INVALID_PAYLOAD',
+                'Los datos proporcionados son inválidos.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except AdministratorEmailAlreadyExists:
+            return self._command_error(
+                'EMAIL_ALREADY_EXISTS',
+                'Ya existe una cuenta con ese email.',
+                status.HTTP_409_CONFLICT,
+            )
+        except AdministratorAccountCreationConflict:
+            return self._command_error(
+                'ADMIN_ACCOUNT_CREATION_CONFLICT',
+                'El alta entra en conflicto con otra operación.',
+                status.HTTP_409_CONFLICT,
+            )
+
+        return Response({
+            'created': result.created,
+            'usuario_id': result.user_id,
+            'email': result.email,
+            'rol': result.role,
+            'usuario_activo': result.user_active,
+        }, status=status.HTTP_201_CREATED)
+
+    @staticmethod
+    def _command_error(code, detail, status_code, fields=None):
+        error = {'code': code, 'detail': detail}
+        if fields is not None:
+            error['fields'] = fields
+        return Response({'error': error}, status=status_code)
 
 
 class AdminClientAccountCreateView(APIView):
