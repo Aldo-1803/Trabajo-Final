@@ -41,7 +41,7 @@ from .serializers import (
     TipoCabelloSerializer, GrosorCabelloSerializer, PorosidadCabelloSerializer, CueroCabelludoSerializer, EstadoGeneralSerializer,
     CategoriaServicioSerializer, ServicioSerializer, TurnoSerializer, RutinaSerializer, RutinaClienteSerializer,
     RutinaClienteCreateSerializer, ReglaDiagnosticoSerializer, NotificacionSerializer, ProductoSerializer, ImagenProductoSerializer, EquipamientoSerializer,
-    UsuarioAdminIdentityUpdateSerializer, UsuarioAdminLegacyStatusSerializer,
+    UsuarioAccountStatusCommandSerializer, UsuarioAdminIdentityUpdateSerializer,
     UsuarioAdminReadSerializer, UsuarioAdminSerializer, AgendaCuidadosSerializer,
     HorarioLaboralSerializer, BloqueoAgendaSerializer, PersonalSerializer,
     PersonalAccessCreateCommandSerializer, PersonalStatusChangeCommandSerializer,
@@ -88,18 +88,23 @@ from .personal_access_services import (
     WorkAccessRevocationConflict,
 )
 from usuarios.access_services import (
+    AccountDeactivationConflict,
     AccountReactivationConflict,
     InactivePersonal,
     InconsistentBusinessRoleState,
+    InvalidAccountDeactivationReason,
+    InvalidAccountDeactivationTarget,
     InvalidAccountReactivationReason,
     InvalidAccountReactivationTarget,
     LastActiveAdministrator,
     MissingClientProfile,
     MissingPersonalProfile,
+    PermissionDeniedForAccountDeactivation,
     PermissionDeniedForAccountReactivation,
     ProtectedSuperuser,
     SelfDeactivationNotAllowed,
     UserHasNoBusinessRole,
+    deactivate_account,
     reactivate_account,
 )
 
@@ -3112,14 +3117,17 @@ class AdminUsuarioViewSet(viewsets.ModelViewSet):
         if self.action == 'update':
             return UsuarioAdminIdentityUpdateSerializer
         if self.action == 'partial_update':
-            if self._is_legacy_status_payload(self.request.data):
-                return UsuarioAdminLegacyStatusSerializer
             return UsuarioAdminIdentityUpdateSerializer
         # POST remains legacy until its frontend consumer is migrated.
         return UsuarioAdminSerializer
 
     def get_permissions(self):
-        if self.action in ['update', 'partial_update', 'reactivar_cuenta']:
+        if self.action in [
+            'update',
+            'partial_update',
+            'desactivar_cuenta',
+            'reactivar_cuenta',
+        ]:
             permission_classes = [IsAuthenticated]
         else:
             permission_classes = [IsAdminUser]
@@ -3171,14 +3179,93 @@ class AdminUsuarioViewSet(viewsets.ModelViewSet):
         )
         return Response(read_serializer.data, status=status.HTTP_200_OK)
 
-    @staticmethod
-    def _is_legacy_status_payload(data):
-        """
-        Keep the current frontend toggle isolated until account deactivation
-        has its dedicated semantic action. It still requires manage_users and
-        cannot be combined with identity or privilege fields.
-        """
-        return hasattr(data, 'keys') and set(data.keys()) == {'is_active'}
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='desactivar-cuenta',
+        permission_classes=[IsAuthenticated],
+    )
+    def desactivar_cuenta(self, request, pk=None):
+        try:
+            target_user = self.get_object()
+        except Http404:
+            return self._command_error(
+                'USER_NOT_FOUND',
+                'El Usuario solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        command = UsuarioAccountStatusCommandSerializer(data=request.data)
+        if not command.is_valid():
+            error_code = (
+                'INVALID_REASON'
+                if set(command.errors) == {'motivo'}
+                else 'INVALID_PAYLOAD'
+            )
+            return self._command_error(
+                error_code,
+                'El payload de desactivación de cuenta es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+                fields=command.errors,
+            )
+
+        try:
+            result = deactivate_account(
+                actor=request.user,
+                target_user=target_user,
+                reason=command.validated_data['motivo'],
+            )
+        except PermissionDeniedForAccountDeactivation:
+            return self._command_error(
+                'PERMISSION_DENIED',
+                'No tiene permisos para desactivar cuentas.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except ProtectedSuperuser:
+            return self._command_error(
+                'PROTECTED_SUPERUSER',
+                'El Usuario protegido no puede gestionarse mediante esta acción.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except SelfDeactivationNotAllowed:
+            return self._command_error(
+                'SELF_DEACTIVATION_NOT_ALLOWED',
+                'No puede desactivar su propia cuenta mediante esta acción.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except LastActiveAdministrator:
+            return self._command_error(
+                'LAST_ACTIVE_ADMIN',
+                'No puede desactivarse el último administrador activo.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except InvalidAccountDeactivationReason:
+            return self._command_error(
+                'INVALID_REASON',
+                'El motivo de desactivación es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except InvalidAccountDeactivationTarget:
+            return self._command_error(
+                'USER_NOT_FOUND',
+                'El Usuario solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+        except AccountDeactivationConflict:
+            return self._command_error(
+                'ACCOUNT_DEACTIVATION_CONFLICT',
+                'La desactivación entra en conflicto con otra operación.',
+                status.HTTP_409_CONFLICT,
+            )
+
+        return Response({
+            'changed': result.changed,
+            'usuario_id': result.user_id,
+            'usuario_activo_anterior': result.previous_active,
+            'usuario_activo_actual': result.current_active,
+            'rol_actual': result.current_role,
+            'warnings': list(result.warnings),
+        }, status=status.HTTP_200_OK)
 
     @action(
         detail=True,
@@ -3196,7 +3283,7 @@ class AdminUsuarioViewSet(viewsets.ModelViewSet):
                 status.HTTP_404_NOT_FOUND,
             )
 
-        command = PersonalStatusChangeCommandSerializer(data=request.data)
+        command = UsuarioAccountStatusCommandSerializer(data=request.data)
         if not command.is_valid():
             error_code = (
                 'INVALID_REASON'

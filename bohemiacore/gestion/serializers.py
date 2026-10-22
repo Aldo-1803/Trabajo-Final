@@ -767,15 +767,16 @@ class UsuarioAdminIdentityUpdateSerializer(
         fields = ['email', 'first_name', 'last_name']
 
 
-class UsuarioAdminLegacyStatusSerializer(
+class UsuarioAccountStatusCommandSerializer(
     StrictInputFieldsMixin,
-    serializers.ModelSerializer,
+    serializers.Serializer,
 ):
-    """Temporary compatibility path for PATCH {"is_active": ...} only."""
-
-    class Meta:
-        model = Usuario
-        fields = ['is_active']
+    motivo = serializers.CharField(
+        min_length=3,
+        max_length=500,
+        allow_blank=False,
+        trim_whitespace=True,
+    )
 
 # --- B. SERIALIZER PRODUCTOS ---
 class CategoriaProductoSerializer(serializers.ModelSerializer):

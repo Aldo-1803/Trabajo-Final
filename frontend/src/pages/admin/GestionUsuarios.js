@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import Swal from 'sweetalert2';
 import { useNavigate } from 'react-router-dom';
-import { confirmarAccion, notify } from '../../utils/notificaciones';
+import { notify } from '../../utils/notificaciones';
 
 const GestionUsuarios = () => {
     const [usuarios, setUsuarios] = useState([]);
@@ -106,36 +107,73 @@ const GestionUsuarios = () => {
         }
     };
 
-    // --- ACCIÓN DE DESACTIVAR (SOFT DELETE) ---
+    // --- ACCIONES SEMÁNTICAS DE ESTADO DE CUENTA ---
     const toggleEstadoUsuario = async (usuario) => {
-        const accion = usuario.is_active ? "desactivar temporalmente" : "reactivar";
-        const textoSoftDelete = usuario.is_active 
-            ? "El usuario no podrá iniciar sesión, pero sus datos se mantienen en el sistema y podrán ser recuperados." 
-            : "El usuario volverá a tener acceso a su cuenta.";
-        
-        const result = await confirmarAccion({
-            title: `¿${accion.charAt(0).toUpperCase() + accion.slice(1)} usuario?`,
-            text: `${accion.charAt(0).toUpperCase() + accion.slice(1)} a ${usuario.email}\n\n${textoSoftDelete}`,
-            confirmButtonText: `Sí, ${accion}`
+        const desactivar = usuario.is_active;
+        const accion = desactivar ? 'desactivar' : 'reactivar';
+        const textoAccion = desactivar
+            ? 'La cuenta no podrá iniciar sesión, pero sus datos se conservarán.'
+            : 'La cuenta recuperará el acceso si su estado y perfiles son coherentes.';
+
+        const result = await Swal.fire({
+            title: `¿${desactivar ? 'Desactivar' : 'Reactivar'} cuenta?`,
+            text: `${usuario.email}. ${textoAccion}`,
+            icon: 'warning',
+            input: 'textarea',
+            inputLabel: 'Motivo',
+            inputPlaceholder: `Ingresá el motivo para ${accion} la cuenta`,
+            inputAttributes: { maxlength: 500 },
+            inputValidator: (value) => {
+                const motivo = value?.trim() || '';
+                if (motivo.length < 3) {
+                    return 'El motivo debe tener al menos 3 caracteres.';
+                }
+                return null;
+            },
+            showCancelButton: true,
+            confirmButtonColor: '#817773',
+            cancelButtonColor: '#D5D1CC',
+            confirmButtonText: `Sí, ${accion}`,
+            cancelButtonText: 'Cancelar',
+            allowOutsideClick: false
         });
         if (!result.isConfirmed) return;
 
         try {
             const token = localStorage.getItem('access_token');
             const userId = usuario.id;
-            // Usamos PATCH para cambiar solo el is_active
-            await axios.patch(`http://127.0.0.1:8000/api/gestion/admin/usuarios/${userId}/`, 
-                { is_active: !usuario.is_active },
+            const actionPath = desactivar
+                ? 'desactivar-cuenta'
+                : 'reactivar-cuenta';
+            await axios.post(
+                `http://127.0.0.1:8000/api/gestion/admin/usuarios/${userId}/${actionPath}/`,
+                { motivo: result.value.trim() },
                 { headers: { 'Authorization': `Bearer ${token}` } }
             );
-            cargarUsuarios();
-            const mensajeExito = usuario.is_active 
-                ? `Usuario ${accion}do. Sus datos se mantienen en el sistema.`
-                : `Usuario reactivado correctamente`;
-            notify.success(mensajeExito);
+            await cargarUsuarios();
+            notify.success(
+                desactivar
+                    ? 'Cuenta desactivada correctamente.'
+                    : 'Cuenta reactivada correctamente.'
+            );
         } catch (error) {
-            // Aquí capturamos la validación del backend ("No se puede desactivar si tiene turnos...")
-            notify.error(`${JSON.stringify(error.response?.data)}`);
+            const errorCode = error.response?.data?.error?.code;
+            const errorMessages = {
+                LAST_ACTIVE_ADMIN: 'No se puede desactivar al último administrador activo.',
+                SELF_DEACTIVATION_NOT_ALLOWED: 'No podés desactivar tu propia cuenta.',
+                PROTECTED_SUPERUSER: 'La cuenta técnica protegida no puede gestionarse desde esta pantalla.',
+                PERMISSION_DENIED: 'No tenés permisos para gestionar cuentas de usuario.',
+                USER_HAS_NO_BUSINESS_ROLE: 'La cuenta no tiene un rol de negocio válido para reactivarse.',
+                INCONSISTENT_BUSINESS_ROLES: 'La cuenta tiene roles incompatibles y debe ser revisada.',
+                CLIENT_PROFILE_REQUIRED: 'La cuenta requiere un perfil de cliente antes de reactivarse.',
+                PERSONAL_PROFILE_REQUIRED: 'La cuenta requiere un perfil de personal antes de reactivarse.',
+                PERSONAL_INACTIVE: 'Primero debe reactivarse el perfil de personal.',
+                ACCOUNT_REACTIVATION_CONFLICT: 'La cuenta cambió durante la operación. Intentá nuevamente.'
+            };
+            const fallbackMessage = desactivar
+                ? 'No se pudo desactivar la cuenta.'
+                : 'No se pudo reactivar la cuenta por un estado incoherente.';
+            notify.error(errorMessages[errorCode] || fallbackMessage);
         }
     };
 

@@ -155,64 +155,38 @@ class AdminUsuarioCrudContainmentTests(APITestCase):
             original_permissions,
         )
 
-    def test_is_active_is_isolated_in_exact_legacy_patch_only(self):
+    def test_is_active_is_rejected_by_generic_put_and_patch(self):
         self.authenticate()
 
-        mixed_response = self.client.patch(
-            self.detail_url(),
-            {'first_name': 'No aplicar', 'is_active': False},
-            format='json',
+        requests = (
+            ('patch', {'is_active': False}),
+            ('patch', {'is_active': True}),
+            ('put', {'is_active': False}),
+            ('patch', {'first_name': 'No aplicar', 'is_active': False}),
         )
-        put_response = self.client.put(
-            self.detail_url(),
-            {'is_active': False},
-            format='json',
-        )
+        for method, payload in requests:
+            with self.subTest(method=method, payload=payload):
+                response = getattr(self.client, method)(
+                    self.detail_url(),
+                    payload,
+                    format='json',
+                )
+                self.assertEqual(
+                    response.status_code,
+                    status.HTTP_400_BAD_REQUEST,
+                )
+                self.assertEqual(
+                    response.data['error']['code'],
+                    'INVALID_PAYLOAD',
+                )
+                self.assertIn(
+                    'is_active',
+                    response.data['error']['fields'],
+                )
 
-        self.assertEqual(
-            mixed_response.status_code,
-            status.HTTP_400_BAD_REQUEST,
-        )
-        self.assertEqual(
-            mixed_response.data['error']['code'],
-            'INVALID_PAYLOAD',
-        )
-        self.assertIn('is_active', mixed_response.data['error']['fields'])
-        self.assertEqual(put_response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertEqual(
-            put_response.data['error']['code'],
-            'INVALID_PAYLOAD',
-        )
         self.target.refresh_from_db()
         self.assertTrue(self.target.is_active)
         self.assertEqual(self.target.first_name, '')
-
-        legacy_response = self.client.patch(
-            self.detail_url(),
-            {'is_active': False},
-            format='json',
-        )
-
-        self.assertEqual(legacy_response.status_code, status.HTTP_200_OK)
-        self.target.refresh_from_db()
-        self.assertFalse(self.target.is_active)
-
-    def test_legacy_status_patch_also_requires_manage_users(self):
-        self.authenticate(self.staff_only)
-
-        response = self.client.patch(
-            self.detail_url(),
-            {'is_active': False},
-            format='json',
-        )
-
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertEqual(
-            response.data['error']['code'],
-            'PERMISSION_DENIED',
-        )
-        self.target.refresh_from_db()
-        self.assertTrue(self.target.is_active)
 
     def test_superuser_target_is_protected_from_put_and_patch(self):
         target = self.create_user(
