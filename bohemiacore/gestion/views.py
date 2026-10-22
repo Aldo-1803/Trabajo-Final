@@ -1,7 +1,11 @@
 from rest_framework import viewsets, status, serializers
 from rest_framework.decorators import api_view, permission_classes, action
 from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
-from rest_framework.exceptions import ValidationError, PermissionDenied
+from rest_framework.exceptions import (
+    MethodNotAllowed,
+    PermissionDenied,
+    ValidationError,
+)
 from rest_framework import generics
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -476,7 +480,9 @@ class ServiciosQuimicosViewSet(viewsets.ReadOnlyModelViewSet):
 
 class PersonalViewSet(viewsets.ModelViewSet):
     """
-    ViewSet para gestionar el personal / staff del salón (CRUD completo).
+    Gestiona Personal mediante altas, edición y operaciones semánticas.
+
+    La eliminación física no forma parte de esta API.
     """
     queryset = (
         Personal.objects.select_related('usuario')
@@ -492,6 +498,7 @@ class PersonalViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action in [
+            'destroy',
             'vincular_usuario',
             'crear_acceso',
             'desactivar',
@@ -505,6 +512,16 @@ class PersonalViewSet(viewsets.ModelViewSet):
         else:
             permission_classes = [IsAdminUser]
         return [permission() for permission in permission_classes]
+
+    def destroy(self, request, *args, **kwargs):
+        """Personal has no ordinary hard-delete operation."""
+        raise MethodNotAllowed(
+            request.method,
+            detail=(
+                'Personal no puede eliminarse. Utilice las operaciones '
+                'semánticas de estado o revocación de acceso.'
+            ),
+        )
 
     @action(
         detail=True,
@@ -1027,33 +1044,6 @@ class PersonalViewSet(viewsets.ModelViewSet):
             error['fields'] = fields
         return Response({'error': error}, status=status_code)
     
-    def perform_destroy(self, instance):
-        """
-        Soft Delete o Hard Delete según si tiene Turnos ACTIVOS:
-        - Si tiene Turnos ACTIVOS: Marcar como inactivo (soft delete)
-        - Si solo tiene Turnos finalizados o NINGUNO: Eliminar (hard delete)
-        """
-        # Verificar si tiene Turnos ACTIVOS (solicitado, esperando seña, confirmado, pendiente, en proceso)
-        tiene_turnos_activos = Turno.objects.filter(
-            profesional=instance,
-            estado__in=[
-                Turno.Estado.SOLICITADO,
-                Turno.Estado.ESPERANDO_SENA,
-                Turno.Estado.CONFIRMADO,
-                Turno.Estado.PENDIENTE,
-                Turno.Estado.EN_PROCESO
-            ]
-        ).exists()
-        
-        if tiene_turnos_activos:
-            # Soft Delete: Marcar como inactivo si hay Turnos ACTIVOS
-            instance.activo = False
-            instance.save()
-        else:
-            # Hard Delete: Permitir eliminación si solo hay Turnos finalizados o ninguno
-            instance.delete()
-    
-
 class DisponibilidadTurnosView(APIView):
     """
     Endpoint público (o protegido) para consultar la agenda.

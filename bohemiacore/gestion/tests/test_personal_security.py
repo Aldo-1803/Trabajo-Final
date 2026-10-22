@@ -191,7 +191,7 @@ class PersonalPrivilegeEscalationTests(APITestCase):
             (BusinessRole.EMPLEADO,),
         )
 
-    def test_unlinking_or_deleting_personal_does_not_change_privileges(self):
+    def test_unlinking_or_rejected_delete_does_not_change_privileges(self):
         unlinked_user = Usuario.objects.create_user(
             email='linked-unlink@test.com',
             password='testpass123',
@@ -232,8 +232,11 @@ class PersonalPrivilegeEscalationTests(APITestCase):
             reverse('personal-detail', args=[personal_to_delete.pk])
         )
 
-        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
-        self.assertFalse(Personal.objects.filter(pk=personal_to_delete.pk).exists())
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+        self.assertTrue(Personal.objects.filter(pk=personal_to_delete.pk).exists())
         self.assertEqual(
             self.privilege_snapshot(deleted_user),
             delete_privileges,

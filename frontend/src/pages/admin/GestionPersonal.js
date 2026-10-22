@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { confirmarAccion, notify } from '../../utils/notificaciones';
+import { notify } from '../../utils/notificaciones';
 
 const GestionPersonal = () => {
     const [personal, setPersonal] = useState([]);
@@ -24,6 +24,9 @@ const GestionPersonal = () => {
     const [busquedaUsuario, setBusquedaUsuario] = useState('');
     const [usuarioSeleccionado, setUsuarioSeleccionado] = useState('');
     const [motivoVinculo, setMotivoVinculo] = useState('');
+    const [accionSemantica, setAccionSemantica] = useState(null);
+    const [motivoAccion, setMotivoAccion] = useState('');
+    const [procesandoAccion, setProcesandoAccion] = useState(false);
     
     const [form, setForm] = useState({
         nombre: '',
@@ -123,26 +126,62 @@ const GestionPersonal = () => {
         }
     };
 
-    const eliminarPersonal = async (id, nombre) => {
-        const result = await confirmarAccion({
-            title: "¿Eliminar personal?",
-            text: `Se eliminará a ${nombre}`,
-            confirmButtonText: "Sí, eliminar"
-        });
-        if (!result.isConfirmed) return;
+    const ACCIONES_SEMANTICAS = {
+        desactivar: {
+            titulo: 'Desactivar Personal',
+            endpoint: 'desactivar',
+            exito: 'Personal desactivado correctamente.'
+        },
+        reactivar: {
+            titulo: 'Reactivar Personal',
+            endpoint: 'reactivar',
+            exito: 'Personal reactivado correctamente.'
+        },
+        revocarLaboral: {
+            titulo: 'Revocar acceso laboral',
+            endpoint: 'revocar-acceso-laboral',
+            exito: 'Acceso laboral revocado correctamente.'
+        },
+        revocarTotal: {
+            titulo: 'Revocar acceso total',
+            endpoint: 'revocar-acceso-total',
+            exito: 'Acceso total revocado correctamente.'
+        }
+    };
 
+    const abrirAccionSemantica = (tipo, item) => {
+        setAccionSemantica({ tipo, personal: item });
+        setMotivoAccion('');
+    };
+
+    const cerrarAccionSemantica = () => {
+        if (procesandoAccion) return;
+        setAccionSemantica(null);
+        setMotivoAccion('');
+    };
+
+    const ejecutarAccionSemantica = async (event) => {
+        event.preventDefault();
+        if (!accionSemantica) return;
+
+        const config = ACCIONES_SEMANTICAS[accionSemantica.tipo];
+        setProcesandoAccion(true);
         try {
             const token = localStorage.getItem('access_token');
-            await axios.delete(`http://127.0.0.1:8000/api/gestion/personal/${id}/`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            notify.success('Personal eliminado');
-            
-            // Recargar la lista después de la eliminación
+            await axios.post(
+                `http://127.0.0.1:8000/api/gestion/personal/${accionSemantica.personal.id}/${config.endpoint}/`,
+                { motivo: motivoAccion },
+                { headers: { 'Authorization': `Bearer ${token}` } }
+            );
+            setAccionSemantica(null);
+            setMotivoAccion('');
             await cargarPersonal();
+            notify.success(config.exito);
         } catch (error) {
-            console.error('Error al eliminar:', error);
-            notify.error('No se pudo eliminar');
+            const message = error.response?.data?.error?.message;
+            notify.error(message || `No se pudo completar: ${config.titulo.toLowerCase()}.`);
+        } finally {
+            setProcesandoAccion(false);
         }
     };
 
@@ -418,22 +457,44 @@ const GestionPersonal = () => {
                                                 </div>
                                             )}
                                         </td>
-                                        <td className="px-4 py-3 text-right space-x-2">
-                                            <button
-                                                onClick={() => abrirModal(p)}
-                                                className="font-semibold transition-all" 
-                                                style={{ color: '#817773' }}
-                                                onMouseEnter={(e) => e.target.style.color = '#6B5F5B'}
-                                                onMouseLeave={(e) => e.target.style.color = '#817773'}
-                                            >
-                                                Editar
-                                            </button>
-                                            <button
-                                                onClick={() => eliminarPersonal(p.id, `${p.nombre} ${p.apellido}`)}
-                                                className="font-semibold transition-all text-red-600 hover:text-red-800"
-                                            >
-                                                Eliminar
-                                            </button>
+                                        <td className="px-4 py-3 text-right">
+                                            <div className="flex flex-wrap justify-end gap-2">
+                                                <button
+                                                    onClick={() => abrirModal(p)}
+                                                    className="font-semibold transition-all"
+                                                    style={{ color: '#817773' }}
+                                                    onMouseEnter={(e) => e.target.style.color = '#6B5F5B'}
+                                                    onMouseLeave={(e) => e.target.style.color = '#817773'}
+                                                >
+                                                    Editar
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => abrirAccionSemantica(p.activo ? 'desactivar' : 'reactivar', p)}
+                                                    className="font-semibold transition-all"
+                                                    style={{ color: p.activo ? '#B45309' : '#047857' }}
+                                                >
+                                                    {p.activo ? 'Desactivar' : 'Reactivar'}
+                                                </button>
+                                                {p.usuario !== null && p.usuario !== undefined && (
+                                                    <>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => abrirAccionSemantica('revocarLaboral', p)}
+                                                            className="font-semibold transition-all text-amber-700 hover:text-amber-900"
+                                                        >
+                                                            Revocar acceso laboral
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => abrirAccionSemantica('revocarTotal', p)}
+                                                            className="font-semibold transition-all text-red-700 hover:text-red-900"
+                                                        >
+                                                            Revocar acceso total
+                                                        </button>
+                                                    </>
+                                                )}
+                                            </div>
                                         </td>
                                     </tr>
                                 ))}
@@ -519,6 +580,54 @@ const GestionPersonal = () => {
                                         style={{ backgroundColor: '#817773' }}
                                     >
                                         {creandoAcceso ? 'Creando...' : 'Crear acceso'}
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                )}
+
+                {accionSemantica && (
+                    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+                        <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6" style={{ borderTop: '4px solid #817773' }}>
+                            <h2 className="text-2xl font-bold text-gray-800 mb-2">
+                                {ACCIONES_SEMANTICAS[accionSemantica.tipo].titulo}
+                            </h2>
+                            <p className="text-sm text-gray-600 mb-5">
+                                {accionSemantica.personal.nombre} {accionSemantica.personal.apellido}
+                            </p>
+                            <form onSubmit={ejecutarAccionSemantica} className="space-y-4">
+                                <div>
+                                    <label htmlFor="semantic-action-reason" className="block text-sm font-medium text-gray-700 mb-1">
+                                        Motivo *
+                                    </label>
+                                    <textarea
+                                        id="semantic-action-reason"
+                                        value={motivoAccion}
+                                        onChange={(event) => setMotivoAccion(event.target.value)}
+                                        required
+                                        minLength={3}
+                                        maxLength={500}
+                                        rows={3}
+                                        className="w-full border border-gray-300 rounded-lg p-2"
+                                    />
+                                </div>
+                                <div className="flex justify-end gap-3 pt-4 border-t">
+                                    <button
+                                        type="button"
+                                        onClick={cerrarAccionSemantica}
+                                        disabled={procesandoAccion}
+                                        className="px-4 py-2 border rounded-lg font-medium"
+                                    >
+                                        Cancelar
+                                    </button>
+                                    <button
+                                        type="submit"
+                                        disabled={procesandoAccion}
+                                        className="px-4 py-2 rounded-lg font-bold text-white disabled:opacity-60"
+                                        style={{ backgroundColor: '#817773' }}
+                                    >
+                                        {procesandoAccion ? 'Procesando...' : 'Confirmar'}
                                     </button>
                                 </div>
                             </form>

@@ -10,12 +10,10 @@ jest.mock('axios', () => ({
     default: {
         get: jest.fn(),
         post: jest.fn(),
-        put: jest.fn(),
-        delete: jest.fn()
+        put: jest.fn()
     }
 }));
 jest.mock('../../utils/notificaciones', () => ({
-    confirmarAccion: jest.fn(),
     notify: {
         success: jest.fn(),
         error: jest.fn(),
@@ -131,6 +129,10 @@ describe('GestionPersonal access UI', () => {
         expect(unlinkedRow).toHaveTextContent('Acceso al sistema: No');
         expect(within(unlinkedRow).getByRole('button', { name: 'Crear acceso' })).toBeInTheDocument();
         expect(within(unlinkedRow).getByRole('button', { name: 'Vincular cuenta existente' })).toBeInTheDocument();
+        expect(within(unlinkedRow).getByRole('button', { name: 'Desactivar' })).toBeInTheDocument();
+        expect(within(unlinkedRow).queryByRole('button', { name: 'Reactivar' })).not.toBeInTheDocument();
+        expect(within(unlinkedRow).queryByRole('button', { name: 'Revocar acceso laboral' })).not.toBeInTheDocument();
+        expect(within(unlinkedRow).queryByRole('button', { name: 'Revocar acceso total' })).not.toBeInTheDocument();
 
         const linkedRow = screen.getByText('Con Cuenta').closest('tr');
         expect(linkedRow).toHaveTextContent('Personal: Inactivo');
@@ -140,6 +142,59 @@ describe('GestionPersonal access UI', () => {
         expect(linkedRow).toHaveTextContent('Rol: PROFESIONAL');
         expect(within(linkedRow).queryByRole('button', { name: 'Crear acceso' })).not.toBeInTheDocument();
         expect(within(linkedRow).queryByRole('button', { name: 'Vincular cuenta existente' })).not.toBeInTheDocument();
+        expect(within(linkedRow).getByRole('button', { name: 'Reactivar' })).toBeInTheDocument();
+        expect(within(linkedRow).getByRole('button', { name: 'Revocar acceso laboral' })).toBeInTheDocument();
+        expect(within(linkedRow).getByRole('button', { name: 'Revocar acceso total' })).toBeInTheDocument();
+    });
+
+    test('no ofrece Eliminar ni dispone de un consumidor axios.delete', async () => {
+        await renderLoaded();
+
+        expect(screen.queryByRole('button', { name: /eliminar/i })).not.toBeInTheDocument();
+        expect(axios.delete).toBeUndefined();
+    });
+
+    test('Desactivar usa el endpoint semántico con motivo y nunca DELETE', async () => {
+        await renderLoaded();
+        const row = screen.getByText('Sin Acceso').closest('tr');
+        fireEvent.click(within(row).getByRole('button', { name: 'Desactivar' }));
+
+        expect(screen.getByRole('heading', { name: 'Desactivar Personal' })).toBeInTheDocument();
+        fireEvent.change(screen.getByLabelText('Motivo *'), {
+            target: { value: 'Fin temporal de actividad' }
+        });
+        fireEvent.click(screen.getByRole('button', { name: 'Confirmar' }));
+
+        await waitFor(() => {
+            expect(axios.post).toHaveBeenCalledWith(
+                'http://127.0.0.1:8000/api/gestion/personal/10/desactivar/',
+                { motivo: 'Fin temporal de actividad' },
+                { headers: { Authorization: 'Bearer test-token' } }
+            );
+        });
+        expect(axios.delete).toBeUndefined();
+    });
+
+    test.each([
+        ['Reactivar', 'reactivar'],
+        ['Revocar acceso laboral', 'revocar-acceso-laboral'],
+        ['Revocar acceso total', 'revocar-acceso-total']
+    ])('%s usa su endpoint POST explícito', async (buttonName, endpoint) => {
+        await renderLoaded();
+        const row = screen.getByText('Con Cuenta').closest('tr');
+        fireEvent.click(within(row).getByRole('button', { name: buttonName }));
+        fireEvent.change(screen.getByLabelText('Motivo *'), {
+            target: { value: 'Decisión administrativa explícita' }
+        });
+        fireEvent.click(screen.getByRole('button', { name: 'Confirmar' }));
+
+        await waitFor(() => {
+            expect(axios.post).toHaveBeenCalledWith(
+                `http://127.0.0.1:8000/api/gestion/personal/20/${endpoint}/`,
+                { motivo: 'Decisión administrativa explícita' },
+                { headers: { Authorization: 'Bearer test-token' } }
+            );
+        });
     });
 
     test('Crear acceso abre modal y envía exclusivamente el contrato laboral', async () => {
