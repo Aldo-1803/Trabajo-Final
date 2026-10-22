@@ -22,6 +22,9 @@ ROLE_AUDIT_TABLE = 'UsuarioBusinessRole'
 ACCOUNT_DEACTIVATED_EVENT = 'ACCOUNT_DEACTIVATED'
 ACCOUNT_DEACTIVATION_SOURCE = 'usuarios.access_services.deactivate_account'
 ACCOUNT_DEACTIVATION_AUDIT_TABLE = 'UsuarioAccountStatus'
+ACCOUNT_REACTIVATED_EVENT = 'ACCOUNT_REACTIVATED'
+ACCOUNT_REACTIVATION_SOURCE = 'usuarios.access_services.reactivate_account'
+ACCOUNT_REACTIVATION_AUDIT_TABLE = 'UsuarioAccountStatus'
 MIN_REASON_LENGTH = 3
 MAX_REASON_LENGTH = 500
 
@@ -98,6 +101,30 @@ class AccountDeactivationConflict(AccountDeactivationError):
     pass
 
 
+class AccountReactivationError(Exception):
+    pass
+
+
+class PermissionDeniedForAccountReactivation(AccountReactivationError):
+    pass
+
+
+class InvalidAccountReactivationReason(AccountReactivationError):
+    pass
+
+
+class InvalidAccountReactivationTarget(AccountReactivationError):
+    pass
+
+
+class UserHasNoBusinessRole(AccountReactivationError):
+    pass
+
+
+class AccountReactivationConflict(AccountReactivationError):
+    pass
+
+
 @dataclass(frozen=True)
 class RoleAssignmentResult:
     changed: bool
@@ -115,6 +142,134 @@ class AccountDeactivationResult:
     current_role: str | None
     audit_id: int | None
     warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class AccountReactivationResult:
+    changed: bool
+    user_id: int
+    previous_active: bool
+    current_active: bool
+    current_role: str
+    audit_id: int | None
+    warnings: tuple[str, ...]
+
+
+@transaction.atomic
+def reactivate_account(actor, target_user, reason):
+    """Reactivate one coherent account without changing roles or profiles."""
+    normalized_reason = _validate_account_reactivation_reason(reason)
+    user_model = get_user_model()
+    current_actor = _get_account_reactivation_actor(actor, user_model)
+    locked_target = _get_locked_reactivation_target(target_user, user_model)
+
+    if current_actor.pk == locked_target.pk:
+        raise PermissionDeniedForAccountReactivation(
+            'Self-service account reactivation is not allowed.'
+        )
+    if locked_target.is_superuser:
+        raise ProtectedSuperuser(
+            'Superusers cannot be managed through account reactivation.'
+        )
+    if has_inconsistent_business_roles(locked_target):
+        raise InconsistentBusinessRoleState(
+            'The target user has multiple business roles.'
+        )
+
+    current_role = get_business_role(locked_target)
+    if current_role is None:
+        raise UserHasNoBusinessRole(
+            'A business role is required to reactivate an account.'
+        )
+
+    warnings = []
+    if current_role == BusinessRole.CLIENTE:
+        client = (
+            Cliente.objects.select_for_update()
+            .filter(usuario=locked_target)
+            .first()
+        )
+        if client is None:
+            raise MissingClientProfile(
+                'The CLIENTE role requires a client profile.'
+            )
+        if not client.activo:
+            warnings.append('CLIENT_PROFILE_INACTIVE')
+    elif current_role in (
+        BusinessRole.EMPLEADO,
+        BusinessRole.PROFESIONAL,
+    ):
+        from gestion.models import Personal
+
+        personal = (
+            Personal.objects.select_for_update()
+            .filter(usuario=locked_target)
+            .first()
+        )
+        if personal is None:
+            raise MissingPersonalProfile(
+                'The labor role requires a personnel profile.'
+            )
+        if not personal.activo:
+            raise InactivePersonal(
+                'Active personnel is required to reactivate a labor account.'
+            )
+
+    previous_active = locked_target.is_active
+    if previous_active:
+        return AccountReactivationResult(
+            changed=False,
+            user_id=locked_target.pk,
+            previous_active=True,
+            current_active=True,
+            current_role=current_role,
+            audit_id=None,
+            warnings=tuple(warnings),
+        )
+
+    updated = user_model.objects.filter(
+        pk=locked_target.pk,
+        is_active=False,
+    ).update(is_active=True)
+    if updated != 1:
+        raise AccountReactivationConflict(
+            'The account status conflicts with another operation.'
+        )
+
+    locked_target.is_active = True
+    warnings.append('PREEXISTING_TOKENS_MAY_REGAIN_VALIDITY')
+    audit = Auditoria.objects.create(
+        tabla=ACCOUNT_REACTIVATION_AUDIT_TABLE,
+        registro_id=locked_target.pk,
+        usuario=current_actor,
+        accion='MODIFICACION',
+        valor_anterior={
+            'event': ACCOUNT_REACTIVATED_EVENT,
+            'target_user_id': locked_target.pk,
+            'active': previous_active,
+            'business_role': current_role,
+        },
+        valor_nuevo={
+            'event': ACCOUNT_REACTIVATED_EVENT,
+            'source': ACCOUNT_REACTIVATION_SOURCE,
+            'actor_id': current_actor.pk,
+            'target_user_id': locked_target.pk,
+            'previous_active': previous_active,
+            'current_active': True,
+            'current_business_role': current_role,
+            'reason': normalized_reason,
+        },
+    )
+
+    return AccountReactivationResult(
+        changed=True,
+        user_id=locked_target.pk,
+        previous_active=previous_active,
+        current_active=True,
+        current_role=current_role,
+        audit_id=audit.pk,
+        warnings=tuple(warnings),
+    )
 
 
 @transaction.atomic
@@ -321,6 +476,21 @@ def _validate_account_deactivation_reason(reason):
     return normalized_reason
 
 
+def _validate_account_reactivation_reason(reason):
+    if not isinstance(reason, str):
+        raise InvalidAccountReactivationReason(
+            'An account-reactivation reason is required.'
+        )
+
+    normalized_reason = reason.strip()
+    if not MIN_REASON_LENGTH <= len(normalized_reason) <= MAX_REASON_LENGTH:
+        raise InvalidAccountReactivationReason(
+            f'The reason must contain between {MIN_REASON_LENGTH} and '
+            f'{MAX_REASON_LENGTH} characters.'
+        )
+    return normalized_reason
+
+
 def _get_authorized_actor(actor, user_model):
     if (
         not isinstance(actor, user_model)
@@ -375,6 +545,33 @@ def _get_account_manager_actor(actor, user_model):
     return current_actor
 
 
+def _get_account_reactivation_actor(actor, user_model):
+    if (
+        not isinstance(actor, user_model)
+        or actor.pk is None
+        or not actor.is_authenticated
+    ):
+        raise PermissionDeniedForAccountReactivation(
+            'A valid authenticated actor is required.'
+        )
+
+    try:
+        current_actor = user_model.objects.get(pk=actor.pk)
+    except user_model.DoesNotExist as exc:
+        raise PermissionDeniedForAccountReactivation(
+            'A valid authenticated actor is required.'
+        ) from exc
+
+    if (
+        not current_actor.is_active
+        or not current_actor.has_perm(BusinessPermission.MANAGE_USERS)
+    ):
+        raise PermissionDeniedForAccountReactivation(
+            'The actor cannot reactivate user accounts.'
+        )
+    return current_actor
+
+
 def _get_locked_target(target_user, user_model):
     if not isinstance(target_user, user_model) or target_user.pk is None:
         raise InvalidRoleAssignmentTarget('A valid target user is required.')
@@ -397,6 +594,20 @@ def _get_locked_account_target(target_user, user_model):
         return user_model.objects.select_for_update().get(pk=target_user.pk)
     except user_model.DoesNotExist as exc:
         raise InvalidAccountDeactivationTarget(
+            'A valid target user is required.'
+        ) from exc
+
+
+def _get_locked_reactivation_target(target_user, user_model):
+    if not isinstance(target_user, user_model) or target_user.pk is None:
+        raise InvalidAccountReactivationTarget(
+            'A valid target user is required.'
+        )
+
+    try:
+        return user_model.objects.select_for_update().get(pk=target_user.pk)
+    except user_model.DoesNotExist as exc:
+        raise InvalidAccountReactivationTarget(
             'A valid target user is required.'
         ) from exc
 

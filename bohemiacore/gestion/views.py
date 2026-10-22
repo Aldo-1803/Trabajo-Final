@@ -86,10 +86,19 @@ from .personal_access_services import (
     WorkAccessRevocationConflict,
 )
 from usuarios.access_services import (
+    AccountReactivationConflict,
+    InactivePersonal,
     InconsistentBusinessRoleState,
+    InvalidAccountReactivationReason,
+    InvalidAccountReactivationTarget,
     LastActiveAdministrator,
+    MissingClientProfile,
+    MissingPersonalProfile,
+    PermissionDeniedForAccountReactivation,
     ProtectedSuperuser,
     SelfDeactivationNotAllowed,
+    UserHasNoBusinessRole,
+    reactivate_account,
 )
 
 from .services import DisponibilidadService 
@@ -3094,11 +3103,131 @@ class AdminUsuarioViewSet(viewsets.ModelViewSet):
     ordering_fields = ['date_joined', 'email', 'first_name', 'last_name']
     ordering = ['-date_joined']  # Por defecto, mostrar primero los más nuevos
 
+    def get_permissions(self):
+        if self.action == 'reactivar_cuenta':
+            permission_classes = [IsAuthenticated]
+        else:
+            permission_classes = [IsAdminUser]
+        return [permission() for permission in permission_classes]
+
     def get_queryset(self):
         """
         Retornar todos los usuarios y dejar que django-filter haga el filtrado.
         """
         return Usuario.objects.all()
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='reactivar-cuenta',
+        permission_classes=[IsAuthenticated],
+    )
+    def reactivar_cuenta(self, request, pk=None):
+        try:
+            target_user = self.get_object()
+        except Http404:
+            return self._command_error(
+                'USER_NOT_FOUND',
+                'El Usuario solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        command = PersonalStatusChangeCommandSerializer(data=request.data)
+        if not command.is_valid():
+            error_code = (
+                'INVALID_REASON'
+                if set(command.errors) == {'motivo'}
+                else 'INVALID_PAYLOAD'
+            )
+            return self._command_error(
+                error_code,
+                'El payload de reactivación de cuenta es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+                fields=command.errors,
+            )
+
+        try:
+            result = reactivate_account(
+                actor=request.user,
+                target_user=target_user,
+                reason=command.validated_data['motivo'],
+            )
+        except PermissionDeniedForAccountReactivation:
+            return self._command_error(
+                'PERMISSION_DENIED',
+                'No tiene permisos para reactivar cuentas.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except ProtectedSuperuser:
+            return self._command_error(
+                'PROTECTED_SUPERUSER',
+                'El Usuario protegido no puede gestionarse mediante esta acción.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except InvalidAccountReactivationReason:
+            return self._command_error(
+                'INVALID_REASON',
+                'El motivo de reactivación es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except InvalidAccountReactivationTarget:
+            return self._command_error(
+                'USER_NOT_FOUND',
+                'El Usuario solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+        except UserHasNoBusinessRole:
+            return self._command_error(
+                'USER_HAS_NO_BUSINESS_ROLE',
+                'El Usuario no tiene un rol de negocio.',
+                status.HTTP_409_CONFLICT,
+            )
+        except InconsistentBusinessRoleState:
+            return self._command_error(
+                'INCONSISTENT_BUSINESS_ROLES',
+                'El Usuario tiene múltiples roles de negocio.',
+                status.HTTP_409_CONFLICT,
+            )
+        except MissingClientProfile:
+            return self._command_error(
+                'CLIENT_PROFILE_REQUIRED',
+                'El rol CLIENTE requiere un perfil Cliente.',
+                status.HTTP_409_CONFLICT,
+            )
+        except MissingPersonalProfile:
+            return self._command_error(
+                'PERSONAL_PROFILE_REQUIRED',
+                'El rol laboral requiere un Personal vinculado.',
+                status.HTTP_409_CONFLICT,
+            )
+        except InactivePersonal:
+            return self._command_error(
+                'PERSONAL_INACTIVE',
+                'Debe reactivar el Personal antes de reactivar la cuenta.',
+                status.HTTP_409_CONFLICT,
+            )
+        except AccountReactivationConflict:
+            return self._command_error(
+                'ACCOUNT_REACTIVATION_CONFLICT',
+                'La reactivación entra en conflicto con otra operación.',
+                status.HTTP_409_CONFLICT,
+            )
+
+        return Response({
+            'changed': result.changed,
+            'usuario_id': result.user_id,
+            'usuario_activo_anterior': result.previous_active,
+            'usuario_activo_actual': result.current_active,
+            'rol_actual': result.current_role,
+            'warnings': list(result.warnings),
+        }, status=status.HTTP_200_OK)
+
+    @staticmethod
+    def _command_error(code, detail, status_code, fields=None):
+        error = {'code': code, 'detail': detail}
+        if fields is not None:
+            error['fields'] = fields
+        return Response({'error': error}, status=status_code)
 
     def perform_destroy(self, instance):
         """
