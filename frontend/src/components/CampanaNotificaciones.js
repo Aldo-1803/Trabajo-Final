@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
+import { useSession } from '../context/SessionContext';
+import { getNotificationDestination } from '../utils/notificationNavigation';
 import { confirmarAccion, notify } from '../utils/notificaciones';
 import { IconBellOff, IconCheckCircle, IconClock, IconFastForward, IconInfo, IconWarning } from './common/Icons';
 
@@ -10,6 +12,7 @@ const CampanaNotificaciones = () => {
     const [unreadCount, setUnreadCount] = useState(0);
     const [procesando, setProcesando] = useState({});
     const navigate = useNavigate();
+    const { session } = useSession();
 
     const fetchNotificaciones = async () => {
         try {
@@ -150,104 +153,13 @@ const CampanaNotificaciones = () => {
         try {
             // Primero marcar como leído
             await marcarComoLeida(notif.id);
-            
-            // Obtener datos contextuales de la notificación
-            const datosExtra = notif.datos_extra || {};
-            
-            // Obtener información del usuario actual desde localStorage
-            const userInfoString = localStorage.getItem('user_info');
-            console.log('Raw user_info from localStorage:', userInfoString);
-            
-            const userData = userInfoString ? JSON.parse(userInfoString) : {};
-            console.log('Parsed userData:', userData);
-            
-            // Convertir is_staff a boolean (puede ser boolean o string)
-            let isStaff = false;
-            if (userData.is_staff !== undefined) {
-                isStaff = userData.is_staff === true || userData.is_staff === 'true';
-            }
-            
-            console.log('isStaff value:', isStaff, 'type:', typeof isStaff);
-            console.log('User data check - userData:', userData, 'isStaff boolean:', isStaff);
-            
-            // Configurar ruta y estado según el tipo
-            let rutaDestino = '/perfil'; // Ruta por defecto
-            let stateData = {};
-            
-            // Lógica de enrutamiento inteligente basado en datos_extra
-            
-            // 1. Si tiene servicio_id y fecha -> Reserva con pre-llenado
-            if (datosExtra.servicio_id && datosExtra.fecha) {
-                rutaDestino = '/reserva';
-                stateData = {
-                    servicioPreseleccionado: datosExtra.servicio_id,
-                    fechaSugerida: datosExtra.fecha,
-                    horaSugerida: datosExtra.hora || null,
-                    notificacionId: notif.id,
-                    profesionalId: datosExtra.profesional_id || null
-                };
-            }
-            
-            // 2. Si tiene promo_id -> Ir a la promoción específica
-            else if (datosExtra.promo_id) {
-                rutaDestino = '/promociones';
-                stateData = {
-                    promoId: datosExtra.promo_id,
-                    notificacionId: notif.id
-                };
-            }
-            
-            // 3. Si es compra -> Ir a mis-pedidos (cliente) o gestion de ordenes (admin)
-            else if (datosExtra.contexto === 'compra_exitosa' || datosExtra.orden_id) {
-                rutaDestino = isStaff ? '/admin/ordenes' : '/mis-pedidos';
-                stateData = {
-                    ordenId: datosExtra.orden_id || null,
-                    notificacionId: notif.id
-                };
-            }
-
-            // 4. Si es turno_id -> Ir a mis-turnos (cliente) o gestion-turnos (admin/profesional)
-            else if (datosExtra.turno_id) {
-                console.log('Turno notificacion detectada. isStaff:', isStaff);
-                // Si es profesional/admin, ir a la gestión de turnos
-                if (isStaff) {
-                    rutaDestino = '/admin/turnos';
-                    console.log('Redirigiendo a /admin/turnos (profesional)');
-                } else {
-                    // Si es cliente, ir a mis turnos
-                    rutaDestino = '/mis-turnos';
-                    console.log('Redirigiendo a /mis-turnos (cliente)');
-                }
-                stateData = {
-                    turnoId: datosExtra.turno_id,
-                    notificacionId: notif.id
-                };
-            }
-            
-            // 5. Según tipo de notificación si no hay datos específicos
-            else if (notif.tipo === 'alerta') {
-                rutaDestino = isStaff ? '/admin/turnos' : '/mis-turnos';
-            } else if (notif.tipo === 'recordatorio') {
-                rutaDestino = isStaff ? '/admin/turnos' : '/mis-turnos';
-            } else if (notif.tipo === 'diagnostico') {
-                rutaDestino = '/perfil';
-            } else if (notif.tipo === 'promocion') {
-                rutaDestino = '/catalogo-productos';
-            }
-            
-            console.log('Navegando desde notificacion:', {
-                id: notif.id,
-                tipo: notif.tipo,
-                destino: rutaDestino,
-                datos: stateData,
-                isStaff: isStaff
-            });
+            const destination = getNotificationDestination(notif, session);
             
             // Cerrar dropdown
             setShowDropdown(false);
             
             // Redirigir con datos contextuales
-            navigate(rutaDestino, { state: stateData });
+            navigate(destination.path, { state: destination.state });
             
         } catch (error) {
             console.error('Error al procesar notificación:', error);

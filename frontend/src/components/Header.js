@@ -1,35 +1,34 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import axios from 'axios';
-import { CLIENTE_ROUTES, ADMIN_ROUTES, AUTH_ROUTES } from '../routes/routes';
+import { AUTH_ROUTES } from '../routes/routes';
+import { useSession } from '../context/SessionContext';
+import {
+    getVisibleNavigationItems,
+    NAVIGATION_PLACEMENT
+} from '../navigation/navigationConfig';
+import { getLandingPath } from '../utils/sessionLanding';
 import CampanaNotificaciones from './CampanaNotificaciones';
 import { IconCart } from './common/Icons';
 
 const Header = () => {
-    const [user, setUser] = useState(null);
     const [dropdownOpen, setDropdownOpen] = useState(false);
     const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
     const [empresaNombre, setEmpresaNombre] = useState('Bohemia Hair');
     const navigate = useNavigate();
     const location = useLocation();
-
-    // Cargar usuario al montar
-    useEffect(() => {
-        const fetchUser = async () => {
-            const token = localStorage.getItem('access_token');
-            if (token) {
-                try {
-                    const response = await axios.get('http://127.0.0.1:8000/api/usuarios/perfil/', {
-                        headers: { 'Authorization': `Bearer ${token}` }
-                    });
-                    setUser(response.data);
-                } catch (error) {
-                    console.error('Error cargando usuario:', error);
-                }
-            }
-        };
-        fetchUser();
-    }, []);
+    const {
+        session,
+        user,
+        businessRole,
+        loading,
+        authenticated,
+        error,
+        clearSession,
+        hasPermission,
+        hasAnyPermission,
+        hasProfile
+    } = useSession();
 
     useEffect(() => {
         const fetchEmpresaNombre = async () => {
@@ -47,49 +46,38 @@ const Header = () => {
         fetchEmpresaNombre();
     }, []);
 
-    const handleLogout = () => {
-        localStorage.removeItem('access_token');
-        localStorage.removeItem('refresh_token');
-        localStorage.removeItem('user_info');
-        delete axios.defaults.headers.common['Authorization'];
-        setUser(null);
+    const leaveSession = () => {
+        clearSession();
         navigate(AUTH_ROUTES.LOGIN);
     };
 
-    const handleChangeUser = () => {
-        localStorage.removeItem('access_token');
-        localStorage.removeItem('refresh_token');
-        localStorage.removeItem('user_info');
-        delete axios.defaults.headers.common['Authorization'];
-        setUser(null);
-        navigate(AUTH_ROUTES.LOGIN);
+    const navigationAccess = {
+        businessRole,
+        loading,
+        authenticated,
+        error,
+        hasPermission,
+        hasAnyPermission,
+        hasProfile
     };
 
-    const isAdmin = user?.is_staff;
-    
-    const adminLinks = [
-        { name: 'Dashboard', href: ADMIN_ROUTES.DASHBOARD },
-        { name: 'Reportes', href: ADMIN_ROUTES.REPORTES },
-        { name: 'Turnos', href: ADMIN_ROUTES.TURNOS },
-        { name: 'Ordenes', href: ADMIN_ROUTES.ORDENES },
-        { name: 'Caja', href: ADMIN_ROUTES.CAJA },
-        { name: 'Rutinas', href: ADMIN_ROUTES.GESTIONAR_RUTINAS },
-        { name: 'Servicios', href: ADMIN_ROUTES.SERVICIOS },
-        { name: 'Contenido Educativo', href: ADMIN_ROUTES.CONTENIDO_EDUCATIVO },
-        { name: 'Agenda', href: ADMIN_ROUTES.AGENDA },
-    ];
+    const primaryItems = getVisibleNavigationItems(
+        navigationAccess,
+        NAVIGATION_PLACEMENT.PRIMARY
+    );
+    const accountItems = getVisibleNavigationItems(
+        navigationAccess,
+        NAVIGATION_PLACEMENT.ACCOUNT
+    );
+    const actionItems = getVisibleNavigationItems(
+        navigationAccess,
+        NAVIGATION_PLACEMENT.ACTION
+    );
+    const cartItem = actionItems.find((item) => item.id === 'client-cart');
+    const landingPath = getLandingPath(session) || AUTH_ROUTES.LOGIN;
+    const roleLabel = businessRole || 'Sin rol de acceso';
 
-    const clientLinks = [
-        { name: 'Mis Turnos', href: CLIENTE_ROUTES.MIS_TURNOS },
-        { name: 'Mis Pedidos', href: CLIENTE_ROUTES.MIS_PEDIDOS },
-        { name: 'Reservar', href: CLIENTE_ROUTES.RESERVAR },
-        { name: 'Rutinas', href: CLIENTE_ROUTES.CATALOGO_RUTINAS },
-        { name: 'Servicios', href: CLIENTE_ROUTES.CATALOGO_SERVICIOS },
-    ];
-
-    const navLinks = isAdmin ? adminLinks : clientLinks;
-
-    const isActive = (href) => location.pathname === href;
+    const isActive = (path) => location.pathname === path;
 
     return (
         <header className="sticky top-0 z-40 shadow-sm" style={{ backgroundColor: '#C1B4A4' }}>
@@ -97,7 +85,7 @@ const Header = () => {
                 <div className="flex items-center justify-between h-16 gap-4">
                     {/* Logo */}
                     <div className="flex-shrink-0">
-                        <Link to={isAdmin ? ADMIN_ROUTES.DASHBOARD : CLIENTE_ROUTES.PERFIL}>
+                        <Link to={landingPath} aria-label="Ir al inicio de la sesión">
                             <h1 className="text-xl sm:text-2xl font-bold text-gray-800 tracking-tight">{empresaNombre}</h1>
                         </Link>
                     </div>
@@ -115,40 +103,40 @@ const Header = () => {
 
                     {/* Navigation */}
                     <nav className={`${mobileMenuOpen ? 'block' : 'hidden'} md:flex absolute md:relative top-16 md:top-0 left-0 right-0 md:justify-center flex-col md:flex-row gap-0 md:gap-0 md:flex-1 w-full md:w-auto`} style={{ backgroundColor: 'rgba(193, 180, 164, 0.3)' }}>
-                        {navLinks.map((link) => (
+                        {primaryItems.map((item) => (
                             <Link
-                                key={link.href}
-                                to={link.href}
+                                key={item.id}
+                                to={item.path}
                                 className={`px-4 md:px-3 py-3 md:py-2 font-medium text-sm transition-all ${
-                                    isActive(link.href) 
+                                    isActive(item.path)
                                         ? 'text-gray-800 border-b-2 md:border-b-2' 
                                         : 'text-gray-700 hover:text-gray-800'
                                 }`}
                                 style={{ 
-                                    borderColor: isActive(link.href) ? '#817773' : 'transparent',
-                                    backgroundColor: isActive(link.href) ? 'rgba(255, 255, 255, 0.3)' : 'transparent'
+                                    borderColor: isActive(item.path) ? '#817773' : 'transparent',
+                                    backgroundColor: isActive(item.path) ? 'rgba(255, 255, 255, 0.3)' : 'transparent'
                                 }}
-                                onMouseEnter={(e) => !isActive(link.href) && (e.target.style.backgroundColor = 'rgba(193, 180, 164, 0.4)')}
-                                onMouseLeave={(e) => !isActive(link.href) && (e.target.style.backgroundColor = 'transparent')}
+                                onMouseEnter={(e) => !isActive(item.path) && (e.target.style.backgroundColor = 'rgba(193, 180, 164, 0.4)')}
+                                onMouseLeave={(e) => !isActive(item.path) && (e.target.style.backgroundColor = 'transparent')}
                                 onClick={() => setMobileMenuOpen(false)}
                             >
-                                {link.name}
+                                {item.label}
                             </Link>
                         ))}
                     </nav>
 
                     {/* User Section */}
                     <div className="flex-shrink-0 flex items-center gap-2">
-                        {user ? (
+                        {authenticated && !loading && !error && user ? (
                             <>
                                 <div className="hidden lg:block">
                                     <CampanaNotificaciones />
                                 </div>
                                 
                                 {/* Carrito de Compras */}
-                                {!isAdmin && (
+                                {cartItem && (
                                     <Link
-                                        to={CLIENTE_ROUTES.CARRITO}
+                                        to={cartItem.path}
                                         className="relative flex items-center justify-center w-10 h-10 rounded-lg transition-all"
                                         style={{ backgroundColor: 'rgba(255, 255, 255, 0.3)' }}
                                         onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.5)'}
@@ -181,43 +169,35 @@ const Header = () => {
                                     {dropdownOpen && (
                                         <div className="absolute top-full right-0 mt-2 w-56 bg-white rounded-lg shadow-lg border border-gray-200 z-50 animate-fade-in-up">
                                             <div className="px-4 py-3 border-b" style={{ backgroundColor: '#F5F0EB', borderColor: '#E8DCC4' }}>
-                                                <p className="text-xs md:text-sm text-gray-600 break-all">{user.email}</p>
-                                                <span className="inline-block mt-2 px-2 py-1 rounded text-xs font-semibold text-white" style={{ backgroundColor: '#C1B4A4' }}>
-                                                    {user.is_staff ? 'Administrador' : 'Cliente'}
-                                                </span>
-                                            </div>
-                                            {!isAdmin && (
-                                                <>
-                                                    <Link
-                                                        to={CLIENTE_ROUTES.PERFIL}
-                                                        className="block px-4 py-2 hover:bg-gray-50 text-sm text-gray-700 transition-colors"
-                                                        onClick={() => setDropdownOpen(false)}
-                                                    >
-                                                        Mi Perfil
-                                                    </Link>
-                                                    <Link
-                                                        to={CLIENTE_ROUTES.MI_AGENDA}
-                                                        className="block px-4 py-2 hover:bg-gray-50 text-sm text-gray-700 transition-colors border-b border-gray-100"
-                                                        onClick={() => setDropdownOpen(false)}
-                                                    >
-                                                        Mi Agenda
-                                                    </Link>
-                                                </>
-                                            )}
-                                            <button
-                                                className="w-full text-left px-4 py-2 hover:bg-red-50 text-sm text-red-600 font-medium transition-colors"
-                                                onClick={() => {
-                                                    handleChangeUser();
-                                                    setDropdownOpen(false);
+                                                 <p className="text-xs md:text-sm text-gray-600 break-all">{user.email}</p>
+                                                 <span className="inline-block mt-2 px-2 py-1 rounded text-xs font-semibold text-white" style={{ backgroundColor: '#C1B4A4' }}>
+                                                     {roleLabel}
+                                                 </span>
+                                             </div>
+                                             {accountItems.map((item) => (
+                                                 <Link
+                                                     key={item.id}
+                                                     to={item.path}
+                                                     className="block px-4 py-2 hover:bg-gray-50 text-sm text-gray-700 transition-colors"
+                                                     onClick={() => setDropdownOpen(false)}
+                                                 >
+                                                     {item.label}
+                                                 </Link>
+                                             ))}
+                                             <button
+                                                 className="w-full text-left px-4 py-2 hover:bg-red-50 text-sm text-red-600 font-medium transition-colors"
+                                                 onClick={() => {
+                                                     leaveSession();
+                                                     setDropdownOpen(false);
                                                 }}
                                             >
                                                 Cambiar Usuario
                                             </button>
                                             <button
-                                                className="w-full text-left px-4 py-2 hover:bg-red-50 text-sm text-red-600 font-medium transition-colors"
-                                                onClick={() => {
-                                                    handleLogout();
-                                                    setDropdownOpen(false);
+                                                 className="w-full text-left px-4 py-2 hover:bg-red-50 text-sm text-red-600 font-medium transition-colors"
+                                                 onClick={() => {
+                                                     leaveSession();
+                                                     setDropdownOpen(false);
                                                 }}
                                             >
                                                 Cerrar Sesión
