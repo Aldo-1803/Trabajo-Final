@@ -47,7 +47,8 @@ from .serializers import (
     CategoriaServicioSerializer, ServicioSerializer, TurnoSerializer,
     TurnoAgendaReadSerializer, TurnoClienteReadSerializer,
     TurnoComprobanteUploadSerializer, TurnoReservaCommandSerializer,
-    TurnoParaClienteCommandSerializer, RutinaSerializer, RutinaClienteSerializer,
+    TurnoParaClienteCommandSerializer, TurnoArrivalCommandSerializer,
+    RutinaSerializer, RutinaClienteSerializer,
     RutinaClienteCreateSerializer, ReglaDiagnosticoSerializer, NotificacionSerializer, ProductoSerializer, ImagenProductoSerializer, EquipamientoSerializer,
     UsuarioAccountStatusCommandSerializer, UsuarioAdminIdentityUpdateSerializer,
     UsuarioAdminReadSerializer, AgendaCuidadosSerializer,
@@ -63,11 +64,21 @@ from .serializers import (
     OrdenPendienteSerializer, OrdenCompraSerializer, OrdenItemSerializer, ConfiguracionDiagnosticoSerializer,
     #PasoRutinaSerializer,
 )
-from .permissions import CanCreateTurnoForClient, CanViewGlobalAgenda
+from .permissions import (
+    CanCreateTurnoForClient,
+    CanRegisterTurnoArrival,
+    CanViewGlobalAgenda,
+)
 from .turno_creation_services import (
     TurnoAvailabilityService,
     TurnoCreationError,
     TurnoCreationService,
+)
+from .turno_arrival_services import (
+    InvalidTurnoArrivalTransition,
+    PermissionDeniedForTurnoArrival,
+    TurnoArrivalTargetNotFound,
+    register_turno_arrival,
 )
 from .personal_access_services import (
     ClientProfileRequired,
@@ -1295,6 +1306,8 @@ class TurnoViewSet(viewsets.ModelViewSet):
             'selector_personal',
         ]:
             permission_classes = [IsAuthenticated, CanCreateTurnoForClient]
+        elif self.action == 'registrar_llegada':
+            permission_classes = [IsAuthenticated, CanRegisterTurnoArrival]
         else:
             permission_classes = [IsAuthenticated]
         return [permission() for permission in permission_classes]
@@ -1456,6 +1469,37 @@ class TurnoViewSet(viewsets.ModelViewSet):
                 context=self.get_serializer_context(),
             ).data,
         }, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='registrar-llegada')
+    def registrar_llegada(self, request, pk=None):
+        command = TurnoArrivalCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+
+        try:
+            result = register_turno_arrival(
+                actor=request.user,
+                turno_id=pk,
+            )
+        except PermissionDeniedForTurnoArrival:
+            raise PermissionDenied('No tiene permisos para registrar la llegada.')
+        except TurnoArrivalTargetNotFound:
+            raise Http404
+        except InvalidTurnoArrivalTransition as exc:
+            return Response(
+                {
+                    'code': 'INVALID_ARRIVAL_TRANSITION',
+                    'detail': 'El Turno no admite registrar llegada en su estado actual.',
+                    'estado_actual': exc.current_state,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        return Response({
+            'turno_id': result.turno.pk,
+            'changed': result.changed,
+            'estado_anterior': result.previous_state,
+            'estado_actual': result.current_state,
+        }, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=['get'], url_path='selector-clientes')
     def selector_clientes(self, request):

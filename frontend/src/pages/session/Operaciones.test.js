@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import axios from 'axios';
 
 import { useSession } from '../../context/SessionContext';
@@ -7,7 +7,7 @@ import Operaciones from './Operaciones';
 
 jest.mock('axios', () => ({
     __esModule: true,
-    default: { get: jest.fn() }
+    default: { get: jest.fn(), post: jest.fn(), patch: jest.fn() }
 }));
 jest.mock('../../context/SessionContext', () => ({
     useSession: jest.fn()
@@ -39,6 +39,15 @@ const sessionContext = ({
 const renderOperations = (context = {}) => {
     useSession.mockReturnValue(sessionContext(context));
     return render(<Operaciones />);
+};
+
+
+const confirmedTurno = {
+    id: 10,
+    cliente_nombre: 'Ana Pérez',
+    servicio_nombre: 'Corte',
+    hora_inicio: '10:00:00',
+    estado: 'confirmado'
 };
 
 
@@ -116,5 +125,114 @@ describe('Operaciones por permisos efectivos', () => {
         expect(screen.getByText('No hay operaciones habilitadas para esta cuenta.'))
             .toBeInTheDocument();
         expect(axios.get).not.toHaveBeenCalled();
+    });
+
+    test.each([
+        ['EMPLEADO', false],
+        ['ADMINISTRADOR', false]
+    ])('%s is_staff=%s muestra llegada por permiso efectivo', async (businessRole, isStaff) => {
+        axios.get.mockResolvedValue({ data: [confirmedTurno] });
+
+        renderOperations({
+            businessRole,
+            isStaff,
+            permissions: [
+                'gestion.view_global_agenda',
+                'gestion.register_arrival'
+            ]
+        });
+
+        expect(await screen.findByRole('button', { name: 'Registrar llegada' }))
+            .toBeInTheDocument();
+    });
+
+    test('view_global_agenda sin register_arrival no muestra la acción', async () => {
+        axios.get.mockResolvedValue({ data: [confirmedTurno] });
+
+        renderOperations({ permissions: ['gestion.view_global_agenda'] });
+
+        expect(await screen.findByText('Ana Pérez')).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Registrar llegada' }))
+            .not.toBeInTheDocument();
+    });
+
+    test('register_arrival solo no concede lectura de Turnos', () => {
+        renderOperations({ permissions: ['gestion.register_arrival'] });
+
+        expect(screen.queryByText('Turnos de hoy')).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Registrar llegada' }))
+            .not.toBeInTheDocument();
+        expect(axios.get).not.toHaveBeenCalled();
+    });
+
+    test.each(['solicitado', 'esperando_sena', 'en_proceso', 'realizado', 'cancelado', 'ausente'])(
+        'no muestra llegada para estado %s',
+        async (estado) => {
+            axios.get.mockResolvedValue({ data: [{ ...confirmedTurno, estado }] });
+
+            renderOperations({
+                permissions: [
+                    'gestion.view_global_agenda',
+                    'gestion.register_arrival'
+                ]
+            });
+
+            expect(await screen.findByText('Ana Pérez')).toBeInTheDocument();
+            expect(screen.queryByRole('button', { name: 'Registrar llegada' }))
+                .not.toBeInTheDocument();
+        }
+    );
+
+    test('usa POST dedicado, recarga y muestra el estado devuelto por la lista', async () => {
+        axios.get
+            .mockResolvedValueOnce({ data: [confirmedTurno] })
+            .mockResolvedValueOnce({
+                data: [{ ...confirmedTurno, estado: 'en_proceso' }]
+            });
+        axios.post.mockResolvedValue({
+            data: { changed: true, estado_actual: 'en_proceso' }
+        });
+        renderOperations({
+            permissions: [
+                'gestion.view_global_agenda',
+                'gestion.register_arrival'
+            ]
+        });
+
+        fireEvent.click(await screen.findByRole('button', { name: 'Registrar llegada' }));
+
+        await waitFor(() => expect(axios.post).toHaveBeenCalledWith(
+            'http://127.0.0.1:8000/api/gestion/turnos/10/registrar-llegada/',
+            {},
+            { headers: { Authorization: 'Bearer test-token' } }
+        ));
+        await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(2));
+        expect(await screen.findByText('Estado: en_proceso')).toBeInTheDocument();
+        expect(screen.getByText('Llegada registrada correctamente.')).toBeInTheDocument();
+        expect(axios.patch).not.toHaveBeenCalled();
+    });
+
+    test('un conflicto conserva el estado y muestra un mensaje seguro', async () => {
+        axios.get.mockResolvedValue({ data: [confirmedTurno] });
+        axios.post.mockRejectedValue({
+            response: {
+                status: 409,
+                data: { detail: 'detalle interno que no debe mostrarse' }
+            }
+        });
+        renderOperations({
+            permissions: [
+                'gestion.view_global_agenda',
+                'gestion.register_arrival'
+            ]
+        });
+
+        fireEvent.click(await screen.findByRole('button', { name: 'Registrar llegada' }));
+
+        expect(await screen.findByRole('alert')).toHaveTextContent(
+            'El Turno no admite registrar llegada en su estado actual.'
+        );
+        expect(screen.getByText('Estado: confirmado')).toBeInTheDocument();
+        expect(axios.get).toHaveBeenCalledTimes(1);
     });
 });

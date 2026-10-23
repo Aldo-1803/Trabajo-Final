@@ -215,6 +215,10 @@ class TurnoParaClienteCommandSerializer(TurnoReservaCommandSerializer):
     allowed_fields = TurnoReservaCommandSerializer.allowed_fields | {'cliente_id'}
 
 
+class TurnoArrivalCommandSerializer(StrictTurnoCommandSerializer):
+    allowed_fields = frozenset()
+
+
 class TurnoSerializer(serializers.ModelSerializer):
     cliente = serializers.PrimaryKeyRelatedField(
         queryset=Cliente.objects.all(),

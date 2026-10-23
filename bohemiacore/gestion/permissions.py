@@ -15,3 +15,10 @@ class CanCreateTurnoForClient(BasePermission):
 
     def has_permission(self, request, view):
         return request.user.has_perm(BusinessPermission.CREATE_TURNO_FOR_CLIENT)
+
+
+class CanRegisterTurnoArrival(BasePermission):
+    message = 'No tiene permisos para registrar la llegada de Turnos.'
+
+    def has_permission(self, request, view):
+        return request.user.has_perm(BusinessPermission.REGISTER_ARRIVAL)
