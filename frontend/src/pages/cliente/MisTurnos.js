@@ -30,7 +30,7 @@ const MisTurnos = () => {
         try {
             setLoading(true);
             const token = localStorage.getItem('access_token');
-            const response = await axios.get('http://127.0.0.1:8000/api/gestion/turnos/', {
+            const response = await axios.get('http://127.0.0.1:8000/api/gestion/turnos/mis-turnos/', {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             setTurnos(response.data); 
@@ -91,7 +91,7 @@ const MisTurnos = () => {
 
         try {
             const token = localStorage.getItem('access_token');
-            await axios.patch(`http://127.0.0.1:8000/api/gestion/turnos/${turnoId}/`, formData, {
+            await axios.post(`http://127.0.0.1:8000/api/gestion/turnos/${turnoId}/subir-comprobante/`, formData, {
                 headers: { 
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'multipart/form-data'

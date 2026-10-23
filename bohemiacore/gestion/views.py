@@ -1,6 +1,7 @@
 from rest_framework import viewsets, status, serializers
 from rest_framework.decorators import api_view, permission_classes, action
 from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.exceptions import (
     MethodNotAllowed,
     PermissionDenied,
@@ -43,7 +44,9 @@ from .models import (
 
 from .serializers import (
     TipoCabelloSerializer, GrosorCabelloSerializer, PorosidadCabelloSerializer, CueroCabelludoSerializer, EstadoGeneralSerializer,
-    CategoriaServicioSerializer, ServicioSerializer, TurnoSerializer, RutinaSerializer, RutinaClienteSerializer,
+    CategoriaServicioSerializer, ServicioSerializer, TurnoSerializer,
+    TurnoAgendaReadSerializer, TurnoClienteReadSerializer,
+    TurnoComprobanteUploadSerializer, RutinaSerializer, RutinaClienteSerializer,
     RutinaClienteCreateSerializer, ReglaDiagnosticoSerializer, NotificacionSerializer, ProductoSerializer, ImagenProductoSerializer, EquipamientoSerializer,
     UsuarioAccountStatusCommandSerializer, UsuarioAdminIdentityUpdateSerializer,
     UsuarioAdminReadSerializer, AgendaCuidadosSerializer,
@@ -59,6 +62,7 @@ from .serializers import (
     OrdenPendienteSerializer, OrdenCompraSerializer, OrdenItemSerializer, ConfiguracionDiagnosticoSerializer,
     #PasoRutinaSerializer,
 )
+from .permissions import CanViewGlobalAgenda
 from .personal_access_services import (
     ClientProfileRequired,
     EmailAlreadyExists,
@@ -1281,68 +1285,75 @@ class TurnoViewSet(viewsets.ModelViewSet):
     search_fields = ['cliente__usuario__first_name', 'cliente__usuario__last_name']
     ordering_fields = ['fecha', 'hora_inicio', 'estado']
 
-    def _auto_cancel_expired_turnos(self):
-        """
-        Detecta y cancela automáticamente turnos que pasaron su fecha
-        sin confirmación (estados SOLICITADO o ESPERANDO_SENA).
-        """
-        now = timezone.now()
-        
-        # Buscar turnos expirados comparando fecha + hora contra ahora
-        expired_turnos = Turno.objects.filter(
-            estado__in=[Turno.Estado.SOLICITADO, Turno.Estado.ESPERANDO_SENA]
-        )
+    SAFE_DETAIL_ACTIONS = {
+        'retrieve',
+        'verificar_expiracion',
+    }
 
-        for turno in expired_turnos:
-            try:
-                # Combinar fecha e hora para comparar
-                turno_dt = timezone.make_aware(datetime.combine(turno.fecha, turno.hora_inicio)) \
-                    if timezone.is_naive(datetime.combine(turno.fecha, turno.hora_inicio)) \
-                    else datetime.combine(turno.fecha, turno.hora_inicio)
-                
-                # Si ya pasó
-                if turno_dt < now:
-                    estado_anterior = turno.estado
-                    
-                    # Cancelar automáticamente
-                    turno.estado = Turno.Estado.CANCELADO
-                    turno.motivo_cancelacion = "Cancelado automáticamente: Turno expirado sin confirmación"
-                    turno.save()
+    def get_permissions(self):
+        if self.action == 'list':
+            permission_classes = [IsAuthenticated, CanViewGlobalAgenda]
+        else:
+            permission_classes = [IsAuthenticated]
+        return [permission() for permission in permission_classes]
 
-                    # Notificar al cliente
-                    Notificacion.objects.get_or_create(
-                        usuario=turno.cliente.usuario,
-                        tipo='TURNO',
-                        titulo='Turno Cancelado - Expiración de plazo',
-                        defaults={
-                            'canal': 'in-app',
-                            'mensaje': f'Tu turno del {turno_dt.strftime("%d/%m/%Y %H:%M")} ha sido cancelado automáticamente porque pasó la fecha sin confirmación.',
-                            'estado': 'pendiente'
-                        }
-                    )
-            except Exception as e:
-                logging.error(f"Error auto-cancelando turno {turno.id}: {str(e)}")
+    def get_serializer_class(self):
+        if self.action in ['list', 'mi_agenda_laboral']:
+            return TurnoAgendaReadSerializer
+        if self.action in ['mis_turnos', 'subir_comprobante']:
+            return TurnoClienteReadSerializer
+        return TurnoSerializer
+
+    def _readable_turnos(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+
+        if user.has_perm(BusinessPermission.VIEW_GLOBAL_AGENDA):
+            return queryset
+
+        scopes = Q(cliente__usuario=user)
+        if user.is_active:
+            scopes |= Q(
+                profesional__usuario=user,
+                profesional__activo=True,
+            )
+        return queryset.filter(scopes)
+
+    def _legacy_action_queryset(self):
+        """Preserva el alcance previo de acciones aún no migradas."""
+        queryset = super().get_queryset()
+        if self.request.user.is_staff:
+            return queryset
+        if hasattr(self.request.user, 'cliente'):
+            return queryset.filter(cliente=self.request.user.cliente)
+        return queryset.none()
 
     def get_queryset(self):
-        #NUEVO: Auto-limpiar turnos expirados cada vez que se consulta
-        self._auto_cancel_expired_turnos()
-        
         queryset = super().get_queryset()
-        ahora = timezone.now()
 
-        #Si es el profesional/admin, ocultamos por defecto los pendientes que ya pasaron
-        if self.request.user.is_staff:
-            # Solo mostramos SOLICITADOS o ESPERANDO_SENA si son de HOY en adelante
-            queryset = queryset.exclude(
-                Q(fecha__lt=ahora.date()) | Q(fecha=ahora.date(), hora_inicio__lt=ahora.time()),
-                estado__in=['solicitado', 'esperando_sena']
+        if self.action == 'list':
+            queryset = queryset
+        elif self.action == 'mis_turnos':
+            cliente = getattr(self.request.user, 'cliente', None)
+            queryset = (
+                queryset.filter(cliente=cliente)
+                if cliente is not None
+                else queryset.none()
             )
-        elif hasattr(self.request.user, 'cliente'):
-            # Cliente solo ve sus propios turnos
-            queryset = queryset.filter(cliente=self.request.user.cliente)
+        elif self.action == 'mi_agenda_laboral':
+            personal = getattr(self.request.user, 'perfil_profesional', None)
+            if (
+                personal is None
+                or not personal.activo
+                or not self.request.user.is_active
+            ):
+                queryset = queryset.none()
+            else:
+                queryset = queryset.filter(profesional=personal)
+        elif self.action in self.SAFE_DETAIL_ACTIONS:
+            queryset = self._readable_turnos()
         else:
-            # Usuario sin cliente, no ve nada
-            queryset = queryset.none()
+            queryset = self._legacy_action_queryset()
              
         #Filtro opcional por estado
         estado = self.request.query_params.get('estado')
@@ -1353,6 +1364,88 @@ class TurnoViewSet(viewsets.ModelViewSet):
         queryset = queryset.order_by('-fecha', '-hora_inicio')
         
         return queryset
+
+    def retrieve(self, request, *args, **kwargs):
+        turno = self.get_object()
+        serializer_class = (
+            TurnoClienteReadSerializer
+            if turno.cliente.usuario_id == request.user.pk
+            else TurnoAgendaReadSerializer
+        )
+        serializer = serializer_class(
+            turno,
+            context=self.get_serializer_context(),
+        )
+        return Response(serializer.data)
+
+    def update(self, request, *args, **kwargs):
+        raise MethodNotAllowed(request.method)
+
+    def partial_update(self, request, *args, **kwargs):
+        raise MethodNotAllowed(request.method)
+
+    def destroy(self, request, *args, **kwargs):
+        raise MethodNotAllowed(request.method)
+
+    @action(detail=False, methods=['get'], url_path='mis-turnos')
+    def mis_turnos(self, request):
+        if getattr(request.user, 'cliente', None) is None:
+            raise PermissionDenied('El usuario no tiene un perfil de Cliente.')
+
+        queryset = self.filter_queryset(self.get_queryset())
+        serializer = TurnoClienteReadSerializer(
+            queryset,
+            many=True,
+            context=self.get_serializer_context(),
+        )
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], url_path='mi-agenda-laboral')
+    def mi_agenda_laboral(self, request):
+        personal = getattr(request.user, 'perfil_profesional', None)
+        if personal is None or not personal.activo or not request.user.is_active:
+            raise PermissionDenied('No existe un perfil de Personal activo.')
+
+        queryset = self.filter_queryset(self.get_queryset())
+        serializer = TurnoAgendaReadSerializer(
+            queryset,
+            many=True,
+            context=self.get_serializer_context(),
+        )
+        return Response(serializer.data)
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='subir-comprobante',
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def subir_comprobante(self, request, pk=None):
+        try:
+            turno = Turno.objects.get(
+                pk=pk,
+                cliente__usuario=request.user,
+            )
+        except Turno.DoesNotExist:
+            raise Http404
+
+        if turno.estado != Turno.Estado.ESPERANDO_SENA:
+            raise ValidationError({
+                'estado': 'El Turno no admite comprobantes en su estado actual.',
+            })
+
+        command = TurnoComprobanteUploadSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        turno.comprobante_pago = command.validated_data['comprobante_pago']
+        turno.save(update_fields=['comprobante_pago'])
+
+        return Response(
+            TurnoClienteReadSerializer(
+                turno,
+                context=self.get_serializer_context(),
+            ).data,
+            status=status.HTTP_200_OK,
+        )
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)

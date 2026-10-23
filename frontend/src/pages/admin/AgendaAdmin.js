@@ -58,6 +58,7 @@ const IconPackage = ({ className = 'w-4 h-4' }) => (
 );
 
 const AgendaAdmin = () => {
+    const agendaWriteActionsEnabled = false;
     // Estado del Calendario
     const [currentDate, setCurrentDate] = useState(new Date());
     
@@ -132,6 +133,7 @@ const AgendaAdmin = () => {
     };
 
     const guardarBloqueo = async () => {
+        setLoadingBloqueo(true);
         try {
             const token = localStorage.getItem('access_token');
             
@@ -169,12 +171,14 @@ const AgendaAdmin = () => {
                 
                 mensaje += `\nVe a la sección "Turnos" para resolverlos antes de bloquear.`;
 
-                notify.error('Conflictos detectados: ' + data.mensaje);
+                notify.error(mensaje);
                 // No cerramos el modal para que pueda corregir las fechas si quiere
             } else {
                 // Otros errores (400, 500)
                 notify.error('Error al guardar: ' + (error.response?.data?.error || 'Error desconocido'));
             }
+        } finally {
+            setLoadingBloqueo(false);
         }
     };
 
@@ -220,7 +224,7 @@ const AgendaAdmin = () => {
                     borderLeft: `4px solid ${borderColor}`,
                     border: `1px solid ${borderColor}`
                 }}
-                onClick={() => !bloqueo && abrirModalBloqueo(dayNumber)}
+                onClick={() => agendaWriteActionsEnabled && !bloqueo && abrirModalBloqueo(dayNumber)}
             >
                 <span className="font-bold" style={{color: dayNumber === hoy.getDate() && currentDate.getMonth() === hoy.getMonth() ? '#817773' : textColor}}>
                     {dayNumber}
@@ -264,7 +268,7 @@ const AgendaAdmin = () => {
                 </div>
 
                 {/* CONFIGURACIÓN MASIVA: Botón para abrir modal */}
-                <div className="mb-6">
+                {agendaWriteActionsEnabled && <div className="mb-6">
                     <button
                         onClick={() => setMostrarConfiguracion(true)}
                         className="px-4 py-2 rounded-lg font-bold transition transform hover:scale-105"
@@ -272,7 +276,7 @@ const AgendaAdmin = () => {
                     >
                          Configurar horarios
                     </button>
-                </div>
+                </div>}
 
                 {/* Vista Previa de Horarios Base */}
                 <div className="mb-6 rounded-xl p-4" style={{ backgroundColor: COLORS.bg_light, borderLeft: `5px solid ${COLORS.primary_light}` }}>
@@ -351,7 +355,7 @@ const AgendaAdmin = () => {
                 </div>
 
                 {/* Modal de Configuración */}
-                <ConfiguracionAgendaMasiva 
+                {agendaWriteActionsEnabled && <ConfiguracionAgendaMasiva
                     isOpen={mostrarConfiguracion}
                     onClose={() => setMostrarConfiguracion(false)}
                     fetchPersonal={async () => {
@@ -365,7 +369,7 @@ const AgendaAdmin = () => {
                             return []
                         }
                     }} 
-                />
+                />}
 
                 {/* ERROR ALERT */}
                 {error && (
@@ -443,7 +447,7 @@ const AgendaAdmin = () => {
             </div>
 
             {/* MODAL DE BLOQUEO */}
-            {mostrarModal && (
+            {agendaWriteActionsEnabled && mostrarModal && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
                     <div style={{ backgroundColor: 'white' }} className="rounded-xl p-8 max-w-md w-full mx-4 shadow-2xl">
                         <h2 className="text-2xl font-bold mb-6" style={{ color: '#817773' }}>🚫 Crear Bloqueo</h2>

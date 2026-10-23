@@ -18,7 +18,10 @@ export const navigationItems = [
         label: 'Operaciones',
         path: SESSION_ROUTES.OPERACIONES,
         placement: NAVIGATION_PLACEMENT.PRIMARY,
-        allowedRoles: ['EMPLEADO', 'PROFESIONAL']
+        anyPermissions: [
+            'gestion.view_global_agenda',
+            'usuarios.create_walkin_client'
+        ]
     },
     {
         id: 'client-turnos',

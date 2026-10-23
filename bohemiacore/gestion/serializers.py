@@ -102,6 +102,91 @@ class DetalleTurnoSerializer(serializers.ModelSerializer):
         ]
 
 
+class DetalleTurnoClienteReadSerializer(serializers.ModelSerializer):
+    servicio_nombre = serializers.CharField(source='servicio.nombre', read_only=True)
+
+    class Meta:
+        model = DetalleTurno
+        fields = ['id', 'servicio', 'servicio_nombre', 'duracion_minutos']
+
+
+class TurnoAgendaReadSerializer(serializers.ModelSerializer):
+    cliente_nombre = serializers.SerializerMethodField()
+    profesional_nombre = serializers.SerializerMethodField()
+    servicio_nombre = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Turno
+        fields = [
+            'id',
+            'cliente',
+            'cliente_nombre',
+            'profesional',
+            'profesional_nombre',
+            'fecha',
+            'hora_inicio',
+            'estado',
+            'servicio_nombre',
+        ]
+        read_only_fields = fields
+
+    def get_cliente_nombre(self, obj):
+        return obj.cliente.usuario.get_full_name().strip() or obj.cliente.usuario.email
+
+    def get_profesional_nombre(self, obj):
+        if not obj.profesional:
+            return None
+        return f'{obj.profesional.nombre} {obj.profesional.apellido}'.strip()
+
+    def get_servicio_nombre(self, obj):
+        return ', '.join(
+            detalle.servicio.nombre for detalle in obj.detalles.all()
+        ) or 'Sin servicios'
+
+
+class TurnoClienteReadSerializer(serializers.ModelSerializer):
+    detalles = DetalleTurnoClienteReadSerializer(many=True, read_only=True)
+    profesional_nombre = serializers.SerializerMethodField()
+    servicio_nombre = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Turno
+        fields = [
+            'id',
+            'profesional',
+            'profesional_nombre',
+            'fecha',
+            'hora_inicio',
+            'estado',
+            'detalles',
+            'servicio_nombre',
+            'comprobante_pago',
+        ]
+        read_only_fields = fields
+
+    def get_profesional_nombre(self, obj):
+        if not obj.profesional:
+            return None
+        return f'{obj.profesional.nombre} {obj.profesional.apellido}'.strip()
+
+    def get_servicio_nombre(self, obj):
+        return ', '.join(
+            detalle.servicio.nombre for detalle in obj.detalles.all()
+        ) or 'Sin servicios'
+
+
+class TurnoComprobanteUploadSerializer(serializers.Serializer):
+    comprobante_pago = serializers.FileField(required=True)
+
+    def validate(self, attrs):
+        unexpected_fields = set(self.initial_data.keys()) - {'comprobante_pago'}
+        if unexpected_fields:
+            raise serializers.ValidationError({
+                'campos_no_permitidos': sorted(unexpected_fields),
+            })
+        return attrs
+
+
 class TurnoSerializer(serializers.ModelSerializer):
     cliente = serializers.PrimaryKeyRelatedField(
         queryset=Cliente.objects.all(),
