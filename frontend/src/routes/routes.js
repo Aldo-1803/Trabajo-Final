@@ -11,6 +11,7 @@ export const SESSION_ROUTES = {
   OPERACIONES: '/operaciones',
   CUENTA_SIN_ACCESO: '/cuenta-sin-acceso',
   ERROR_ACCESO: '/error-acceso',
+  ACCESO_DENEGADO: '/acceso-denegado',
 };
 
 // Rutas de cliente
@@ -69,4 +70,5 @@ export const NO_HEADER_ROUTES = [
   SESSION_ROUTES.OPERACIONES,
   SESSION_ROUTES.CUENTA_SIN_ACCESO,
   SESSION_ROUTES.ERROR_ACCESO,
+  SESSION_ROUTES.ACCESO_DENEGADO,
 ];

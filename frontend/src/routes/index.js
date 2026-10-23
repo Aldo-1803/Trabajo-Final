@@ -17,6 +17,7 @@ import ResetearClave from '../pages/auth/ResetearClave';
 import Operaciones from '../pages/session/Operaciones';
 import CuentaSinAcceso from '../pages/session/CuentaSinAcceso';
 import ErrorAcceso from '../pages/session/ErrorAcceso';
+import AccesoDenegado from '../pages/session/AccesoDenegado';
 
 // Imports - Cliente Pages
 import Perfil from '../pages/cliente/Perfil';
@@ -83,33 +84,34 @@ export const AppRoutes = () => {
                 <Route path={AUTH_ROUTES.RESETEAR_CLAVE} element={<ResetearClave />} />
 
                 {/* Session landing routes */}
-                <Route path={SESSION_ROUTES.OPERACIONES} element={<ProtectedRoute><Operaciones /></ProtectedRoute>} />
-                <Route path={SESSION_ROUTES.CUENTA_SIN_ACCESO} element={<ProtectedRoute><CuentaSinAcceso /></ProtectedRoute>} />
+                <Route path={SESSION_ROUTES.OPERACIONES} element={<ProtectedRoute allowedRoles={['EMPLEADO', 'PROFESIONAL']}><Operaciones /></ProtectedRoute>} />
+                <Route path={SESSION_ROUTES.CUENTA_SIN_ACCESO} element={<CuentaSinAcceso />} />
                 <Route path={SESSION_ROUTES.ERROR_ACCESO} element={<ErrorAcceso />} />
+                <Route path={SESSION_ROUTES.ACCESO_DENEGADO} element={<AccesoDenegado />} />
 
                 {/* Cliente Routes */}
-                <Route path={CLIENTE_ROUTES.PERFIL} element={<ProtectedRoute><Perfil /></ProtectedRoute>} />
-                <Route path={CLIENTE_ROUTES.EDITAR_PERFIL} element={<ProtectedRoute><EditarPerfil /></ProtectedRoute>} />
-                <Route path={CLIENTE_ROUTES.RESERVAR} element={<ProtectedRoute><ReservaCliente /></ProtectedRoute>} />
-                <Route path={CLIENTE_ROUTES.MIS_TURNOS} element={<ProtectedRoute><MisTurnos /></ProtectedRoute>} />
-                <Route path={CLIENTE_ROUTES.MIS_PEDIDOS} element={<ProtectedRoute><MisPedidos /></ProtectedRoute>} />
-                <Route path={CLIENTE_ROUTES.MI_AGENDA} element={<ProtectedRoute><MiAgenda /></ProtectedRoute>} />
-                <Route path={CLIENTE_ROUTES.CATALOGO_RUTINAS} element={<ProtectedRoute><CatalogoRutinas /></ProtectedRoute>} />
-                <Route path={CLIENTE_ROUTES.CATALOGO_PRODUCTOS} element={<ProtectedRoute><CatalogoProductos /></ProtectedRoute>} />
-                <Route path={CLIENTE_ROUTES.MIS_RUTINAS} element={<ProtectedRoute><MisRutinas /></ProtectedRoute>} />
-                <Route path={CLIENTE_ROUTES.RUTINA_DETALLE} element={<ProtectedRoute><DetalleRutina /></ProtectedRoute>} />
-                <Route path={CLIENTE_ROUTES.CATALOGO_SERVICIOS} element={<ProtectedRoute><CatalogoServicios /></ProtectedRoute>} />
-                <Route path={CLIENTE_ROUTES.SERVICIO_DETALLE} element={<ProtectedRoute><DetalleServicio /></ProtectedRoute>} />
-                <Route path={CLIENTE_ROUTES.PROMOCION_DETALLE} element={<ProtectedRoute><DetallePromocion /></ProtectedRoute>} />
-                <Route path={CLIENTE_ROUTES.CARRITO} element={<ProtectedRoute><Carrito /></ProtectedRoute>} />
-                <Route path={CLIENTE_ROUTES.CONTENIDO_RECOMENDADO} element={<ProtectedRoute><ContenidoRecomendado /></ProtectedRoute>} />
-                <Route path={CLIENTE_ROUTES.CONTENIDO_PUBLICO} element={<ProtectedRoute><ContenidoPublico /></ProtectedRoute>} />
-                <Route path={CLIENTE_ROUTES.CONTENIDO_GUARDADO} element={<ProtectedRoute><ContenidoGuardado /></ProtectedRoute>} />
-                <Route path={CLIENTE_ROUTES.CONTENIDO_DETALLE} element={<ProtectedRoute><DetalleContenido /></ProtectedRoute>} />
+                <Route path={CLIENTE_ROUTES.PERFIL} element={<ProtectedRoute requiredProfile="cliente"><Perfil /></ProtectedRoute>} />
+                <Route path={CLIENTE_ROUTES.EDITAR_PERFIL} element={<ProtectedRoute requiredProfile="cliente"><EditarPerfil /></ProtectedRoute>} />
+                <Route path={CLIENTE_ROUTES.RESERVAR} element={<ProtectedRoute requiredProfile="cliente"><ReservaCliente /></ProtectedRoute>} />
+                <Route path={CLIENTE_ROUTES.MIS_TURNOS} element={<ProtectedRoute requiredProfile="cliente"><MisTurnos /></ProtectedRoute>} />
+                <Route path={CLIENTE_ROUTES.MIS_PEDIDOS} element={<ProtectedRoute requiredProfile="cliente"><MisPedidos /></ProtectedRoute>} />
+                <Route path={CLIENTE_ROUTES.MI_AGENDA} element={<ProtectedRoute requiredProfile="cliente"><MiAgenda /></ProtectedRoute>} />
+                <Route path={CLIENTE_ROUTES.CATALOGO_RUTINAS} element={<ProtectedRoute requiredProfile="cliente"><CatalogoRutinas /></ProtectedRoute>} />
+                <Route path={CLIENTE_ROUTES.CATALOGO_PRODUCTOS} element={<ProtectedRoute requiredProfile="cliente"><CatalogoProductos /></ProtectedRoute>} />
+                <Route path={CLIENTE_ROUTES.MIS_RUTINAS} element={<ProtectedRoute requiredProfile="cliente"><MisRutinas /></ProtectedRoute>} />
+                <Route path={CLIENTE_ROUTES.RUTINA_DETALLE} element={<ProtectedRoute requiredProfile="cliente"><DetalleRutina /></ProtectedRoute>} />
+                <Route path={CLIENTE_ROUTES.CATALOGO_SERVICIOS} element={<ProtectedRoute requiredProfile="cliente"><CatalogoServicios /></ProtectedRoute>} />
+                <Route path={CLIENTE_ROUTES.SERVICIO_DETALLE} element={<ProtectedRoute requiredProfile="cliente"><DetalleServicio /></ProtectedRoute>} />
+                <Route path={CLIENTE_ROUTES.PROMOCION_DETALLE} element={<ProtectedRoute requiredProfile="cliente"><DetallePromocion /></ProtectedRoute>} />
+                <Route path={CLIENTE_ROUTES.CARRITO} element={<ProtectedRoute requiredProfile="cliente"><Carrito /></ProtectedRoute>} />
+                <Route path={CLIENTE_ROUTES.CONTENIDO_RECOMENDADO} element={<ProtectedRoute requiredProfile="cliente"><ContenidoRecomendado /></ProtectedRoute>} />
+                <Route path={CLIENTE_ROUTES.CONTENIDO_PUBLICO} element={<ProtectedRoute requiredProfile="cliente"><ContenidoPublico /></ProtectedRoute>} />
+                <Route path={CLIENTE_ROUTES.CONTENIDO_GUARDADO} element={<ProtectedRoute requiredProfile="cliente"><ContenidoGuardado /></ProtectedRoute>} />
+                <Route path={CLIENTE_ROUTES.CONTENIDO_DETALLE} element={<ProtectedRoute requiredProfile="cliente"><DetalleContenido /></ProtectedRoute>} />
 
                 {/* Admin Routes */}
                 <Route path={ADMIN_ROUTES.DASHBOARD} element={<ProtectedRoute><DashboardAdmin /></ProtectedRoute>} />
-                <Route path={ADMIN_ROUTES.REPORTES} element={<ProtectedRoute><Reportes /></ProtectedRoute>} />
+                <Route path={ADMIN_ROUTES.REPORTES} element={<ProtectedRoute requiredAnyPermission={['gestion.view_reports', 'gestion.view_financial_reports']}><Reportes /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.NUEVO_TURNO} element={<ProtectedRoute><NuevoTurno /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.TURNOS} element={<ProtectedRoute><GestionTurnos /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.GESTIONAR_RUTINAS} element={<ProtectedRoute><GestionarRutinas /></ProtectedRoute>} />
@@ -117,12 +119,12 @@ export const AppRoutes = () => {
                 <Route path={ADMIN_ROUTES.SERVICIOS} element={<ProtectedRoute><GestionarServicios /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.REGLAS} element={<ProtectedRoute><GestionarReglas /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.PRODUCTOS} element={<ProtectedRoute><GestionProductos /></ProtectedRoute>} />
-                <Route path={ADMIN_ROUTES.USUARIOS} element={<ProtectedRoute><GestionUsuarios /></ProtectedRoute>} />
+                <Route path={ADMIN_ROUTES.USUARIOS} element={<ProtectedRoute requiredPermission="usuarios.manage_users"><GestionUsuarios /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.CLIENTES} element={<ProtectedRoute><GestionClientes /></ProtectedRoute>} />
-                <Route path={ADMIN_ROUTES.PERSONAL} element={<ProtectedRoute><GestionPersonal /></ProtectedRoute>} />
+                <Route path={ADMIN_ROUTES.PERSONAL} element={<ProtectedRoute requiredPermission="gestion.manage_personal"><GestionPersonal /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.EQUIPAMIENTO} element={<ProtectedRoute><GestionEquipamiento /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.AGENDA} element={<ProtectedRoute><AgendaAdmin /></ProtectedRoute>} />
-                <Route path={ADMIN_ROUTES.CONFIGURACION} element={<ProtectedRoute><ConfiguracionAdmin /></ProtectedRoute>} />
+                <Route path={ADMIN_ROUTES.CONFIGURACION} element={<ProtectedRoute requiredPermission="gestion.manage_configuration"><ConfiguracionAdmin /></ProtectedRoute>} />
 
                 {/* Admin Routes - Contenido Educativo */}
                 <Route path={ADMIN_ROUTES.CONTENIDO_EDUCATIVO} element={<ProtectedRoute><GestionContenidoEducativo /></ProtectedRoute>} />
@@ -134,7 +136,7 @@ export const AppRoutes = () => {
                 <Route path={ADMIN_ROUTES.CAJA} element={<ProtectedRoute><HistorialPagos /></ProtectedRoute>} />
 
                 {/* Admin Routes - Auditoría */}
-                <Route path={ADMIN_ROUTES.AUDITORIA} element={<ProtectedRoute><Auditoria /></ProtectedRoute>} />
+                <Route path={ADMIN_ROUTES.AUDITORIA} element={<ProtectedRoute requiredPermission="gestion.view_audit"><Auditoria /></ProtectedRoute>} />
 
                 {/* Default Route */}
                 <Route path="/" element={<Navigate to={AUTH_ROUTES.LOGIN} />} />
