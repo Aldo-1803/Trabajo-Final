@@ -26,6 +26,7 @@ from django.db.models import Min
 from .serializers import (
     AdminAdministratorAccountCreateCommandSerializer,
     AdminClientAccountCreateCommandSerializer, ClienteListSerializer,
+    CurrentSessionSerializer,
     RegistroSerializer, SetNewPasswordSerializer, UsuarioPerfilReadSerializer,
     UsuarioPerfilUpdateSerializer,
 )
@@ -48,6 +49,7 @@ from .client_account_services import (
     create_client_account_by_staff,
 )
 from .cliente_filters import ClienteFilter
+from .roles import InconsistentBusinessRoleError
 
 from .models import (
     Usuario,  Cliente
@@ -234,6 +236,33 @@ class AdminClientAccountCreateView(APIView):
         if fields is not None:
             error['fields'] = fields
         return Response({'error': error}, status=status_code)
+
+
+class CurrentSessionView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = (
+            Usuario.objects
+            .select_related('cliente', 'perfil_profesional')
+            .get(pk=request.user.pk)
+        )
+
+        try:
+            data = CurrentSessionSerializer(user).data
+        except InconsistentBusinessRoleError:
+            return Response(
+                {
+                    'error': {
+                        'code': 'MULTIPLE_BUSINESS_ROLES',
+                        'detail': 'El Usuario tiene múltiples roles de negocio.',
+                    }
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        return Response(data, status=status.HTTP_200_OK)
 
 class LogoutView(APIView):
     """

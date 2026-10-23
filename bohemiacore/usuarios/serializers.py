@@ -13,6 +13,7 @@ from gestion.models import (
     Servicio 
 )
 from usuarios.access_services import assign_initial_client_role
+from usuarios.roles import BusinessPermission, get_business_role
 
 
 class StrictInputFieldsMixin:
@@ -107,6 +108,50 @@ class AdminAdministratorAccountCreateCommandSerializer(
         except ValidationError as exc:
             raise serializers.ValidationError(exc.messages) from exc
         return value
+
+
+class CurrentSessionUserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Usuario
+        fields = ('id', 'email', 'first_name', 'last_name', 'is_active')
+        read_only_fields = fields
+
+
+class CurrentSessionSerializer(serializers.Serializer):
+    """Read-only context for the currently authenticated SPA session."""
+
+    user = CurrentSessionUserSerializer(source='*', read_only=True)
+    business_role = serializers.SerializerMethodField()
+    permissions = serializers.SerializerMethodField()
+    profiles = serializers.SerializerMethodField()
+
+    def get_business_role(self, obj):
+        return get_business_role(obj)
+
+    def get_permissions(self, obj):
+        # Django superusers receive every registered permission; the
+        # intersection keeps the session contract limited to business access.
+        canonical_permissions = set(BusinessPermission.ALL)
+        return sorted(obj.get_all_permissions() & canonical_permissions)
+
+    def get_profiles(self, obj):
+        cliente = getattr(obj, 'cliente', None)
+        personal = getattr(obj, 'perfil_profesional', None)
+
+        return {
+            'cliente': {
+                'exists': cliente is not None,
+                'id': cliente.pk if cliente is not None else None,
+                'active': cliente.activo if cliente is not None else None,
+            },
+            'personal': {
+                'exists': personal is not None,
+                'id': personal.pk if personal is not None else None,
+                'active': personal.activo if personal is not None else None,
+                'function_role': personal.rol if personal is not None else None,
+            },
+        }
+
 
 class UsuarioPerfilReadSerializer(serializers.ModelSerializer):
     """
