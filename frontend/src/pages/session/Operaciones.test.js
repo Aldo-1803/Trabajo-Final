@@ -44,6 +44,7 @@ const renderOperations = (context = {}) => {
 
 const confirmedTurno = {
     id: 10,
+    servicio_id: 7,
     cliente_nombre: 'Ana Pérez',
     servicio_nombre: 'Corte',
     hora_inicio: '10:00:00',
@@ -234,5 +235,58 @@ describe('Operaciones por permisos efectivos', () => {
         );
         expect(screen.getByText('Estado: confirmado')).toBeInTheDocument();
         expect(axios.get).toHaveBeenCalledTimes(1);
+    });
+
+    test.each([
+        ['gestion.reprogram_any_turno', 'Reprogramar', 'Cancelar'],
+        ['gestion.cancel_any_turno', 'Cancelar', 'Reprogramar']
+    ])(
+        'permiso %s habilita solo %s',
+        async (permission, visibleAction, hiddenAction) => {
+            axios.get.mockResolvedValue({ data: [confirmedTurno] });
+            renderOperations({
+                businessRole: 'EMPLEADO',
+                isStaff: false,
+                permissions: ['gestion.view_global_agenda', permission]
+            });
+
+            expect(await screen.findByRole('button', { name: visibleAction }))
+                .toBeInTheDocument();
+            expect(screen.queryByRole('button', { name: hiddenAction }))
+                .not.toBeInTheDocument();
+        }
+    );
+
+    test('cancelación usa endpoint dedicado, motivo y recarga', async () => {
+        axios.get
+            .mockResolvedValueOnce({ data: [confirmedTurno] })
+            .mockResolvedValueOnce({
+                data: [{ ...confirmedTurno, estado: 'cancelado' }]
+            });
+        axios.post.mockResolvedValue({ data: { changed: true } });
+        renderOperations({
+            businessRole: 'ADMINISTRADOR',
+            isStaff: false,
+            permissions: [
+                'gestion.view_global_agenda',
+                'gestion.cancel_any_turno'
+            ]
+        });
+
+        fireEvent.click(await screen.findByRole('button', { name: 'Cancelar' }));
+        fireEvent.change(screen.getByLabelText('Motivo de cancelación'), {
+            target: { value: 'Cierre excepcional del salón' }
+        });
+        fireEvent.click(screen.getByRole('button', { name: 'Confirmar cancelación' }));
+
+        await waitFor(() => expect(axios.post).toHaveBeenCalledWith(
+            'http://127.0.0.1:8000/api/gestion/turnos/10/cancelar/',
+            { motivo: 'Cierre excepcional del salón' },
+            { headers: { Authorization: 'Bearer test-token' } }
+        ));
+        await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(2));
+        expect(await screen.findByText('Estado: cancelado')).toBeInTheDocument();
+        expect(screen.getByText('Turno cancelado correctamente.')).toBeInTheDocument();
+        expect(axios.patch).not.toHaveBeenCalled();
     });
 });

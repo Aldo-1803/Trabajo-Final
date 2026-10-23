@@ -73,8 +73,16 @@ class TurnoAvailabilityService:
         return inicio, fin
 
     @classmethod
-    def _matching_schedule_exists(cls, *, fecha, hora_inicio, servicio, profesional):
-        duracion = servicio.duracion_estimada or 60
+    def _matching_schedule_exists(
+        cls,
+        *,
+        fecha,
+        hora_inicio,
+        servicio,
+        profesional,
+        duracion_minutos=None,
+    ):
+        duracion = duracion_minutos or servicio.duracion_estimada or 60
         inicio, fin = cls._slot_datetimes(fecha, hora_inicio, duracion)
         rules = cls.matching_schedules(
             fecha=fecha,
@@ -144,23 +152,32 @@ class TurnoAvailabilityService:
         hora_inicio,
         duracion_minutos,
         servicio,
+        servicios=None,
         excluir_turno_id=None,
     ):
+        services = tuple(servicios or (servicio,))
         requisitos = RequisitoServicio.objects.filter(
-            servicio=servicio,
+            servicio__in=services,
             obligatorio=True,
         )
         if not requisitos.exists():
             return True
 
         inicio, fin = cls._slot_datetimes(fecha, hora_inicio, duracion_minutos)
+        requirements_by_type = {}
         for requisito in requisitos:
+            requirements_by_type[requisito.tipo_equipamiento_id] = max(
+                requirements_by_type.get(requisito.tipo_equipamiento_id, 0),
+                requisito.cantidad_minima,
+            )
+
+        for equipment_type_id, required_quantity in requirements_by_type.items():
             stock_total = Equipamiento.objects.filter(
-                tipo=requisito.tipo_equipamiento,
+                tipo_id=equipment_type_id,
                 is_active=True,
                 estado=Equipamiento.EstadoRecurso.DISPONIBLE,
             ).count()
-            if stock_total < requisito.cantidad_minima:
+            if stock_total < required_quantity:
                 return False
 
             turnos = (
@@ -168,7 +185,7 @@ class TurnoAvailabilityService:
                     fecha=fecha,
                     estado__in=ACTIVE_TURNO_STATES,
                     detalles__servicio__requisitos_equipamiento__tipo_equipamiento=(
-                        requisito.tipo_equipamiento
+                        equipment_type_id
                     ),
                 )
                 .distinct()
@@ -193,13 +210,13 @@ class TurnoAvailabilityService:
                 ocupados += (
                     RequisitoServicio.objects.filter(
                         servicio__detalles__turno=turno,
-                        tipo_equipamiento=requisito.tipo_equipamiento,
+                        tipo_equipamiento_id=equipment_type_id,
                         obligatorio=True,
                     ).aggregate(maximo=Max('cantidad_minima'))['maximo']
                     or 1
                 )
 
-            if ocupados + requisito.cantidad_minima > stock_total:
+            if ocupados + required_quantity > stock_total:
                 return False
 
         return True
@@ -214,6 +231,8 @@ class TurnoAvailabilityService:
         profesional,
         check_schedule=True,
         excluir_turno_id=None,
+        duracion_minutos=None,
+        servicios=None,
     ):
         if not profesional.activo:
             raise TurnoCreationError(
@@ -221,14 +240,15 @@ class TurnoAvailabilityService:
                 'El Personal seleccionado no está activo.',
                 'profesional',
             )
-        if not servicio.activo:
+        slot_services = tuple(servicios or (servicio,))
+        if any(not slot_service.activo for slot_service in slot_services):
             raise TurnoCreationError(
                 'INACTIVE_SERVICE',
                 'El Servicio seleccionado no está activo.',
                 'servicio',
             )
 
-        duracion = servicio.duracion_estimada or 60
+        duracion = duracion_minutos or servicio.duracion_estimada or 60
         inicio, _ = cls._slot_datetimes(fecha, hora_inicio, duracion)
         inicio_aware = timezone.make_aware(
             inicio,
@@ -250,11 +270,15 @@ class TurnoAvailabilityService:
                 'fecha',
             )
 
-        if check_schedule and not cls._matching_schedule_exists(
-            fecha=fecha,
-            hora_inicio=hora_inicio,
-            servicio=servicio,
-            profesional=profesional,
+        if check_schedule and not all(
+            cls._matching_schedule_exists(
+                fecha=fecha,
+                hora_inicio=hora_inicio,
+                servicio=slot_service,
+                profesional=profesional,
+                duracion_minutos=duracion,
+            )
+            for slot_service in slot_services
         ):
             raise TurnoCreationError(
                 'OUTSIDE_WORK_SCHEDULE',
@@ -292,6 +316,7 @@ class TurnoAvailabilityService:
             hora_inicio=hora_inicio,
             duracion_minutos=duracion,
             servicio=servicio,
+            servicios=servicios,
             excluir_turno_id=excluir_turno_id,
         ):
             raise TurnoCreationError(
@@ -311,9 +336,19 @@ class TurnoAvailabilityService:
         return True
 
     @classmethod
-    def available_slots_for_schedule(cls, *, fecha, schedule, servicio, intervalo_minutos):
+    def available_slots_for_schedule(
+        cls,
+        *,
+        fecha,
+        schedule,
+        servicio,
+        intervalo_minutos,
+        excluir_turno_id=None,
+        duracion_minutos=None,
+        servicios=None,
+    ):
         slots = []
-        duracion = servicio.duracion_estimada or 60
+        duracion = duracion_minutos or servicio.duracion_estimada or 60
         current_minute = schedule.hora_inicio.hour * 60 + schedule.hora_inicio.minute
         end_minute = schedule.hora_fin.hour * 60 + schedule.hora_fin.minute
 
@@ -327,7 +362,10 @@ class TurnoAvailabilityService:
                 hora_inicio=hora_inicio,
                 servicio=servicio,
                 profesional=schedule.personal,
-                check_schedule=False,
+                check_schedule=True,
+                excluir_turno_id=excluir_turno_id,
+                duracion_minutos=duracion,
+                servicios=servicios,
             ):
                 slots.append({
                     'hora': hora_inicio.strftime('%H:%M'),

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 
+import TurnoSemanticActions from '../../components/TurnoSemanticActions';
 import { useSession } from '../../context/SessionContext';
 
 
@@ -22,6 +23,11 @@ const GestionTurnos = () => {
     const [arrivalMessage, setArrivalMessage] = useState('');
 
     const canRegisterArrival = hasPermission('gestion.register_arrival');
+    const canReprogramTurno = hasPermission('gestion.reprogram_any_turno');
+    const canCancelTurno = hasPermission('gestion.cancel_any_turno');
+    const hasTurnoActions = (
+        canRegisterArrival || canReprogramTurno || canCancelTurno
+    );
 
     const cargarTurnos = useCallback(async () => {
         setLoading(true);
@@ -80,6 +86,12 @@ const GestionTurnos = () => {
         } finally {
             setArrivalTurnoId(null);
         }
+    };
+
+    const operationCompleted = async (message) => {
+        await cargarTurnos();
+        setError('');
+        setArrivalMessage(message);
     };
 
     const profesionales = Array.from(
@@ -221,7 +233,7 @@ const GestionTurnos = () => {
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Servicio</th>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Personal</th>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Estado</th>
-                                {canRegisterArrival && (
+                                {hasTurnoActions && (
                                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Acciones</th>
                                 )}
                             </tr>
@@ -237,9 +249,9 @@ const GestionTurnos = () => {
                                     <td className="px-6 py-4 text-sm text-gray-700">{turno.servicio_nombre}</td>
                                     <td className="px-6 py-4 text-sm text-gray-700">{turno.profesional_nombre || 'Sin asignar'}</td>
                                     <td className="px-6 py-4 text-sm font-semibold text-gray-700">{turno.estado}</td>
-                                    {canRegisterArrival && (
+                                    {hasTurnoActions && (
                                         <td className="px-6 py-4 text-sm">
-                                            {turno.estado === 'confirmado' && (
+                                            {canRegisterArrival && turno.estado === 'confirmado' && (
                                                 <button
                                                     type="button"
                                                     onClick={() => registrarLlegada(turno.id)}
@@ -251,6 +263,13 @@ const GestionTurnos = () => {
                                                         : 'Registrar llegada'}
                                                 </button>
                                             )}
+                                            <TurnoSemanticActions
+                                                turno={turno}
+                                                canReprogram={canReprogramTurno}
+                                                canCancel={canCancelTurno}
+                                                onCompleted={operationCompleted}
+                                                onError={setError}
+                                            />
                                         </td>
                                     )}
                                 </tr>

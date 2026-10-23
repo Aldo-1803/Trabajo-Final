@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import axios from 'axios';
 import { Link } from 'react-router-dom';
 
+import TurnoSemanticActions from '../../components/TurnoSemanticActions';
 import { useSession } from '../../context/SessionContext';
 
 
@@ -28,6 +29,8 @@ const Operaciones = () => {
 
     const canViewAgenda = hasPermission('gestion.view_global_agenda');
     const canRegisterArrival = hasPermission('gestion.register_arrival');
+    const canReprogramTurno = hasPermission('gestion.reprogram_any_turno');
+    const canCancelTurno = hasPermission('gestion.cancel_any_turno');
     const canCreateWalkinClient = hasPermission('usuarios.create_walkin_client');
     const canCreateTurno = hasPermission('gestion.create_turno_for_client');
 
@@ -80,6 +83,12 @@ const Operaciones = () => {
         } finally {
             setArrivalTurnoId(null);
         }
+    };
+
+    const operationCompleted = async (message) => {
+        await cargarTurnosHoy();
+        setArrivalError('');
+        setArrivalMessage(message);
     };
 
     if (loading) {
@@ -155,6 +164,13 @@ const Operaciones = () => {
                                                                 : 'Registrar llegada'}
                                                         </button>
                                                     )}
+                                                    <TurnoSemanticActions
+                                                        turno={turno}
+                                                        canReprogram={canReprogramTurno}
+                                                        canCancel={canCancelTurno}
+                                                        onCompleted={operationCompleted}
+                                                        onError={setArrivalError}
+                                                    />
                                                 </div>
                                             </li>
                                         ))}

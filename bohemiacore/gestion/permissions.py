@@ -22,3 +22,17 @@ class CanRegisterTurnoArrival(BasePermission):
 
     def has_permission(self, request, view):
         return request.user.has_perm(BusinessPermission.REGISTER_ARRIVAL)
+
+
+class CanReprogramAnyTurno(BasePermission):
+    message = 'No tiene permisos para reprogramar Turnos.'
+
+    def has_permission(self, request, view):
+        return request.user.has_perm(BusinessPermission.REPROGRAM_ANY_TURNO)
+
+
+class CanCancelAnyTurno(BasePermission):
+    message = 'No tiene permisos para cancelar Turnos.'
+
+    def has_permission(self, request, view):
+        return request.user.has_perm(BusinessPermission.CANCEL_ANY_TURNO)

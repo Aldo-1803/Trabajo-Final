@@ -90,28 +90,14 @@ const CampanaNotificaciones = () => {
             setProcesando(prev => ({ ...prev, [notif.id]: true }));
             const token = localStorage.getItem('access_token');
 
-            // Opción 1: Si existe endpoint específico de aceptar notificación
-            try {
-                await axios.post(
-                    `http://127.0.0.1:8000/api/gestion/notificaciones/${notif.id}/aceptar/`,
-                    {},
-                    { headers: { 'Authorization': `Bearer ${token}` } }
-                );
-            } catch (err) {
-                // Si no existe ese endpoint, usamos el PATCH directo al turno                
-                if (turno_actual_id) {
-                    await axios.patch(
-                        `http://127.0.0.1:8000/api/gestion/turnos/${turno_actual_id}/`,
-                        {
-                            fecha: fecha_oferta,
-                            hora_inicio: hora_oferta
-                        },
-                        { headers: { 'Authorization': `Bearer ${token}` } }
-                    );
-                } else {
-                    throw new Error('ID de turno no encontrado en notificación');
-                }
+            if (!turno_actual_id) {
+                throw new Error('ID de turno no encontrado en notificación');
             }
+            await axios.post(
+                `http://127.0.0.1:8000/api/gestion/notificaciones/${notif.id}/aceptar/`,
+                {},
+                { headers: { 'Authorization': `Bearer ${token}` } }
+            );
 
             // Si llegamos aquí, el cambio fue exitoso
             notify.success("Turno adelantado correctamente");

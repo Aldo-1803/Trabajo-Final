@@ -112,6 +112,7 @@ class TurnoAgendaReadSerializer(serializers.ModelSerializer):
     cliente_nombre = serializers.SerializerMethodField()
     profesional_nombre = serializers.SerializerMethodField()
     servicio_nombre = serializers.SerializerMethodField()
+    servicio_id = serializers.SerializerMethodField()
 
     class Meta:
         model = Turno
@@ -124,6 +125,7 @@ class TurnoAgendaReadSerializer(serializers.ModelSerializer):
             'fecha',
             'hora_inicio',
             'estado',
+            'servicio_id',
             'servicio_nombre',
         ]
         read_only_fields = fields
@@ -140,6 +142,10 @@ class TurnoAgendaReadSerializer(serializers.ModelSerializer):
         return ', '.join(
             detalle.servicio.nombre for detalle in obj.detalles.all()
         ) or 'Sin servicios'
+
+    def get_servicio_id(self, obj):
+        detalle = next(iter(obj.detalles.all()), None)
+        return detalle.servicio_id if detalle else None
 
 
 class TurnoClienteReadSerializer(serializers.ModelSerializer):
@@ -217,6 +223,31 @@ class TurnoParaClienteCommandSerializer(TurnoReservaCommandSerializer):
 
 class TurnoArrivalCommandSerializer(StrictTurnoCommandSerializer):
     allowed_fields = frozenset()
+
+
+class TurnoRescheduleCommandSerializer(StrictTurnoCommandSerializer):
+    fecha = serializers.DateField()
+    hora = serializers.TimeField()
+    profesional_id = serializers.IntegerField(min_value=1, required=False)
+    motivo = serializers.CharField(max_length=500, trim_whitespace=True)
+    allowed_fields = frozenset({
+        'fecha',
+        'hora',
+        'profesional_id',
+        'motivo',
+    })
+
+
+class TurnoCancellationCommandSerializer(StrictTurnoCommandSerializer):
+    motivo = serializers.CharField(max_length=500, trim_whitespace=True)
+    allowed_fields = frozenset({'motivo'})
+
+
+class TurnoClientRescheduleCommandSerializer(StrictTurnoCommandSerializer):
+    fecha = serializers.DateField()
+    hora_inicio = serializers.TimeField()
+    profesional_id = serializers.IntegerField(min_value=1, required=False)
+    allowed_fields = frozenset({'fecha', 'hora_inicio', 'profesional_id'})
 
 
 class TurnoSerializer(serializers.ModelSerializer):

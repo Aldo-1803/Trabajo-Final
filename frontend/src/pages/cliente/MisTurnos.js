@@ -22,6 +22,7 @@ const MisTurnos = () => {
     const [horariosDelDia, setHorariosDelDia] = useState([]);
     const [horarioSeleccionado, setHorarioSeleccionado] = useState(null);
     const [cargandoDisponibilidad, setCargandoDisponibilidad] = useState(false);
+    const [motivoCancelacion, setMotivoCancelacion] = useState('');
 
     const navigate = useNavigate();
 
@@ -113,9 +114,8 @@ const MisTurnos = () => {
     const abrirGestion = async (turno) => {
         try {
             const token = localStorage.getItem('access_token');
-            const res = await axios.post(
-                `http://127.0.0.1:8000/api/gestion/turnos/${turno.id}/gestionar/`,
-                { accion: 'CONSULTAR' },
+            const res = await axios.get(
+                `http://127.0.0.1:8000/api/gestion/turnos/${turno.id}/opciones-cliente/`,
                 { headers: { 'Authorization': `Bearer ${token}` } }
             );
             setDatosPolitica(res.data);
@@ -126,11 +126,12 @@ const MisTurnos = () => {
             setHorarioSeleccionado(null);
             setHorariosDelDia([]);
             setDisponibilidadReprogramacion([]);
+            setMotivoCancelacion('');
             
             // Cargar disponibilidad para reprogramación si puede reprogramar
             if (res.data.puede_reprogramar && turno.detalles && turno.detalles.length > 0) {
                 const servicioId = turno.detalles[0].servicio;
-                await cargarDisponibilidadReprogramacion(servicioId);
+                await cargarDisponibilidadReprogramacion(servicioId, turno.id);
             }
             
             setModalAbierto(true);
@@ -145,11 +146,11 @@ const MisTurnos = () => {
     };
 
     // Cargar disponibilidad para reprogramación
-    const cargarDisponibilidadReprogramacion = async (servicioId) => {
+    const cargarDisponibilidadReprogramacion = async (servicioId, turnoId) => {
         setCargandoDisponibilidad(true);
         try {
             const token = localStorage.getItem('access_token');
-            const url = `http://127.0.0.1:8000/api/gestion/turnos/consultar_disponibilidad/?servicio_id=${servicioId}`;
+            const url = `http://127.0.0.1:8000/api/gestion/turnos/consultar_disponibilidad/?servicio_id=${servicioId}&turno_id=${turnoId}`;
             const res = await axios.get(url, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
@@ -198,7 +199,8 @@ const MisTurnos = () => {
                     `http://127.0.0.1:8000/api/gestion/turnos/${turnoSeleccionado.id}/reprogramar_cliente/`,
                     { 
                         fecha: fechaSeleccionada.fecha,
-                        hora_inicio: horarioSeleccionado.hora
+                        hora_inicio: horarioSeleccionado.hora,
+                        profesional_id: horarioSeleccionado.profesional_id
                     },
                     { headers: { 'Authorization': `Bearer ${token}` } }
                 );
@@ -213,7 +215,10 @@ const MisTurnos = () => {
                 }, 500);
                 
             } else if (tipoAccion === 'CANCELAR') {
-                // Mantener la lógica existente de gestionar para cancelación
+                if (!motivoCancelacion.trim()) {
+                    notify.error('Ingresá el motivo de cancelación.');
+                    return;
+                }
                 const result = await confirmarAccion({
                     title: "¿Cancelar turno?",
                     text: "Esta acción es irreversible.",
@@ -222,8 +227,8 @@ const MisTurnos = () => {
                 if (!result.isConfirmed) return;
 
                 const res = await axios.post(
-                    `http://127.0.0.1:8000/api/gestion/turnos/${turnoSeleccionado.id}/gestionar/`,
-                    { accion: 'CANCELAR' },
+                    `http://127.0.0.1:8000/api/gestion/turnos/${turnoSeleccionado.id}/cancelar-cliente/`,
+                    { motivo: motivoCancelacion.trim() },
                     { headers: { 'Authorization': `Bearer ${token}` } }
                 );
 
@@ -252,6 +257,7 @@ const MisTurnos = () => {
         setHorarioSeleccionado(null);
         setHorariosDelDia([]);
         setDisponibilidadReprogramacion([]);
+        setMotivoCancelacion('');
     };
 
     if (loading) return <div className="text-center mt-10" style={{ color: '#8B8682' }}>Cargando turnos...</div>;
@@ -528,14 +534,28 @@ const MisTurnos = () => {
                             </div>
                         )}
 
-                        <hr className="my-4" style={{ borderColor: '#D5D1CC' }} />
+                        {datosPolitica.puede_cancelar && (
+                            <>
+                                <hr className="my-4" style={{ borderColor: '#D5D1CC' }} />
 
-                        <div>
-                            <h3 className="font-bold mb-2" style={{ color: '#817773' }}>Cancelar Definitivamente</h3>
-                            <button onClick={() => ejecutarAccion('CANCELAR')} className="w-full border-2 font-bold py-2 rounded transition" style={{ borderColor: '#C73E3E', color: '#C73E3E', backgroundColor: 'white' }} onMouseEnter={(e) => e.target.style.backgroundColor = '#FFE8E8'} onMouseLeave={(e) => e.target.style.backgroundColor = 'white'}>
-                                Cancelar Turno
-                            </button>
-                        </div>
+                                <div>
+                                    <h3 className="font-bold mb-2" style={{ color: '#817773' }}>Cancelar Definitivamente</h3>
+                                    <label className="block text-sm font-semibold mb-2" style={{ color: '#817773' }}>
+                                        Motivo de cancelación
+                                        <textarea
+                                            aria-label="Motivo de cancelación"
+                                            value={motivoCancelacion}
+                                            onChange={(event) => setMotivoCancelacion(event.target.value)}
+                                            className="mt-1 w-full rounded border p-2"
+                                            style={{ borderColor: '#D5BDAF' }}
+                                        />
+                                    </label>
+                                    <button disabled={!motivoCancelacion.trim()} onClick={() => ejecutarAccion('CANCELAR')} className="w-full border-2 font-bold py-2 rounded transition disabled:opacity-50" style={{ borderColor: '#C73E3E', color: '#C73E3E', backgroundColor: 'white' }} onMouseEnter={(e) => e.target.style.backgroundColor = '#FFE8E8'} onMouseLeave={(e) => e.target.style.backgroundColor = 'white'}>
+                                        Cancelar Turno
+                                    </button>
+                                </div>
+                            </>
+                        )}
                     </div>
                 </div>
             )}

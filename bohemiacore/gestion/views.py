@@ -48,6 +48,8 @@ from .serializers import (
     TurnoAgendaReadSerializer, TurnoClienteReadSerializer,
     TurnoComprobanteUploadSerializer, TurnoReservaCommandSerializer,
     TurnoParaClienteCommandSerializer, TurnoArrivalCommandSerializer,
+    TurnoCancellationCommandSerializer, TurnoClientRescheduleCommandSerializer,
+    TurnoRescheduleCommandSerializer,
     RutinaSerializer, RutinaClienteSerializer,
     RutinaClienteCreateSerializer, ReglaDiagnosticoSerializer, NotificacionSerializer, ProductoSerializer, ImagenProductoSerializer, EquipamientoSerializer,
     UsuarioAccountStatusCommandSerializer, UsuarioAdminIdentityUpdateSerializer,
@@ -65,8 +67,10 @@ from .serializers import (
     #PasoRutinaSerializer,
 )
 from .permissions import (
+    CanCancelAnyTurno,
     CanCreateTurnoForClient,
     CanRegisterTurnoArrival,
+    CanReprogramAnyTurno,
     CanViewGlobalAgenda,
 )
 from .turno_creation_services import (
@@ -79,6 +83,18 @@ from .turno_arrival_services import (
     PermissionDeniedForTurnoArrival,
     TurnoArrivalTargetNotFound,
     register_turno_arrival,
+)
+from .turno_management_services import (
+    CLIENT_CANCELLABLE_STATES,
+    CLIENT_REPROGRAMMABLE_STATES,
+    InvalidTurnoManagementTransition,
+    PermissionDeniedForTurnoManagement,
+    TurnoManagementError,
+    TurnoManagementTargetNotFound,
+    cancel_owned_turno,
+    cancel_turno,
+    reprogram_owned_turno,
+    reprogram_turno,
 )
 from .personal_access_services import (
     ClientProfileRequired,
@@ -1308,6 +1324,10 @@ class TurnoViewSet(viewsets.ModelViewSet):
             permission_classes = [IsAuthenticated, CanCreateTurnoForClient]
         elif self.action == 'registrar_llegada':
             permission_classes = [IsAuthenticated, CanRegisterTurnoArrival]
+        elif self.action == 'reprogramar':
+            permission_classes = [IsAuthenticated, CanReprogramAnyTurno]
+        elif self.action == 'cancelar':
+            permission_classes = [IsAuthenticated, CanCancelAnyTurno]
         else:
             permission_classes = [IsAuthenticated]
         return [permission() for permission in permission_classes]
@@ -1501,6 +1521,85 @@ class TurnoViewSet(viewsets.ModelViewSet):
             'estado_actual': result.current_state,
         }, status=status.HTTP_200_OK)
 
+    @staticmethod
+    def _management_conflict(exc, code):
+        return Response(
+            {
+                'code': code,
+                'detail': 'El Turno no admite esta operación en su estado actual.',
+                'estado_actual': exc.current_state,
+            },
+            status=status.HTTP_409_CONFLICT,
+        )
+
+    @staticmethod
+    def _management_validation_error(exc):
+        return Response(
+            {
+                exc.field: [exc.detail],
+                'code': exc.code,
+            },
+            status=status.HTTP_409_CONFLICT,
+        )
+
+    @action(detail=True, methods=['post'], url_path='reprogramar')
+    def reprogramar(self, request, pk=None):
+        command = TurnoRescheduleCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        try:
+            result = reprogram_turno(
+                actor=request.user,
+                turno_id=pk,
+                fecha=command.validated_data['fecha'],
+                hora_inicio=command.validated_data['hora'],
+                profesional_id=command.validated_data.get('profesional_id'),
+                reason=command.validated_data['motivo'],
+            )
+        except PermissionDeniedForTurnoManagement:
+            raise PermissionDenied('No tiene permisos para reprogramar Turnos.')
+        except TurnoManagementTargetNotFound:
+            raise Http404
+        except InvalidTurnoManagementTransition as exc:
+            return self._management_conflict(exc, 'INVALID_RESCHEDULE_TRANSITION')
+        except (TurnoManagementError, TurnoCreationError) as exc:
+            return self._management_validation_error(exc)
+
+        return Response({
+            'turno_id': result.turno.pk,
+            'fecha_anterior': result.previous_date,
+            'fecha_actual': result.current_date,
+            'hora_anterior': result.previous_time,
+            'hora_actual': result.current_time,
+            'profesional_anterior_id': result.previous_professional_id,
+            'profesional_actual_id': result.current_professional_id,
+            'estado_anterior': result.previous_state,
+            'estado_actual': result.current_state,
+        })
+
+    @action(detail=True, methods=['post'], url_path='cancelar')
+    def cancelar(self, request, pk=None):
+        command = TurnoCancellationCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        try:
+            result = cancel_turno(
+                actor=request.user,
+                turno_id=pk,
+                reason=command.validated_data['motivo'],
+            )
+        except PermissionDeniedForTurnoManagement:
+            raise PermissionDenied('No tiene permisos para cancelar Turnos.')
+        except TurnoManagementTargetNotFound:
+            raise Http404
+        except InvalidTurnoManagementTransition as exc:
+            return self._management_conflict(exc, 'INVALID_CANCELLATION_TRANSITION')
+
+        return Response({
+            'turno_id': result.turno.pk,
+            'changed': result.changed,
+            'estado_anterior': result.previous_state,
+            'estado_actual': result.current_state,
+        })
+
     @action(detail=False, methods=['get'], url_path='selector-clientes')
     def selector_clientes(self, request):
         clientes = (
@@ -1647,95 +1746,89 @@ class TurnoViewSet(viewsets.ModelViewSet):
         POST /api/gestion/turnos/{id}/reprogramar_cliente/
         Body: {"fecha": "2026-01-20", "hora_inicio": "14:00"}
         """
-        turno = self.get_object()
-        
-        # 1. Validar que el cliente es el dueño del turno
-        if turno.cliente.usuario != request.user:
-            raise PermissionDenied("No puedes reprogramar turnos de otros clientes.")
-        
-        # 2. Validar que el turno pueda ser reprogramado (solo en ciertos estados)
-        if turno.estado not in ['solicitado', 'esperando_sena']:
-            return Response({
-                "error": f"No puedes reprogramar un turno en estado '{turno.estado}'. "
-                         "Solo puedes reprogramar turnos solicitados o pendientes de seña."
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # 3. Obtener nueva fecha y hora
-        nueva_fecha_str = request.data.get('fecha')
-        nueva_hora_str = request.data.get('hora_inicio')
-        
-        if not nueva_fecha_str or not nueva_hora_str:
-            return Response({
-                "error": "Debes proporcionar 'fecha' y 'hora_inicio'."
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
+        command = TurnoClientRescheduleCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
         try:
-            nueva_fecha = datetime.strptime(nueva_fecha_str, '%Y-%m-%d').date()
-            nueva_hora = datetime.strptime(nueva_hora_str, '%H:%M').time()
-        except ValueError:
-            return Response({
-                "error": "Formato inválido. Usa: fecha='YYYY-MM-DD', hora_inicio='HH:MM'"
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # 4. Validar política de tiempo para reprogramación (48hs antes para confirmados)
-        config = Configuracion.objects.first()
-        if turno.estado == 'confirmado':
-            horas_limite = config.horas_limite_cancelacion if config else 48
-            fecha_hora_actual = datetime.combine(turno.fecha, turno.hora_inicio)
-            fecha_hora_utc = timezone.make_aware(fecha_hora_actual) if timezone.is_naive(fecha_hora_actual) else fecha_hora_actual
-            ahora = timezone.now()
-            
-            horas_restantes = (fecha_hora_utc - ahora).total_seconds() / 3600
-            if horas_restantes < horas_limite:
-                return Response({
-                    "error": f"Ya no puedes reprogramar este turno de forma autónoma. "
-                             f"Quedan menos de {horas_limite}hs. Por favor, contacta al salón."
-                }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # 5. Validar que no hay turno duplicado en la nueva fecha/hora
-        turno_duplicado = Turno.objects.filter(
-            cliente=turno.cliente,
-            fecha=nueva_fecha,
-            hora_inicio=nueva_hora,
-            estado__in=['solicitado', 'esperando_sena', 'confirmado', 'sugerido']
-        ).exclude(id=turno.id).exists()
-        
-        if turno_duplicado:
-            return Response({
-                "error": "Ya tienes un turno en esa fecha y hora."
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # 6. Validar que el nuevo slot está disponible (sin conflictos)
-        # Extraer IDs de servicios del turno
-        servicios_ids = [d.servicio.id for d in turno.detalles.all()]
-        
-        es_valido = self._validar_slot_libre(
-            fecha=nueva_fecha,
-            hora=nueva_hora,
-            profesional=turno.profesional,
-            duracion_minutos=sum(d.duracion_minutos for d in turno.detalles.all()) or 60,
-            servicios_ids=servicios_ids,
-            excluir_turno_id=turno.id  # Excluir el turno actual de la validación
-        )
-        
-        if not es_valido:
-            return Response({
-                "error": "El horario seleccionado ya no está disponible."
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # 7. Guardar cambios
-        turno.fecha = nueva_fecha
-        turno.hora_inicio = nueva_hora
-        turno.cambios_realizados += 1
-        turno.save()
-        
-        # Refrescar desde BD para asegurar que los cambios se persistieron
-        turno.refresh_from_db()
-        
+            result = reprogram_owned_turno(
+                actor=request.user,
+                turno_id=pk,
+                fecha=command.validated_data['fecha'],
+                hora_inicio=command.validated_data['hora_inicio'],
+                profesional_id=command.validated_data.get('profesional_id'),
+            )
+        except TurnoManagementTargetNotFound:
+            raise Http404
+        except InvalidTurnoManagementTransition as exc:
+            return self._management_conflict(exc, 'INVALID_CLIENT_RESCHEDULE_TRANSITION')
+        except (TurnoManagementError, TurnoCreationError) as exc:
+            return self._management_validation_error(exc)
+
         return Response({
-            "mensaje": "Turno reprogramado con éxito.",
-            "turno": TurnoSerializer(turno, context={'request': request}).data
-        }, status=status.HTTP_200_OK)
+            'mensaje': 'Turno reprogramado con éxito.',
+            'turno_id': result.turno.pk,
+            'fecha': result.current_date,
+            'hora_inicio': result.current_time,
+            'profesional_id': result.current_professional_id,
+            'estado': result.current_state,
+        })
+
+    @action(detail=True, methods=['get'], url_path='opciones-cliente')
+    def opciones_cliente(self, request, pk=None):
+        try:
+            turno = Turno.objects.get(pk=pk, cliente__usuario=request.user)
+        except Turno.DoesNotExist:
+            raise Http404
+
+        config = Configuracion.objects.first() or Configuracion()
+        appointment_at = timezone.make_aware(
+            datetime.combine(turno.fecha, turno.hora_inicio),
+            timezone.get_current_timezone(),
+        )
+        remaining_hours = (appointment_at - timezone.now()).total_seconds() / 3600
+        within_window = remaining_hours >= config.horas_limite_cancelacion
+        can_reprogram = turno.estado in CLIENT_REPROGRAMMABLE_STATES
+        if turno.estado == Turno.Estado.CONFIRMADO:
+            can_reprogram = (
+                can_reprogram
+                and within_window
+                and turno.cambios_realizados < config.max_reprogramaciones
+            )
+
+        return Response({
+            'puede_reprogramar': can_reprogram,
+            'puede_cancelar': (
+                turno.estado in CLIENT_CANCELLABLE_STATES and within_window
+            ),
+            'mensaje': 'Seleccioná una operación disponible para tu Turno.',
+            'tipo_alerta': 'info',
+            'cambios_realizados': turno.cambios_realizados,
+            'limite_cambios': config.max_reprogramaciones,
+            'horas_restantes': round(remaining_hours, 2),
+        })
+
+    @action(detail=True, methods=['post'], url_path='cancelar-cliente')
+    def cancelar_cliente(self, request, pk=None):
+        command = TurnoCancellationCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        try:
+            result = cancel_owned_turno(
+                actor=request.user,
+                turno_id=pk,
+                reason=command.validated_data['motivo'],
+            )
+        except TurnoManagementTargetNotFound:
+            raise Http404
+        except InvalidTurnoManagementTransition as exc:
+            return self._management_conflict(exc, 'INVALID_CLIENT_CANCELLATION_TRANSITION')
+        except TurnoManagementError as exc:
+            return self._management_validation_error(exc)
+
+        return Response({
+            'mensaje': 'Turno cancelado correctamente.',
+            'turno_id': result.turno.pk,
+            'changed': result.changed,
+            'estado_actual': result.current_state,
+        })
     
     def _validar_slot_libre(self, fecha, hora, profesional, duracion_minutos, servicios_ids=None, excluir_turno_id=None):
         """
@@ -1814,6 +1907,8 @@ class TurnoViewSet(viewsets.ModelViewSet):
         """
         servicio_id = request.query_params.get('servicio_id')
         fecha_inicio_str = request.query_params.get('fecha')
+        excluir_turno_id = request.query_params.get('turno_id')
+        slot_services = None
         
         if not servicio_id:
             return Response(
@@ -1828,6 +1923,31 @@ class TurnoViewSet(viewsets.ModelViewSet):
                 {"error": "El servicio no existe"},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        if excluir_turno_id:
+            try:
+                turno_excluido = Turno.objects.get(pk=excluir_turno_id)
+            except (Turno.DoesNotExist, ValueError):
+                raise Http404
+            is_owner = turno_excluido.cliente.usuario_id == request.user.pk
+            if not (
+                is_owner
+                or request.user.has_perm(BusinessPermission.REPROGRAM_ANY_TURNO)
+            ):
+                raise Http404
+            if not turno_excluido.detalles.filter(servicio=servicio).exists():
+                return Response(
+                    {'error': 'El Servicio no corresponde al Turno indicado.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            detalles_turno = list(
+                turno_excluido.detalles.select_related('servicio').all()
+            )
+            slot_services = [detalle.servicio for detalle in detalles_turno]
+            duracion_minutos = (
+                sum(detalle.duracion_minutos for detalle in detalles_turno) or 60
+            )
+            excluir_turno_id = turno_excluido.pk
         
         # Determinar fecha de inicio
         try:
@@ -1859,7 +1979,9 @@ class TurnoViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         
-        duracion_minutos = servicio.duracion_estimada or 60
+        if slot_services is None:
+            slot_services = [servicio]
+            duracion_minutos = servicio.duracion_estimada or 60
         
         # 4. Iterar próximos días (hasta 7 para mostrar lo más cercano)
         disponibilidad_total = []
@@ -1898,7 +2020,9 @@ class TurnoViewSet(viewsets.ModelViewSet):
                     regla, 
                     duracion_minutos,
                     intervalo_minutos,
-                    servicios_ids=[servicio.id]
+                    servicios_ids=[servicio.id],
+                    excluir_turno_id=excluir_turno_id,
+                    servicios=slot_services,
                 )
                 
                 if slots:
@@ -1925,7 +2049,16 @@ class TurnoViewSet(viewsets.ModelViewSet):
             "horizonte_dias": max_dias
         }, status=status.HTTP_200_OK)
     
-    def _generar_slots_disponibles(self, fecha, regla, duracion_minutos, intervalo_minutos, servicios_ids=None):
+    def _generar_slots_disponibles(
+        self,
+        fecha,
+        regla,
+        duracion_minutos,
+        intervalo_minutos,
+        servicios_ids=None,
+        excluir_turno_id=None,
+        servicios=None,
+    ):
         servicio = (
             Servicio.objects.filter(pk=servicios_ids[0], activo=True).first()
             if servicios_ids
@@ -1938,6 +2071,9 @@ class TurnoViewSet(viewsets.ModelViewSet):
             schedule=regla,
             servicio=servicio,
             intervalo_minutos=intervalo_minutos,
+            excluir_turno_id=excluir_turno_id,
+            duracion_minutos=duracion_minutos,
+            servicios=servicios,
         )
     
     def _buscar_proxima_fecha(self, servicio_id, fecha_desde):
@@ -2082,420 +2218,11 @@ class TurnoViewSet(viewsets.ModelViewSet):
     # =====================================================================
     @action(detail=True, methods=['post'], url_path='gestionar')
     def gestionar_cancelacion(self, request, pk=None):
-        """
-        Endpoint unificado para gestionar cambios en turnos (CONSULTAR/REPROGRAMAR/CANCELAR).
-        
-        - **CONSULTAR**: Info sobre el estado del turno y disponibilidad de cambios
-        - **REPROGRAMAR**: Cambiar fecha/hora (lógica diferenciada por estado)
-        - **CANCELAR**: Cancelar turno con Motor de Optimización
-        
-        POST /turnos/<id>/gestionar/
-        Body:
-        {
-            "accion": "CONSULTAR" | "REPROGRAMAR" | "CANCELAR",
-            "nueva_fecha": "YYYY-MM-DD" (solo para REPROGRAMAR),
-            "nueva_hora": "HH:MM" (solo para REPROGRAMAR)
-        }
-        
-        Cliente: CONFIRMADO → max 48hs antes. SOLICITADO/ESPERANDO_SEÑA → sin restricción.
-        Admin: Sin restricción.
-        """
-        import datetime
-        
-        turno = self.get_object()
-        usuario = request.user
-
-        # Permisos - Verificar si el usuario es cliente o profesional
-        # Cliente: tiene relación OneToOne con Cliente
-        # Profesional: tiene relación OneToOne con Personal
-        es_cliente = hasattr(usuario, 'cliente')
-        es_profesional = hasattr(usuario, 'personal')
-        
-        if not (usuario == turno.cliente.usuario or es_profesional or usuario.is_staff):
-            raise PermissionDenied("No tienes permiso sobre este turno.")
-
-        # Valores de configuración
-        config = Configuracion.objects.first() or Configuracion()
-        limite_cambios = config.max_reprogramaciones
-        horas_limite = config.horas_limite_cancelacion
-
-        # =====================================================================
-        # BLOQUE 1: REGLA DE SEGURIDAD - Restricción 48hs (solo clientes, solo CONFIRMADO)
-        # =====================================================================
-        now = timezone.now()
-        fecha_hora_turno = timezone.make_aware(
-            datetime.datetime.combine(turno.fecha, turno.hora_inicio)
-        )
-        horas_restantes = (fecha_hora_turno - now).total_seconds() / 3600
-
-        accion = request.data.get('accion', '').upper()
-
-        # Solo bloquear si: 
-        # - El usuario es CLIENTE (no profesional)
-        # - El usuario NO es staff/admin
-        # - El turno está en estado CONFIRMADO
-        # - Intenta REPROGRAMAR o CANCELAR dentro de la ventana de seguridad
-        es_cliente_only = es_cliente and not es_profesional and not usuario.is_staff
-        
-        if es_cliente_only:
-            if accion == 'CANCELAR' and horas_restantes < horas_limite:
-                return Response({
-                    "error": f"No puedes cancelar un turno menos de {horas_limite}hs antes.",
-                    "horas_restantes": round(horas_restantes, 2),
-                    "horas_limite": horas_limite,
-                    "fecha_hora_turno": fecha_hora_turno.isoformat()
-                }, status=400)
-
-            if turno.estado == Turno.Estado.CONFIRMADO and accion == 'REPROGRAMAR':
-                if horas_restantes < horas_limite:
-                    return Response({
-                        "error": f"No puedes reprogramar un turno menos de {horas_limite}hs antes.",
-                        "horas_restantes": round(horas_restantes, 2),
-                        "horas_limite": horas_limite,
-                        "fecha_hora_turno": fecha_hora_turno.isoformat()
-                    }, status=400)
-        
-        
-        # Si es staff/admin, NO hay restricción de tiempo - el código continúa normalmente
-
-        # =====================================================================
-        # 2. ACCIÓN: CONSULTAR (Información según Estado)
-        # =====================================================================
-        if accion == 'CONSULTAR':
-            # --- ESTADO A: SOLICITADO ---
-            if turno.estado == Turno.Estado.SOLICITADO:
-                return Response({
-                    "puede_reprogramar": True,
-                    "mensaje": "Aún no confirmamos tu turno. Puedes modificar la fecha libremente.",
-                    "tipo_alerta": "info"
-                })
-            
-            # --- ESTADO B: ESPERANDO SEÑA ---
-            elif turno.estado == Turno.Estado.ESPERANDO_SENA:
-                return Response({
-                    "puede_reprogramar": True,
-                    "mensaje": "Si cambias la fecha ahora, deberemos volver a validar la disponibilidad (vuelve a estado Solicitado).",
-                    "tipo_alerta": "warning"
-                })
-
-            # --- ESTADO C: CONFIRMADO ---
-            elif turno.estado == Turno.Estado.CONFIRMADO:
-                cambios_restantes = limite_cambios - turno.cambios_realizados
-                puede = cambios_restantes > 0
-                msg = f"Te quedan {cambios_restantes} cambios disponibles." if puede else "Has agotado tus cambios."
-                return Response({
-                    "puede_reprogramar": puede,
-                    "mensaje": msg,
-                    "cambios_realizados": turno.cambios_realizados,
-                    "limite_cambios": limite_cambios,
-                    "horas_restantes": round(horas_restantes, 2),
-                    "puede_cancelar_reprogramar": horas_restantes >= horas_limite,
-                    "tipo_alerta": "info" if puede else "danger"
-                })
-
-        # =====================================================================
-        # 3. ACCIÓN: REPROGRAMAR (Lógica Diferenciada)
-        # =====================================================================
-        elif accion == 'REPROGRAMAR':
-            # Validación de datos de entrada (común a todos)
-            nueva_fecha_str = request.data.get('nueva_fecha')
-            nueva_hora_str = request.data.get('nueva_hora')
-            if not nueva_fecha_str or not nueva_hora_str:
-                return Response({"error": "Faltan datos"}, status=400)
-
-            try:
-                # Conversión segura
-                nueva_fecha = datetime.datetime.strptime(nueva_fecha_str, '%Y-%m-%d').date()
-                nueva_hora = datetime.datetime.strptime(nueva_hora_str, '%H:%M').time()
-            except ValueError:
-                return Response({"error": "Formato inválido"}, status=400)
-
-            # --- LÓGICA ESTADO A (Solicitado) ---
-            if turno.estado == Turno.Estado.SOLICITADO:
-                turno.fecha = nueva_fecha
-                turno.hora_inicio = nueva_hora
-                # No cambia estado, no suma contador
-                turno.save()
-                
-                # Notificar al profesional del cambio
-                if turno.profesional:
-                    Notificacion.objects.create(
-                        usuario=turno.profesional.usuario,
-                        tipo='turno_reprogramado',
-                        canal='app',
-                        titulo="Turno Reprogramado",
-                        mensaje=f"El turno para {turno.cliente.usuario.get_full_name()} ha sido reprogramado para el {nueva_fecha.strftime('%d/%m/%Y')} a las {nueva_hora.strftime('%H:%M')}",
-                        origen_entidad='Turno',
-                        origen_id=turno.id
-                    )
-                
-                return Response({"mensaje": "Solicitud modificada correctamente."})
-
-            # --- LÓGICA ESTADO B (Esperando Seña) ---
-            elif turno.estado == Turno.Estado.ESPERANDO_SENA:
-                turno.fecha = nueva_fecha
-                turno.hora_inicio = nueva_hora
-                turno.estado = Turno.Estado.SOLICITADO # REINICIO DEL FLUJO
-                turno.fecha_limite_pago = None  # Limpiar deadline de pago
-                # No suma contador
-                turno.save()
-                
-                # Notificar al profesional del cambio
-                if turno.profesional:
-                    Notificacion.objects.create(
-                        usuario=turno.profesional.usuario,
-                        tipo='turno_reprogramado',
-                        canal='app',
-                        titulo="Turno Reprogramado",
-                        mensaje=f"El turno para {turno.cliente.usuario.get_full_name()} ha sido reprogramado para el {nueva_fecha.strftime('%d/%m/%Y')} a las {nueva_hora.strftime('%H:%M')}",
-                        origen_entidad='Turno',
-                        origen_id=turno.id
-                    )
-                
-                return Response({"mensaje": "Fecha cambiada. Tu turno espera nueva aprobación."})
-
-            # --- LÓGICA ESTADO C (Confirmado) ---
-            elif turno.estado == Turno.Estado.CONFIRMADO:
-                if turno.cambios_realizados >= limite_cambios:
-                    return Response({"error": "Límite de cambios excedido."}, status=400)
-                
-                turno.fecha = nueva_fecha
-                turno.hora_inicio = nueva_hora
-                turno.cambios_realizados += 1
-                # Mantiene estado Confirmado (Seña se traslada)
-                turno.save()
-                
-                # Notificar al profesional del cambio
-                if turno.profesional:
-                    Notificacion.objects.create(
-                        usuario=turno.profesional.usuario,
-                        tipo='turno_reprogramado',
-                        canal='app',
-                        titulo="Turno Reprogramado",
-                        mensaje=f"El turno para {turno.cliente.usuario.get_full_name()} ha sido reprogramado para el {nueva_fecha.strftime('%d/%m/%Y')} a las {nueva_hora.strftime('%H:%M')}",
-                        origen_entidad='Turno',
-                        origen_id=turno.id
-                    )
-                
-                return Response({"mensaje": "Turno reprogramado. Seña transferida."})
-
-        # =====================================================================
-        # BLOQUE 2: ACCIÓN CANCELAR - MOTOR DE OPTIMIZACIÓN
-        # =====================================================================
-        elif accion == 'CANCELAR':
-            # 1. Guardar datos del hueco (Snapshot)
-            fecha_hueco = turno.fecha
-            hora_hueco = turno.hora_inicio
-            
-            # Obtener servicios asociados desde detalles
-            detalles_turno = turno.detalles.all()
-            servicios_hueco = [d.servicio for d in detalles_turno]
-            cliente_que_cancela = turno.cliente
-            
-            # 2. Cambiar estado a CANCELADO y guardar quién canceló
-            turno.estado = Turno.Estado.CANCELADO
-            turno.cancelado_por = request.user
-            turno.motivo_cancelacion = request.data.get('motivo', f'Cancelado por {request.user.get_full_name()}')
-            turno.save()
-            
-            # 3. Notificar al profesional que el turno fue cancelado
-            if turno.profesional and turno.profesional.usuario:
-                Notificacion.objects.create(
-                    usuario=turno.profesional.usuario,
-                    tipo='turno_cancelado',
-                    canal='app',
-                    titulo="Turno Cancelado",
-                    mensaje=f"El turno para {cliente_que_cancela.usuario.get_full_name()} del {fecha_hueco.strftime('%d/%m/%Y')} a las {hora_hueco.strftime('%H:%M')} ha sido cancelado.",
-                    origen_entidad='Turno',
-                    origen_id=turno.id
-                )
-            
-            candidatos_adelanto = []
-
-            # === MOTOR DE OPTIMIZACIÓN: Buscar candidatos para adelanto ===
-            config = Configuracion.objects.first() or Configuracion()
-            horas_minimas = config.adelanto_min_horas_anticipacion
-            rango_dias = config.adelanto_rango_dias_busqueda
-            max_candidatos = config.adelanto_max_candidatos
-            expira_horas = config.adelanto_expira_horas
-
-            fecha_hora_turno = timezone.make_aware(
-                datetime.datetime.combine(turno.fecha, turno.hora_inicio)
-            )
-            horas_restantes = (fecha_hora_turno - timezone.now()).total_seconds() / 3600
-
-            if horas_restantes >= horas_minimas:
-                fecha_max = fecha_hueco + timedelta(days=rango_dias)
-
-                from django.db.models import Sum
-                duracion_hueco = sum(d.duracion_minutos for d in detalles_turno)
-                categorias_hueco = [d.servicio.categoria_id for d in detalles_turno if d.servicio.categoria_id]
-                categorias_hueco = list({c for c in categorias_hueco if c})
-
-                turnos_base = Turno.objects.filter(
-                    estado=Turno.Estado.CONFIRMADO,
-                    fecha__gt=fecha_hueco,
-                    fecha__lte=fecha_max
-                ).exclude(cliente=cliente_que_cancela)
-
-                if categorias_hueco:
-                    turnos_base = turnos_base.filter(
-                        detalles__servicio__categoria_id__in=categorias_hueco
-                    )
-                else:
-                    turnos_base = turnos_base.filter(
-                        detalles__servicio__in=servicios_hueco
-                    )
-
-                # Buscar turnos CONFIRMADOS con misma duración total
-                turnos_futuros = turnos_base.annotate(
-                    total_duracion=Sum('detalles__duracion_minutos')
-                ).filter(
-                    total_duracion=duracion_hueco
-                ).distinct().order_by('fecha')[:max_candidatos]
-
-                # Crear notificaciones para adelanto
-                for turno_futuro in turnos_futuros:
-                    servicios_str = ', '.join([s.nombre for s in servicios_hueco])
-                    vence_en = timezone.now() + timedelta(hours=expira_horas)
-
-                    Notificacion.objects.create(
-                        usuario=turno_futuro.cliente.usuario,
-                        tipo='ADELANTO',
-                        canal='app',
-                        titulo="¡Oportunidad de Adelantar Turno!",
-                        mensaje=f"Se liberó un espacio para {servicios_str} el {fecha_hueco} a las {hora_hueco.strftime('%H:%M')}. ¿Te gustaría adelantar tu turno del {turno_futuro.fecha}?",
-                        origen_entidad='Turno',
-                        origen_id=turno_futuro.id,
-                        datos_extra={
-                            "fecha_oferta": str(fecha_hueco),
-                            "hora_oferta": hora_hueco.strftime('%H:%M'),
-                            "turno_actual_id": turno_futuro.id,
-                            "turno_cancelado_id": turno.id,
-                            "servicio_ids": [s.id for s in servicios_hueco],
-                            "expira_en": vence_en.isoformat()
-                        }
-                    )
-
-                    candidatos_adelanto.append({
-                        "cliente": turno_futuro.cliente.usuario.get_full_name(),
-                        "turno_actual": turno_futuro.fecha.isoformat()
-                    })
-
-            return Response({
-                "mensaje": "Turno cancelado correctamente.",
-                "estado": "CANCELADO",
-                "automatizacion": {
-                    "hueco_liberado": {
-                        "fecha": fecha_hueco.isoformat(),
-                        "hora": hora_hueco.strftime('%H:%M'),
-                        "servicios": [s.nombre for s in servicios_hueco]
-                    },
-                    "notificaciones_enviadas": len(candidatos_adelanto),
-                    "candidatos": candidatos_adelanto,
-                    "parametros": {
-                        "min_horas_anticipacion": horas_minimas,
-                        "rango_dias_busqueda": rango_dias,
-                        "max_candidatos": max_candidatos,
-                        "expira_horas": expira_horas
-                    }
-                }
-            }, status=200)
-
-        return Response({"error": "Acción inválida"}, status=400)
+        raise MethodNotAllowed(request.method)
 
     @action(detail=True, methods=['post'], url_path='gestionar-profesional')
     def gestionar_profesional(self, request, pk=None):
-        """
-        ACCIÓN SOLO PARA PROFESIONALES Y ADMINS: Permite cancelar/reprogramar turnos sin restricción de 48hs.
-        
-        POST /api/gestion/turnos/{id}/gestionar-profesional/
-        Body:
-        {
-            "accion": "REPROGRAMAR" | "CANCELAR",
-            "nueva_fecha": "YYYY-MM-DD" (solo para REPROGRAMAR),
-            "nueva_hora": "HH:MM" (solo para REPROGRAMAR),
-            "motivo": "Motivo de cancelación" (solo para CANCELAR, opcional)
-        }
-        """
-        import datetime
-        
-        turno = self.get_object()
-        usuario = request.user
-        
-        # VERIFICAR PERMISOS: Solo profesionales y admins pueden usar este endpoint
-        es_profesional = hasattr(usuario, 'profesional')
-        es_admin = usuario.is_staff
-        
-        if not (es_profesional or es_admin):
-            return Response({
-                "error": "Solo los profesionales y administradores pueden usar esta acción."
-            }, status=403)
-        
-        accion = request.data.get('accion', '').upper()
-        
-        if accion == 'REPROGRAMAR':
-            # Validación de datos
-            nueva_fecha_str = request.data.get('nueva_fecha')
-            nueva_hora_str = request.data.get('nueva_hora')
-            if not nueva_fecha_str or not nueva_hora_str:
-                return Response({"error": "Faltan datos (nueva_fecha, nueva_hora)"}, status=400)
-
-            try:
-                nueva_fecha = datetime.datetime.strptime(nueva_fecha_str, '%Y-%m-%d').date()
-                nueva_hora = datetime.datetime.strptime(nueva_hora_str, '%H:%M').time()
-            except ValueError:
-                return Response({"error": "Formato inválido. Use YYYY-MM-DD y HH:MM"}, status=400)
-
-            # Reprogramar sin restricción de tiempo
-            turno.fecha = nueva_fecha
-            turno.hora_inicio = nueva_hora
-            turno.cambios_realizados = turno.cambios_realizados + 1 if turno.estado == Turno.Estado.CONFIRMADO else turno.cambios_realizados
-            turno.save()
-
-            # Notificar al cliente del cambio
-            if turno.cliente:
-                Notificacion.objects.create(
-                    usuario=turno.cliente.usuario,
-                    tipo='turno_reprogramado_profesional',
-                    canal='app',
-                    titulo="Turno Reprogramado por el Salón",
-                    mensaje=f"Tu turno ha sido reprogramado para el {nueva_fecha.strftime('%d/%m/%Y')} a las {nueva_hora.strftime('%H:%M')}",
-                    origen_entidad='Turno',
-                    origen_id=turno.id
-                )
-
-            return Response({
-                "mensaje": "Turno reprogramado correctamente.",
-                "nueva_fecha": nueva_fecha.isoformat(),
-                "nueva_hora": nueva_hora.strftime('%H:%M')
-            }, status=200)
-
-        elif accion == 'CANCELAR':
-            # Cancelar sin restricción de tiempo
-            turno.estado = Turno.Estado.CANCELADO
-            turno.cancelado_por = usuario
-            turno.motivo_cancelacion = request.data.get('motivo', f'Cancelado por profesional {usuario.get_full_name()}')
-            turno.save()
-
-            # Notificar al cliente de la cancelación
-            if turno.cliente:
-                Notificacion.objects.create(
-                    usuario=turno.cliente.usuario,
-                    tipo='turno_cancelado_profesional',
-                    canal='app',
-                    titulo="Turno Cancelado por el Salón",
-                    mensaje=f"Tu turno del {turno.fecha.strftime('%d/%m/%Y')} a las {turno.hora_inicio.strftime('%H:%M')} ha sido cancelado.",
-                    origen_entidad='Turno',
-                    origen_id=turno.id
-                )
-
-            return Response({
-                "mensaje": "Turno cancelado correctamente.",
-                "estado": "CANCELADO"
-            }, status=200)
-
-        return Response({"error": "Acción inválida (REPROGRAMAR o CANCELAR)"}, status=400)
+        raise MethodNotAllowed(request.method)
 
     @action(detail=True, methods=['post'])
     def finalizar_turno(self, request, pk=None):
