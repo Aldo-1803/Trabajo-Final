@@ -90,6 +90,19 @@ describe('Operaciones por permisos efectivos', () => {
         expect(axios.get).not.toHaveBeenCalled();
     });
 
+    test('create_turno_for_client muestra Nuevo turno solamente por permiso', () => {
+        renderOperations({
+            businessRole: 'ADMINISTRADOR',
+            permissions: ['gestion.create_turno_for_client'],
+            isStaff: false
+        });
+
+        expect(screen.getByRole('link', { name: 'Nuevo turno' }))
+            .toHaveAttribute('href', '/admin/nuevo-turno');
+        expect(screen.queryByText('Turnos de hoy')).not.toBeInTheDocument();
+        expect(axios.get).not.toHaveBeenCalled();
+    });
+
     test('BusinessRole e is_staff no habilitan agenda sin permiso', () => {
         renderOperations({
             businessRole: 'ADMINISTRADOR',
@@ -98,6 +111,8 @@ describe('Operaciones por permisos efectivos', () => {
         });
 
         expect(screen.queryByText('Turnos de hoy')).not.toBeInTheDocument();
+        expect(screen.queryByRole('link', { name: 'Nuevo turno' }))
+            .not.toBeInTheDocument();
         expect(screen.getByText('No hay operaciones habilitadas para esta cuenta.'))
             .toBeInTheDocument();
         expect(axios.get).not.toHaveBeenCalled();

@@ -94,21 +94,32 @@ describe('ProtectedRoute declarativo con acceso por URL directa', () => {
         expect(screen.queryByTestId('redirect')).not.toBeInTheDocument();
     });
 
-    test.each(['EMPLEADO', 'PROFESIONAL'])(
-        '%s entra directamente a /operaciones',
+    test.each(['EMPLEADO', 'PROFESIONAL', 'ADMINISTRADOR'])(
+        '%s con permiso efectivo entra directamente a /operaciones',
         (businessRole) => {
             renderDirectUrl('/operaciones', {
-                allowedRoles: ['EMPLEADO', 'PROFESIONAL']
-            }, { businessRole });
+                requiredAnyPermission: [
+                    'gestion.view_global_agenda',
+                    'usuarios.create_walkin_client',
+                    'gestion.create_turno_for_client'
+                ]
+            }, {
+                businessRole,
+                permissions: ['gestion.view_global_agenda']
+            });
 
             expect(screen.getByText('Contenido protegido')).toBeInTheDocument();
         }
     );
 
-    test('CLIENTE no entra directamente a /operaciones', () => {
+    test('sin permisos efectivos no entra directamente a /operaciones', () => {
         renderDirectUrl('/operaciones', {
-            allowedRoles: ['EMPLEADO', 'PROFESIONAL']
-        }, { businessRole: 'CLIENTE', clientProfile: true });
+            requiredAnyPermission: [
+                'gestion.view_global_agenda',
+                'usuarios.create_walkin_client',
+                'gestion.create_turno_for_client'
+            ]
+        }, { businessRole: 'PROFESIONAL' });
 
         expectRedirect('/acceso-denegado');
     });
@@ -166,6 +177,50 @@ describe('ProtectedRoute declarativo con acceso por URL directa', () => {
         renderDirectUrl('/admin/clientes', {
             requiredPermission: 'usuarios.view_clients'
         }, { businessRole: 'EMPLEADO' });
+
+        expectRedirect('/acceso-denegado');
+    });
+
+    test.each(['EMPLEADO', 'PROFESIONAL', 'ADMINISTRADOR'])(
+        '%s con view_global_agenda entra directamente a Gestión de Turnos',
+        (businessRole) => {
+            renderDirectUrl('/admin/turnos', {
+                requiredPermission: 'gestion.view_global_agenda'
+            }, {
+                businessRole,
+                permissions: ['gestion.view_global_agenda']
+            });
+
+            expect(screen.getByText('Contenido protegido')).toBeInTheDocument();
+        }
+    );
+
+    test('sin view_global_agenda no entra directamente a Gestión de Turnos', () => {
+        renderDirectUrl('/admin/turnos', {
+            requiredPermission: 'gestion.view_global_agenda'
+        }, { businessRole: 'ADMINISTRADOR' });
+
+        expectRedirect('/acceso-denegado');
+    });
+
+    test.each(['EMPLEADO', 'PROFESIONAL', 'ADMINISTRADOR'])(
+        '%s con create_turno_for_client entra a Nuevo Turno',
+        (businessRole) => {
+            renderDirectUrl('/admin/nuevo-turno', {
+                requiredPermission: 'gestion.create_turno_for_client'
+            }, {
+                businessRole,
+                permissions: ['gestion.create_turno_for_client']
+            });
+
+            expect(screen.getByText('Contenido protegido')).toBeInTheDocument();
+        }
+    );
+
+    test('is_staff conceptual sin create_turno_for_client no entra a Nuevo Turno', () => {
+        renderDirectUrl('/admin/nuevo-turno', {
+            requiredPermission: 'gestion.create_turno_for_client'
+        }, { businessRole: 'ADMINISTRADOR' });
 
         expectRedirect('/acceso-denegado');
     });

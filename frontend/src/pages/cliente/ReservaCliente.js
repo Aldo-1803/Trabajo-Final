@@ -235,7 +235,7 @@ const ReservaCliente = () => {
                 headers: { Authorization: `Bearer ${token}` }
             };
 
-            const response = await axios.post('http://127.0.0.1:8000/api/gestion/turnos/', payload, config);
+            const response = await axios.post('http://127.0.0.1:8000/api/gestion/turnos/reservar/', payload, config);
             const alertaDanoCapilar = response.data?.alerta_daño_capilar;
             const advertenciaCapilar = response.data?.advertencia;
              

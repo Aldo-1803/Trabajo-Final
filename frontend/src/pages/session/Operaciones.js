@@ -25,6 +25,7 @@ const Operaciones = () => {
 
     const canViewAgenda = hasPermission('gestion.view_global_agenda');
     const canCreateWalkinClient = hasPermission('usuarios.create_walkin_client');
+    const canCreateTurno = hasPermission('gestion.create_turno_for_client');
 
     useEffect(() => {
         if (!canViewAgenda) return;
@@ -65,7 +66,7 @@ const Operaciones = () => {
                 </h1>
                 <p className="text-stone-500 mb-8">Panel operativo</p>
 
-                {!canViewAgenda && !canCreateWalkinClient && (
+                {!canViewAgenda && !canCreateWalkinClient && !canCreateTurno && (
                     <div className="rounded-xl bg-white p-6 shadow text-stone-600">
                         No hay operaciones habilitadas para esta cuenta.
                     </div>
@@ -119,6 +120,21 @@ const Operaciones = () => {
                                 className="inline-flex rounded-lg bg-stone-700 px-4 py-2 font-semibold text-white hover:bg-stone-800"
                             >
                                 Nuevo cliente
+                            </Link>
+                        </section>
+                    )}
+
+                    {canCreateTurno && (
+                        <section className="rounded-xl bg-white p-6 shadow">
+                            <h2 className="text-xl font-bold text-stone-700 mb-3">Turnos</h2>
+                            <p className="text-sm text-stone-500 mb-5">
+                                Registrá una nueva solicitud para un Cliente.
+                            </p>
+                            <Link
+                                to="/admin/nuevo-turno"
+                                className="inline-flex rounded-lg bg-rose-700 px-4 py-2 font-semibold text-white hover:bg-rose-800"
+                            >
+                                Nuevo turno
                             </Link>
                         </section>
                     )}

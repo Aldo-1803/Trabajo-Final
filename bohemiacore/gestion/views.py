@@ -46,7 +46,8 @@ from .serializers import (
     TipoCabelloSerializer, GrosorCabelloSerializer, PorosidadCabelloSerializer, CueroCabelludoSerializer, EstadoGeneralSerializer,
     CategoriaServicioSerializer, ServicioSerializer, TurnoSerializer,
     TurnoAgendaReadSerializer, TurnoClienteReadSerializer,
-    TurnoComprobanteUploadSerializer, RutinaSerializer, RutinaClienteSerializer,
+    TurnoComprobanteUploadSerializer, TurnoReservaCommandSerializer,
+    TurnoParaClienteCommandSerializer, RutinaSerializer, RutinaClienteSerializer,
     RutinaClienteCreateSerializer, ReglaDiagnosticoSerializer, NotificacionSerializer, ProductoSerializer, ImagenProductoSerializer, EquipamientoSerializer,
     UsuarioAccountStatusCommandSerializer, UsuarioAdminIdentityUpdateSerializer,
     UsuarioAdminReadSerializer, AgendaCuidadosSerializer,
@@ -62,7 +63,12 @@ from .serializers import (
     OrdenPendienteSerializer, OrdenCompraSerializer, OrdenItemSerializer, ConfiguracionDiagnosticoSerializer,
     #PasoRutinaSerializer,
 )
-from .permissions import CanViewGlobalAgenda
+from .permissions import CanCreateTurnoForClient, CanViewGlobalAgenda
+from .turno_creation_services import (
+    TurnoAvailabilityService,
+    TurnoCreationError,
+    TurnoCreationService,
+)
 from .personal_access_services import (
     ClientProfileRequired,
     EmailAlreadyExists,
@@ -127,7 +133,6 @@ from usuarios.access_services import (
     reactivate_account,
 )
 
-from .services import DisponibilidadService 
 from .services import MercadoPagoService
 from usuarios.models import Usuario, Cliente
 from usuarios.filters import UsuarioFilter
@@ -1167,79 +1172,70 @@ class PersonalViewSet(viewsets.ModelViewSet):
     
 class DisponibilidadTurnosView(APIView):
     """
-    Endpoint público (o protegido) para consultar la agenda.
+    Alias público legacy para consultar slots mediante la lógica canónica.
     Uso: GET /api/gestion/disponibilidad/?fecha=2023-11-01&servicio_id=1
     """
-    # Sugerencia: AllowAny para que el cliente pueda ver horarios antes de registrarse/loguearse.
-    # Si prefieres privacidad total, cámbialo a [IsAuthenticated]
-    permission_classes = [AllowAny] 
+    permission_classes = [AllowAny]
 
     def get(self, request):
-        import logging
-        logger = logging.getLogger(__name__)
-        
-        # 1. Recibir parámetros del Frontend
-        fecha_str = request.query_params.get('fecha') # Esperamos 'YYYY-MM-DD'
+        fecha_str = request.query_params.get('fecha')
         servicio_id = request.query_params.get('servicio_id')
-        
-        logger.info(f"DisponibilidadTurnosView: Recibida solicitud - fecha={fecha_str}, servicio_id={servicio_id}")
 
-        # 2. Validaciones de Entrada
         if not fecha_str or not servicio_id:
-            logger.error(f"Parámetros incompletos: fecha_str={fecha_str}, servicio_id={servicio_id}")
             return Response(
-                {"error": "Faltan parámetros obligatorios: 'fecha' y 'servicio_id'."}, 
-                status=status.HTTP_400_BAD_REQUEST
+                {"error": "Faltan parámetros obligatorios: 'fecha' y 'servicio_id'."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         try:
             fecha_consulta = datetime.strptime(fecha_str, '%Y-%m-%d').date()
-            logger.info(f"Fecha parseada correctamente: {fecha_consulta}")
-            
-            # Validación básica de negocio: No viajar al pasado
-            if fecha_consulta < date.today():
-                 logger.warning(f"Intento de consultar fecha pasada: {fecha_consulta}")
-                 return Response(
-                     {"error": "No se pueden agendar turnos en el pasado."}, 
-                     status=status.HTTP_400_BAD_REQUEST
-                 )
-                 
-            servicio = Servicio.objects.get(id=servicio_id)
-            logger.info(f"Servicio encontrado: {servicio.nombre}, duración: {servicio.duracion_estimada}")
-            
-        except ValueError as ve:
-            logger.error(f"Error de formato de fecha: {ve}")
-            return Response({"error": "Formato de fecha inválido. Use AAAA-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
-        except Servicio.DoesNotExist:
-            logger.error(f"Servicio no encontrado con ID: {servicio_id}")
-            return Response({"error": "El servicio especificado no existe."}, status=status.HTTP_404_NOT_FOUND)
-
-        # 3. Invocar al "Cerebro" (Tu Service)
-        try:
-            # Si el servicio no tiene duración, asumimos 60 min por defecto para evitar crash
-            duracion = servicio.duracion_estimada or 60
-            logger.info(f"Calculando bloques disponibles para {fecha_consulta} con duración {duracion} min")
-            
-            bloques_libres = DisponibilidadService.obtener_bloques_disponibles(
-                fecha_consulta=fecha_consulta,
-                servicio=servicio
+        except ValueError:
+            return Response(
+                {"error": "Formato de fecha inválido. Use AAAA-MM-DD."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
-            
-            logger.info(f"Bloques libres encontrados: {len(bloques_libres)}")
-            
-        except Exception as e:
-            # Capturamos errores inesperados del algoritmo
-            logger.error(f"Error al calcular disponibilidad: {str(e)}", exc_info=True)
-            return Response({"error": f"Error interno de agenda: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        # 4. Responder JSON al Frontend
-        logger.info(f"Respuesta exitosa: {len(bloques_libres)} horarios disponibles")
+        try:
+            servicio = Servicio.objects.get(id=servicio_id, activo=True)
+        except Servicio.DoesNotExist:
+            return Response(
+                {"error": "El servicio especificado no existe."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        config = Configuracion.objects.first()
+        max_dias = config.max_dias_anticipacion if config else 60
+        intervalo_minutos = config.intervalo_turnos if config else 30
+        hoy = timezone.localdate()
+        if fecha_consulta < hoy:
+            return Response(
+                {"error": "No se pueden agendar turnos en el pasado."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if fecha_consulta > hoy + timedelta(days=max_dias):
+            return Response(
+                {"error": "La fecha supera el horizonte habilitado para reservas."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        horarios = set()
+        for schedule in TurnoAvailabilityService.matching_schedules(
+            fecha=fecha_consulta,
+            servicio=servicio,
+        ):
+            slots = TurnoAvailabilityService.available_slots_for_schedule(
+                fecha=fecha_consulta,
+                schedule=schedule,
+                servicio=servicio,
+                intervalo_minutos=intervalo_minutos,
+            )
+            horarios.update(slot['hora'] for slot in slots)
+
         return Response({
             "fecha": fecha_str,
             "servicio_solicitado": servicio.nombre,
-            "duracion_minutos": duracion,
-            # Convertimos los objetos time a string "HH:MM" para JSON
-            "horarios_disponibles": [t.strftime('%H:%M') for t in bloques_libres]
+            "duracion_minutos": servicio.duracion_estimada or 60,
+            "horarios_disponibles": sorted(horarios),
         }, status=status.HTTP_200_OK)
 
 
@@ -1293,6 +1289,12 @@ class TurnoViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action == 'list':
             permission_classes = [IsAuthenticated, CanViewGlobalAgenda]
+        elif self.action in [
+            'crear_para_cliente',
+            'selector_clientes',
+            'selector_personal',
+        ]:
+            permission_classes = [IsAuthenticated, CanCreateTurnoForClient]
         else:
             permission_classes = [IsAuthenticated]
         return [permission() for permission in permission_classes]
@@ -1387,6 +1389,104 @@ class TurnoViewSet(viewsets.ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         raise MethodNotAllowed(request.method)
 
+    def create(self, request, *args, **kwargs):
+        raise MethodNotAllowed(request.method)
+
+    @staticmethod
+    def _creation_validation_error(exc):
+        return ValidationError({
+            exc.field: [exc.detail],
+            'code': exc.code,
+        })
+
+    @action(detail=False, methods=['post'], url_path='reservar')
+    def reservar(self, request):
+        cliente = getattr(request.user, 'cliente', None)
+        if cliente is None or not cliente.activo or not request.user.is_active:
+            raise PermissionDenied('Se requiere un perfil de Cliente activo.')
+
+        command = TurnoReservaCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        try:
+            turno = TurnoCreationService.create(
+                cliente_id=cliente.pk,
+                servicio_id=command.validated_data['servicio'],
+                profesional_id=command.validated_data['profesional'],
+                fecha=command.validated_data['fecha'],
+                hora_inicio=command.validated_data['hora_inicio'],
+                source=Turno.CanalOrigen.WEB,
+            )
+        except TurnoCreationError as exc:
+            raise self._creation_validation_error(exc)
+
+        return Response({
+            'mensaje': 'Turno solicitado correctamente.',
+            'turno': TurnoClienteReadSerializer(
+                turno,
+                context=self.get_serializer_context(),
+            ).data,
+            'alerta_daño_capilar': turno.alerta_daño_capilar,
+            'advertencia': (
+                'El Turno requiere evaluación profesional por posible riesgo capilar.'
+                if turno.alerta_daño_capilar
+                else None
+            ),
+        }, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['post'], url_path='crear-para-cliente')
+    def crear_para_cliente(self, request):
+        command = TurnoParaClienteCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        try:
+            turno = TurnoCreationService.create(
+                cliente_id=command.validated_data['cliente_id'],
+                servicio_id=command.validated_data['servicio'],
+                profesional_id=command.validated_data['profesional'],
+                fecha=command.validated_data['fecha'],
+                hora_inicio=command.validated_data['hora_inicio'],
+                source=Turno.CanalOrigen.PRESENCIAL,
+            )
+        except TurnoCreationError as exc:
+            raise self._creation_validation_error(exc)
+
+        return Response({
+            'mensaje': 'Turno solicitado para el Cliente correctamente.',
+            'turno': TurnoAgendaReadSerializer(
+                turno,
+                context=self.get_serializer_context(),
+            ).data,
+        }, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['get'], url_path='selector-clientes')
+    def selector_clientes(self, request):
+        clientes = (
+            Cliente.objects.filter(activo=True, usuario__is_active=True)
+            .select_related('usuario')
+            .order_by('usuario__first_name', 'usuario__last_name', 'usuario__email')
+        )
+        return Response([
+            {
+                'id': cliente.pk,
+                'nombre': cliente.usuario.first_name,
+                'apellido': cliente.usuario.last_name,
+                'email': cliente.usuario.email,
+            }
+            for cliente in clientes
+        ])
+
+    @action(detail=False, methods=['get'], url_path='selector-personal')
+    def selector_personal(self, request):
+        personal = Personal.objects.filter(activo=True).order_by('nombre', 'apellido')
+        return Response([
+            {
+                'id': persona.pk,
+                'nombre': persona.nombre,
+                'apellido': persona.apellido,
+                'funcion': persona.get_rol_display(),
+            }
+            for persona in personal
+        ])
+
     @action(detail=False, methods=['get'], url_path='mis-turnos')
     def mis_turnos(self, request):
         if getattr(request.user, 'cliente', None) is None:
@@ -1447,62 +1547,6 @@ class TurnoViewSet(viewsets.ModelViewSet):
             status=status.HTTP_200_OK,
         )
 
-    def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        self.perform_create(serializer)
-
-        turno = serializer.instance
-        headers = self.get_success_headers(serializer.data)
-        es_staff = request.user.is_staff
-
-        advertencia = None
-        if turno.alerta_daño_capilar:
-            advertencia = (
-                "Su turno requiere evaluación profesional por posible riesgo capilar."
-            )
-
-        if es_staff:
-            return Response(
-                {
-                    'mensaje': f'Turno presencial creado correctamente. Estado actual: {turno.estado}.',
-                    'turno': serializer.data,
-                    'canal_origen': turno.canal_origen,
-                    'estado': turno.estado,
-                    'alerta_daño_capilar': turno.alerta_daño_capilar,
-                    'advertencia': advertencia,
-                    'tipo_pago_registro': turno.tipo_pago_registro,
-                    'monto_abonado': float(turno.monto_abonado),
-                    'saldo_pendiente': float(turno.saldo_pendiente),
-                },
-                status=status.HTTP_201_CREATED,
-                headers=headers
-            )
-
-        return Response(
-            {
-                'mensaje': 'Turno solicitado correctamente.',
-                'turno': serializer.data,
-                'canal_origen': turno.canal_origen,
-                'estado': turno.estado,
-                'alerta_daño_capilar': turno.alerta_daño_capilar,
-                'advertencia': advertencia,
-            },
-            status=status.HTTP_201_CREATED,
-            headers=headers
-        )
-
-    def perform_create(self, serializer):
-        """Crear turno y calcular fecha_limite_pago si es necesario"""
-        turno = serializer.save()
-        
-        # Si el turno se crea directamente en ESPERANDO_SENA, calcular plazo de pago
-        if turno.estado == Turno.Estado.ESPERANDO_SENA:
-            config = Configuracion.objects.first()
-            if config:
-                turno.fecha_limite_pago = timezone.now() + timedelta(hours=config.tiempo_limite_pago_sena)
-                turno.save()
-    
     def perform_update(self, serializer):
         """
         Admins pueden actualizar cualquier turno.
@@ -1744,7 +1788,7 @@ class TurnoViewSet(viewsets.ModelViewSet):
         # Determinar fecha de inicio
         try:
             if fecha_inicio_str:
-                fecha_inicio = datetime.datetime.strptime(fecha_inicio_str, '%Y-%m-%d').date()
+                fecha_inicio = datetime.strptime(fecha_inicio_str, '%Y-%m-%d').date()
             else:
                 fecha_inicio = timezone.now().date()
         except ValueError:
@@ -1757,7 +1801,7 @@ class TurnoViewSet(viewsets.ModelViewSet):
         config = Configuracion.objects.first()
         max_dias = config.max_dias_anticipacion if config else 60
         intervalo_minutos = config.intervalo_turnos if config else 30
-        fecha_limite = fecha_inicio + timedelta(days=max_dias)
+        fecha_limite = timezone.localdate() + timedelta(days=max_dias)
         
         # 2. Validar que no sea fecha pasada
         if fecha_inicio < timezone.now().date():
@@ -1765,11 +1809,11 @@ class TurnoViewSet(viewsets.ModelViewSet):
                 {"error": "No se pueden agendar turnos en el pasado"},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        # 3. Determinar tipo de servicio (para filtrar reglas)
-        categoria_nombre = servicio.categoria.nombre if servicio.categoria else ""
-        requiere_diseno = "Diseño" in categoria_nombre
-        requiere_complemento = "Complemento" in categoria_nombre or "Turno de Complemento" in categoria_nombre
+        if fecha_inicio > fecha_limite:
+            return Response(
+                {"error": "La fecha supera el horizonte habilitado para reservas"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         
         duracion_minutos = servicio.duracion_estimada or 60
         
@@ -1789,33 +1833,10 @@ class TurnoViewSet(viewsets.ModelViewSet):
             
             dia_semana = fecha_consulta.weekday()
             
-            # 5. Obtener reglas de horarios para este día
-            reglas = HorarioLaboral.objects.filter(
-                dia_semana=dia_semana,
-                activo=True,
-                personal__activo=True,  # Solo profesionales activos
+            reglas = TurnoAvailabilityService.matching_schedules(
+                fecha=fecha_consulta,
+                servicio=servicio,
             )
-            
-            # Filtrar solo reglas que aplican en esta fecha (null = aplica siempre)
-            reglas = reglas.filter(
-                Q(fecha_desde__isnull=True) | Q(fecha_desde__lte=fecha_consulta),
-                Q(fecha_hasta__isnull=True) | Q(fecha_hasta__gte=fecha_consulta)
-            )
-            
-            # --- FILTRO DE COMPETENCIA TÉCNICA (Refinado) ---
-            # Identificamos qué habilidad se requiere según la categoría
-            habilidad_requerida = None
-            if requiere_diseno:
-                habilidad_requerida = 'realiza_color'
-                reglas = reglas.filter(permite_diseno_color=True)
-            elif requiere_complemento:
-                habilidad_requerida = 'realiza_lavado'
-                reglas = reglas.filter(permite_complemento=True)
-            
-            # Aplicamos el filtro dinámico de habilidad a las reglas
-            if habilidad_requerida:
-                filtro_habilidad = {f'personal__{habilidad_requerida}': True}
-                reglas = reglas.filter(**filtro_habilidad)
             
             if not reglas.exists():
                 continue
@@ -1861,81 +1882,19 @@ class TurnoViewSet(viewsets.ModelViewSet):
         }, status=status.HTTP_200_OK)
     
     def _generar_slots_disponibles(self, fecha, regla, duracion_minutos, intervalo_minutos, servicios_ids=None):
-        logger = logging.getLogger(__name__)
-        slots_disponibles = []
-        
-        # 1. Traemos TODOS los turnos y bloqueos del día UNA SOLA VEZ (Optimización)
-        turnos_del_dia = Turno.objects.filter(
-            fecha=fecha,
-            profesional=regla.personal,
-            estado__in=['confirmado', 'esperando_sena', 'solicitado', 'sugerido']
-        ).prefetch_related('detalles')
-
-        bloqueos_del_dia = BloqueoAgenda.objects.filter(
-            Q(personal=regla.personal) | Q(personal__isnull=True),
-            fecha_inicio__date__lte=fecha,
-            fecha_fin__date__gte=fecha
+        servicio = (
+            Servicio.objects.filter(pk=servicios_ids[0], activo=True).first()
+            if servicios_ids
+            else None
         )
-
-        # Convertimos los horarios de la regla a minutos
-        actual_min = regla.hora_inicio.hour * 60 + regla.hora_inicio.minute
-        fin_min = regla.hora_fin.hour * 60 + regla.hora_fin.minute
-
-        while actual_min + duracion_minutos <= fin_min:
-            hora_inicio_slot = time(actual_min // 60, actual_min % 60)
-            hora_fin_slot = time((actual_min + duracion_minutos) // 60, (actual_min + duracion_minutos) % 60)
-            
-            # Combinamos con fecha para comparar datetimes completos (más seguro)
-            inicio_dt = datetime.combine(fecha, hora_inicio_slot)
-            fin_dt = datetime.combine(fecha, hora_fin_slot)
-
-            # --- VALIDACIÓN DE CONFLICTOS ---
-            hay_choque = False
-
-            # A. Choque con Turnos (Validación de Rango)
-            for turno in turnos_del_dia:
-                # Fórmula: (StartA < EndB) y (EndA > StartB)
-                t_ini = datetime.combine(fecha, turno.hora_inicio)
-                # Calculamos la hora fin basándose en duración total de servicios del turno
-                duracion_turno = sum(d.duracion_minutos for d in turno.detalles.all()) or 60
-                t_fin_minutos = turno.hora_inicio.hour * 60 + turno.hora_inicio.minute + duracion_turno
-                t_fin_hours = t_fin_minutos // 60
-                t_fin_mins = t_fin_minutos % 60
-                t_fin = datetime.combine(fecha, time(t_fin_hours, t_fin_mins))
-                
-                if (inicio_dt < t_fin) and (fin_dt > t_ini):
-                    hay_choque = True
-                    break
-            
-            # B. Choque con Bloqueos
-            if not hay_choque:
-                for bloqueo in bloqueos_del_dia:
-                    # Quitamos zona horaria si es necesario para comparar
-                    b_ini = bloqueo.fecha_inicio.replace(tzinfo=None) if bloqueo.fecha_inicio.tzinfo else bloqueo.fecha_inicio
-                    b_fin = bloqueo.fecha_fin.replace(tzinfo=None) if bloqueo.fecha_fin.tzinfo else bloqueo.fecha_fin
-                    
-                    if (inicio_dt < b_fin) and (fin_dt > b_ini):
-                        hay_choque = True
-                        break
-            
-            # C. Choque con Equipamiento (Recursos físicos)
-            if not hay_choque and servicios_ids:
-                if not self._verificar_disponibilidad_equipamiento(fecha, inicio_dt, fin_dt, servicios_ids):
-                    logger.info(f"Slot {hora_inicio_slot} descartado: Equipamiento lleno para servicios {servicios_ids}.")
-                    hay_choque = True
-            
-            if not hay_choque:
-                # Validación extra: si es HOY, no mostrar horas que ya pasaron
-                ahora_naive = timezone.now().replace(tzinfo=None)
-                if inicio_dt > ahora_naive:
-                    slots_disponibles.append({
-                        "hora": hora_inicio_slot.strftime("%H:%M"),
-                        "profesional_id": regla.personal.id,
-                    })
-            
-            actual_min += intervalo_minutos
-        
-        return slots_disponibles
+        if servicio is None:
+            return []
+        return TurnoAvailabilityService.available_slots_for_schedule(
+            fecha=fecha,
+            schedule=regla,
+            servicio=servicio,
+            intervalo_minutos=intervalo_minutos,
+        )
     
     def _buscar_proxima_fecha(self, servicio_id, fecha_desde):
         """
@@ -1965,7 +1924,8 @@ class TurnoViewSet(viewsets.ModelViewSet):
                     fecha_proxima, 
                     regla, 
                     servicio.duracion_estimada, 
-                    config.intervalo_turnos
+                    config.intervalo_turnos,
+                    servicios_ids=[servicio.id],
                 )
                 if slots:
                     return fecha_proxima.isoformat()

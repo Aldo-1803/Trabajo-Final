@@ -1,0 +1,468 @@
+from datetime import datetime, timedelta
+from decimal import Decimal
+
+from django.db import transaction
+from django.db.models import Max, Q
+from django.utils import timezone
+
+from usuarios.models import Cliente
+
+from .models import (
+    BloqueoAgenda,
+    Configuracion,
+    DetalleTurno,
+    Equipamiento,
+    HorarioLaboral,
+    Personal,
+    RequisitoServicio,
+    Servicio,
+    Turno,
+)
+
+
+ACTIVE_TURNO_STATES = (
+    Turno.Estado.SOLICITADO,
+    Turno.Estado.ESPERANDO_SENA,
+    Turno.Estado.CONFIRMADO,
+    Turno.Estado.SUGERIDO,
+    Turno.Estado.PENDIENTE,
+    Turno.Estado.EN_PROCESO,
+)
+
+
+class TurnoCreationError(Exception):
+    def __init__(self, code, detail, field='non_field_errors'):
+        super().__init__(detail)
+        self.code = code
+        self.detail = detail
+        self.field = field
+
+
+class TurnoAvailabilityService:
+    @classmethod
+    def matching_schedules(cls, *, fecha, servicio, profesional=None):
+        rules = HorarioLaboral.objects.filter(
+            personal__activo=True,
+            dia_semana=fecha.weekday(),
+            activo=True,
+        ).filter(
+            Q(fecha_desde__isnull=True) | Q(fecha_desde__lte=fecha),
+            Q(fecha_hasta__isnull=True) | Q(fecha_hasta__gte=fecha),
+        )
+        if profesional is not None:
+            rules = rules.filter(personal=profesional)
+
+        categoria = (servicio.categoria.nombre if servicio.categoria else '').lower()
+        if 'diseño' in categoria or 'color' in categoria:
+            rules = rules.filter(
+                permite_diseno_color=True,
+                personal__realiza_color=True,
+            )
+        elif 'complemento' in categoria:
+            rules = rules.filter(
+                permite_complemento=True,
+                personal__realiza_lavado=True,
+            )
+
+        return rules.select_related('personal')
+
+    @staticmethod
+    def _slot_datetimes(fecha, hora_inicio, duracion_minutos):
+        inicio = datetime.combine(fecha, hora_inicio)
+        fin = inicio + timedelta(minutes=duracion_minutos)
+        return inicio, fin
+
+    @classmethod
+    def _matching_schedule_exists(cls, *, fecha, hora_inicio, servicio, profesional):
+        duracion = servicio.duracion_estimada or 60
+        inicio, fin = cls._slot_datetimes(fecha, hora_inicio, duracion)
+        rules = cls.matching_schedules(
+            fecha=fecha,
+            servicio=servicio,
+            profesional=profesional,
+        )
+
+        return any(
+            inicio.time() >= rule.hora_inicio and fin.time() <= rule.hora_fin
+            for rule in rules
+        )
+
+    @classmethod
+    def _has_turno_conflict(
+        cls,
+        *,
+        fecha,
+        hora_inicio,
+        duracion_minutos,
+        profesional,
+        excluir_turno_id=None,
+    ):
+        inicio, fin = cls._slot_datetimes(fecha, hora_inicio, duracion_minutos)
+        turnos = (
+            Turno.objects.filter(
+                fecha=fecha,
+                profesional=profesional,
+                estado__in=ACTIVE_TURNO_STATES,
+            )
+            .prefetch_related('detalles')
+        )
+        if excluir_turno_id:
+            turnos = turnos.exclude(pk=excluir_turno_id)
+
+        for turno in turnos:
+            duracion_turno = sum(
+                detalle.duracion_minutos for detalle in turno.detalles.all()
+            ) or 60
+            turno_inicio, turno_fin = cls._slot_datetimes(
+                fecha,
+                turno.hora_inicio,
+                duracion_turno,
+            )
+            if inicio < turno_fin and fin > turno_inicio:
+                return True
+        return False
+
+    @classmethod
+    def _has_block_conflict(cls, *, fecha, hora_inicio, duracion_minutos, profesional):
+        inicio, fin = cls._slot_datetimes(fecha, hora_inicio, duracion_minutos)
+        timezone_current = timezone.get_current_timezone()
+        inicio = timezone.make_aware(inicio, timezone_current)
+        fin = timezone.make_aware(fin, timezone_current)
+
+        bloqueos = BloqueoAgenda.objects.filter(
+            Q(personal=profesional) | Q(personal__isnull=True),
+            fecha_inicio__lt=fin,
+            fecha_fin__gt=inicio,
+        )
+        return bloqueos.exists()
+
+    @classmethod
+    def _has_equipment_capacity(
+        cls,
+        *,
+        fecha,
+        hora_inicio,
+        duracion_minutos,
+        servicio,
+        excluir_turno_id=None,
+    ):
+        requisitos = RequisitoServicio.objects.filter(
+            servicio=servicio,
+            obligatorio=True,
+        )
+        if not requisitos.exists():
+            return True
+
+        inicio, fin = cls._slot_datetimes(fecha, hora_inicio, duracion_minutos)
+        for requisito in requisitos:
+            stock_total = Equipamiento.objects.filter(
+                tipo=requisito.tipo_equipamiento,
+                is_active=True,
+                estado=Equipamiento.EstadoRecurso.DISPONIBLE,
+            ).count()
+            if stock_total < requisito.cantidad_minima:
+                return False
+
+            turnos = (
+                Turno.objects.filter(
+                    fecha=fecha,
+                    estado__in=ACTIVE_TURNO_STATES,
+                    detalles__servicio__requisitos_equipamiento__tipo_equipamiento=(
+                        requisito.tipo_equipamiento
+                    ),
+                )
+                .distinct()
+                .prefetch_related('detalles')
+            )
+            if excluir_turno_id:
+                turnos = turnos.exclude(pk=excluir_turno_id)
+
+            ocupados = 0
+            for turno in turnos:
+                duracion_turno = sum(
+                    detalle.duracion_minutos for detalle in turno.detalles.all()
+                ) or 60
+                turno_inicio, turno_fin = cls._slot_datetimes(
+                    fecha,
+                    turno.hora_inicio,
+                    duracion_turno,
+                )
+                if inicio >= turno_fin or fin <= turno_inicio:
+                    continue
+
+                ocupados += (
+                    RequisitoServicio.objects.filter(
+                        servicio__detalles__turno=turno,
+                        tipo_equipamiento=requisito.tipo_equipamiento,
+                        obligatorio=True,
+                    ).aggregate(maximo=Max('cantidad_minima'))['maximo']
+                    or 1
+                )
+
+            if ocupados + requisito.cantidad_minima > stock_total:
+                return False
+
+        return True
+
+    @classmethod
+    def validate_slot(
+        cls,
+        *,
+        fecha,
+        hora_inicio,
+        servicio,
+        profesional,
+        check_schedule=True,
+        excluir_turno_id=None,
+    ):
+        if not profesional.activo:
+            raise TurnoCreationError(
+                'INACTIVE_PERSONAL',
+                'El Personal seleccionado no está activo.',
+                'profesional',
+            )
+        if not servicio.activo:
+            raise TurnoCreationError(
+                'INACTIVE_SERVICE',
+                'El Servicio seleccionado no está activo.',
+                'servicio',
+            )
+
+        duracion = servicio.duracion_estimada or 60
+        inicio, _ = cls._slot_datetimes(fecha, hora_inicio, duracion)
+        inicio_aware = timezone.make_aware(
+            inicio,
+            timezone.get_current_timezone(),
+        )
+        if inicio_aware <= timezone.now():
+            raise TurnoCreationError(
+                'PAST_SLOT',
+                'La fecha y hora deben ser futuras.',
+                'fecha',
+            )
+
+        config = Configuracion.objects.first()
+        max_dias = config.max_dias_anticipacion if config else 60
+        if fecha > timezone.localdate() + timedelta(days=max_dias):
+            raise TurnoCreationError(
+                'OUTSIDE_BOOKING_WINDOW',
+                'La fecha supera el horizonte habilitado para reservas.',
+                'fecha',
+            )
+
+        if check_schedule and not cls._matching_schedule_exists(
+            fecha=fecha,
+            hora_inicio=hora_inicio,
+            servicio=servicio,
+            profesional=profesional,
+        ):
+            raise TurnoCreationError(
+                'OUTSIDE_WORK_SCHEDULE',
+                'El horario no está habilitado para el Servicio y Personal seleccionados.',
+                'hora_inicio',
+            )
+
+        if cls._has_turno_conflict(
+            fecha=fecha,
+            hora_inicio=hora_inicio,
+            duracion_minutos=duracion,
+            profesional=profesional,
+            excluir_turno_id=excluir_turno_id,
+        ):
+            raise TurnoCreationError(
+                'SLOT_UNAVAILABLE',
+                'El horario seleccionado ya no está disponible.',
+                'hora_inicio',
+            )
+
+        if cls._has_block_conflict(
+            fecha=fecha,
+            hora_inicio=hora_inicio,
+            duracion_minutos=duracion,
+            profesional=profesional,
+        ):
+            raise TurnoCreationError(
+                'SLOT_BLOCKED',
+                'El horario seleccionado no está disponible.',
+                'hora_inicio',
+            )
+
+        if not cls._has_equipment_capacity(
+            fecha=fecha,
+            hora_inicio=hora_inicio,
+            duracion_minutos=duracion,
+            servicio=servicio,
+            excluir_turno_id=excluir_turno_id,
+        ):
+            raise TurnoCreationError(
+                'EQUIPMENT_UNAVAILABLE',
+                'El horario seleccionado no está disponible.',
+                'hora_inicio',
+            )
+
+        return True
+
+    @classmethod
+    def is_slot_available(cls, **kwargs):
+        try:
+            cls.validate_slot(**kwargs)
+        except TurnoCreationError:
+            return False
+        return True
+
+    @classmethod
+    def available_slots_for_schedule(cls, *, fecha, schedule, servicio, intervalo_minutos):
+        slots = []
+        duracion = servicio.duracion_estimada or 60
+        current_minute = schedule.hora_inicio.hour * 60 + schedule.hora_inicio.minute
+        end_minute = schedule.hora_fin.hour * 60 + schedule.hora_fin.minute
+
+        while current_minute + duracion <= end_minute:
+            hora_inicio = datetime.min.replace(
+                hour=current_minute // 60,
+                minute=current_minute % 60,
+            ).time()
+            if cls.is_slot_available(
+                fecha=fecha,
+                hora_inicio=hora_inicio,
+                servicio=servicio,
+                profesional=schedule.personal,
+                check_schedule=False,
+            ):
+                slots.append({
+                    'hora': hora_inicio.strftime('%H:%M'),
+                    'profesional_id': schedule.personal_id,
+                })
+            current_minute += intervalo_minutos
+
+        return slots
+
+
+class TurnoCreationService:
+    @staticmethod
+    def _requires_hair_damage_alert(cliente, servicio):
+        if not servicio.categoria_id or servicio.dias_espera_minima <= 0:
+            return False
+
+        ultimo_turno = (
+            Turno.objects.filter(
+                cliente=cliente,
+                estado=Turno.Estado.REALIZADO,
+                detalles__servicio__categoria_id=servicio.categoria_id,
+            )
+            .order_by('-fecha', '-hora_inicio')
+            .first()
+        )
+        if not ultimo_turno:
+            return False
+
+        ultimo_inicio = datetime.combine(
+            ultimo_turno.fecha,
+            ultimo_turno.hora_inicio,
+        )
+        ultimo_inicio = timezone.make_aware(
+            ultimo_inicio,
+            timezone.get_current_timezone(),
+        )
+        return (timezone.now() - ultimo_inicio).days < servicio.dias_espera_minima
+
+    @classmethod
+    @transaction.atomic
+    def create(
+        cls,
+        *,
+        cliente_id,
+        servicio_id,
+        profesional_id,
+        fecha,
+        hora_inicio,
+        source,
+    ):
+        try:
+            cliente = Cliente.objects.select_for_update().select_related('usuario').get(
+                pk=cliente_id,
+                activo=True,
+                usuario__is_active=True,
+            )
+        except Cliente.DoesNotExist:
+            raise TurnoCreationError(
+                'INVALID_CLIENT',
+                'El Cliente seleccionado no existe o no está activo.',
+                'cliente_id',
+            )
+
+        try:
+            servicio = Servicio.objects.select_for_update().get(
+                pk=servicio_id,
+                activo=True,
+            )
+        except Servicio.DoesNotExist:
+            raise TurnoCreationError(
+                'INVALID_SERVICE',
+                'El Servicio seleccionado no existe o no está activo.',
+                'servicio',
+            )
+
+        try:
+            profesional = Personal.objects.select_for_update().get(pk=profesional_id)
+        except Personal.DoesNotExist:
+            raise TurnoCreationError(
+                'INVALID_PERSONAL',
+                'El Personal seleccionado no existe.',
+                'profesional',
+            )
+
+        required_equipment_type_ids = list(
+            RequisitoServicio.objects.filter(
+                servicio=servicio,
+                obligatorio=True,
+            ).values_list('tipo_equipamiento_id', flat=True)
+        )
+        if required_equipment_type_ids:
+            list(
+                Equipamiento.objects.select_for_update()
+                .filter(tipo_id__in=required_equipment_type_ids)
+                .values_list('pk', flat=True)
+            )
+
+        if Turno.objects.filter(
+            cliente=cliente,
+            fecha=fecha,
+            hora_inicio=hora_inicio,
+            estado__in=ACTIVE_TURNO_STATES,
+        ).exists():
+            raise TurnoCreationError(
+                'DUPLICATE_CLIENT_SLOT',
+                'El Cliente ya tiene un Turno en esa fecha y hora.',
+                'hora_inicio',
+            )
+
+        TurnoAvailabilityService.validate_slot(
+            fecha=fecha,
+            hora_inicio=hora_inicio,
+            servicio=servicio,
+            profesional=profesional,
+        )
+
+        turno = Turno.objects.create(
+            cliente=cliente,
+            profesional=profesional,
+            fecha=fecha,
+            hora_inicio=hora_inicio,
+            estado=Turno.Estado.SOLICITADO,
+            canal_origen=source,
+            alerta_daño_capilar=cls._requires_hair_damage_alert(
+                cliente,
+                servicio,
+            ),
+            tipo_pago_registro=None,
+            monto_abonado=Decimal('0.00'),
+            saldo_pendiente=Decimal('0.00'),
+        )
+        DetalleTurno.objects.create(
+            turno=turno,
+            servicio=servicio,
+            precio_historico=servicio.precio_base or Decimal('0.00'),
+            duracion_minutos=servicio.duracion_estimada or 60,
+        )
+        return turno

@@ -8,3 +8,10 @@ class CanViewGlobalAgenda(BasePermission):
 
     def has_permission(self, request, view):
         return request.user.has_perm(BusinessPermission.VIEW_GLOBAL_AGENDA)
+
+
+class CanCreateTurnoForClient(BasePermission):
+    message = 'No tiene permisos para crear Turnos para Clientes.'
+
+    def has_permission(self, request, view):
+        return request.user.has_perm(BusinessPermission.CREATE_TURNO_FOR_CLIENT)

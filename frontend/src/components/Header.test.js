@@ -95,16 +95,22 @@ describe('Header basado en SessionContext', () => {
         expect(screen.queryByRole('link', { name: 'Usuarios' })).not.toBeInTheDocument();
     });
 
-    test('EMPLEADO ve Operaciones y no el menú administrativo', () => {
-        renderHeader({ businessRole: 'EMPLEADO' });
+    test('EMPLEADO con permiso efectivo ve Operaciones y no el menú administrativo', () => {
+        renderHeader({
+            businessRole: 'EMPLEADO',
+            permissions: ['gestion.view_global_agenda']
+        });
 
         expect(screen.getByRole('link', { name: 'Operaciones' })).toBeInTheDocument();
         expect(screen.queryByRole('link', { name: 'Usuarios' })).not.toBeInTheDocument();
         expect(screen.queryByRole('link', { name: 'Reportes' })).not.toBeInTheDocument();
     });
 
-    test('PROFESIONAL comparte la navegación operativa', () => {
-        renderHeader({ businessRole: 'PROFESIONAL' });
+    test('PROFESIONAL con permiso efectivo comparte la navegación operativa', () => {
+        renderHeader({
+            businessRole: 'PROFESIONAL',
+            permissions: ['gestion.view_global_agenda']
+        });
 
         expect(screen.getByRole('link', { name: 'Operaciones' })).toBeInTheDocument();
     });
@@ -184,6 +190,7 @@ describe('Header basado en SessionContext', () => {
     test('PROFESIONAL con perfil Cliente conserva ambas experiencias', () => {
         renderHeader({
             businessRole: 'PROFESIONAL',
+            permissions: ['gestion.view_global_agenda'],
             clientProfile: true,
             personalProfile: true
         });
@@ -207,6 +214,13 @@ describe('Header basado en SessionContext', () => {
         expect(screen.queryByRole('link', { name: 'Operaciones' })).not.toBeInTheDocument();
         expect(screen.queryByRole('link', { name: 'Dashboard' })).not.toBeInTheDocument();
         expect(screen.queryByRole('link', { name: 'Usuarios' })).not.toBeInTheDocument();
+    });
+
+    test('Operaciones no se habilita por BusinessRole sin permisos efectivos', () => {
+        renderHeader({ businessRole: 'PROFESIONAL' });
+
+        expect(screen.queryByRole('link', { name: 'Operaciones' }))
+            .not.toBeInTheDocument();
     });
 
     test('loading no muestra navegación ni controles privilegiados', () => {

@@ -1,197 +1,250 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import axios from 'axios';
+
 import { notify } from '../../utils/notificaciones';
 
+
+const API_ROOT = 'http://127.0.0.1:8000/api/gestion';
+
+
 const NuevoTurno = () => {
-    // Estados para los datos del formulario
     const [servicios, setServicios] = useState([]);
+    const [clientes, setClientes] = useState([]);
     const [servicioSeleccionado, setServicioSeleccionado] = useState('');
     const [clienteSeleccionado, setClienteSeleccionado] = useState('');
     const [fecha, setFecha] = useState('');
-    const [horariosDisponibles, setHorariosDisponibles] = useState([]);
-    const [horarioSeleccionado, setHorarioSeleccionado] = useState(null);
-    
-    // Estados de carga y error
+    const [slots, setSlots] = useState([]);
+    const [slotSeleccionado, setSlotSeleccionado] = useState(null);
     const [loading, setLoading] = useState(false);
-    const [error, setError] = useState('');
     const [guardando, setGuardando] = useState(false);
+    const [error, setError] = useState('');
     const [mensajeExito, setMensajeExito] = useState('');
 
-    // 1. Cargar servicios al montar el componente
     useEffect(() => {
-        const fetchServicios = async () => {
+        const cargarSelectores = async () => {
+            const token = localStorage.getItem('access_token');
+            const headers = { Authorization: `Bearer ${token}` };
             try {
-                // Ajusta la URL si tu puerto es diferente
-                const res = await axios.get('http://127.0.0.1:8000/api/gestion/servicios/');
-                setServicios(res.data.results || res.data);
-            } catch (err) {
-                setError('Error al cargar servicios.');
-                console.error(err);
+                const [serviciosResponse, clientesResponse] = await Promise.all([
+                    axios.get(`${API_ROOT}/servicios/`),
+                    axios.get(`${API_ROOT}/turnos/selector-clientes/`, { headers })
+                ]);
+                setServicios(serviciosResponse.data.results || serviciosResponse.data || []);
+                setClientes(clientesResponse.data || []);
+            } catch (requestError) {
+                console.error(requestError);
+                setError('No se pudieron cargar los datos necesarios para crear el Turno.');
             }
         };
-        fetchServicios();
+
+        cargarSelectores();
     }, []);
 
-    // 2. Función para consultar disponibilidad (Llama a tu nuevo algoritmo)
     const consultarDisponibilidad = async () => {
         if (!fecha || !servicioSeleccionado) {
-            notify.error("Por favor selecciona fecha y servicio.");
+            notify.error('Seleccioná una fecha y un Servicio.');
             return;
         }
-        
+
         setLoading(true);
         setError('');
-        setHorariosDisponibles([]);
-        setHorarioSeleccionado(null);
-
+        setSlots([]);
+        setSlotSeleccionado(null);
         try {
-            const url = `http://127.0.0.1:8000/api/gestion/disponibilidad/?fecha=${fecha}&servicio_id=${servicioSeleccionado}`;
-            const res = await axios.get(url);
-            setHorariosDisponibles(res.data.horarios_disponibles);
-        } catch (err) {
-            console.error(err);
-            setError('No se pudo calcular la disponibilidad. Revisa si la fecha es válida.');
+            const token = localStorage.getItem('access_token');
+            const response = await axios.get(
+                `${API_ROOT}/turnos/consultar_disponibilidad/`,
+                {
+                    params: {
+                        fecha,
+                        servicio_id: servicioSeleccionado
+                    },
+                    headers: { Authorization: `Bearer ${token}` }
+                }
+            );
+            const selectedDay = (response.data.disponibilidad || [])
+                .find((day) => day.fecha === fecha);
+            const availableSlots = (selectedDay?.profesionales || []).flatMap(
+                (professional) => professional.slots.map((slot) => ({
+                    ...slot,
+                    profesional_nombre: professional.nombre
+                }))
+            );
+            setSlots(availableSlots);
+        } catch (requestError) {
+            console.error(requestError);
+            setError(
+                requestError.response?.data?.error
+                || 'No se pudo consultar la disponibilidad.'
+            );
         } finally {
             setLoading(false);
         }
     };
 
-    // 3. Función para confirmar turno
     const confirmarTurno = async () => {
-        if (!clienteSeleccionado) {
-            notify.error("¡Falta seleccionar el cliente!");
+        if (!clienteSeleccionado || !slotSeleccionado) {
+            notify.error('Seleccioná Cliente y horario.');
             return;
         }
 
         setGuardando(true);
+        setError('');
+        setMensajeExito('');
         try {
+            const token = localStorage.getItem('access_token');
             const payload = {
-                cliente: clienteSeleccionado,
-                servicio: servicioSeleccionado,
-                fecha: fecha,
-                hora_inicio: horarioSeleccionado,
-                
-                // LÓGICA DE NEGOCIO ADMIN:
-                // Al crearlo Yani, saltamos la etapa de "Solicitado" (análisis).
-                // El turno nace pre-aprobado, esperando el pago.
-                estado: 'esperando_sena' 
+                cliente_id: Number(clienteSeleccionado),
+                servicio: Number(servicioSeleccionado),
+                profesional: slotSeleccionado.profesional_id,
+                fecha,
+                hora_inicio: slotSeleccionado.hora
             };
+            const response = await axios.post(
+                `${API_ROOT}/turnos/crear-para-cliente/`,
+                payload,
+                { headers: { Authorization: `Bearer ${token}` } }
+            );
 
-            await axios.post('http://127.0.0.1:8000/api/gestion/turnos/', payload);
-            
-            setMensajeExito("¡Turno creado! Estado: Esperando Seña.");
-            // Limpiar formulario
+            setMensajeExito(response.data?.mensaje || 'Turno solicitado correctamente.');
             setClienteSeleccionado('');
             setServicioSeleccionado('');
             setFecha('');
-            setHorarioSeleccionado(null);
-            setHorariosDisponibles([]);
-        } catch (err) {
-            console.error(err);
-            setError('Error al crear el turno: ' + (err.response?.data?.detail || err.message));
+            setSlots([]);
+            setSlotSeleccionado(null);
+        } catch (requestError) {
+            console.error(requestError);
+            const data = requestError.response?.data;
+            const fieldError = Object.values(data || {}).find(Array.isArray)?.[0];
+            setError(fieldError || data?.detail || 'No se pudo crear el Turno.');
         } finally {
             setGuardando(false);
         }
     };
 
     return (
-        <div className="max-w-2xl mx-auto p-6 bg-white shadow-md rounded-lg mt-10">
-            <h2 className="text-2xl font-bold mb-6 text-gray-800">Nuevo Turno (Panel Profesional)</h2>
+        <main className="max-w-2xl mx-auto p-6 bg-white shadow-md rounded-lg mt-10">
+            <h1 className="text-2xl font-bold mb-2 text-gray-800">Nuevo Turno</h1>
+            <p className="mb-6 text-sm text-gray-500">
+                El Turno se registra como solicitado y queda pendiente de aprobación.
+            </p>
 
-            {/* SELECCIÓN DE CLIENTE */}
             <div className="mb-4">
-                <label className="block text-gray-700 font-medium mb-2">0. Seleccionar Cliente</label>
-                <input 
-                    type="text" 
-                    placeholder="ID del cliente"
+                <label htmlFor="turno-cliente" className="block text-gray-700 font-medium mb-2">
+                    Cliente
+                </label>
+                <select
+                    id="turno-cliente"
                     className="w-full border p-2 rounded"
                     value={clienteSeleccionado}
-                    onChange={(e) => setClienteSeleccionado(e.target.value)}
-                />
-            </div>
-
-            {/* SELECCIÓN DE SERVICIO */}
-            <div className="mb-4">
-                <label className="block text-gray-700 font-medium mb-2">1. Seleccionar Servicio</label>
-                <select 
-                    className="w-full border p-2 rounded"
-                    value={servicioSeleccionado}
-                    onChange={(e) => setServicioSeleccionado(e.target.value)}
+                    onChange={(event) => setClienteSeleccionado(event.target.value)}
                 >
-                    <option value="">-- Elige un servicio --</option>
-                    {servicios.map(s => (
-                        <option key={s.id} value={s.id}>
-                            {s.nombre} ({s.duracion_estimada} min)
+                    <option value="">-- Seleccioná un Cliente --</option>
+                    {clientes.map((cliente) => (
+                        <option key={cliente.id} value={cliente.id}>
+                            {[cliente.nombre, cliente.apellido].filter(Boolean).join(' ') || cliente.email}
+                            {cliente.email ? ` — ${cliente.email}` : ''}
                         </option>
                     ))}
                 </select>
             </div>
 
-            {/* SELECCIÓN DE FECHA */}
             <div className="mb-4">
-                <label className="block text-gray-700 font-medium mb-2">2. Seleccionar Fecha</label>
-                <input 
-                    type="date" 
+                <label htmlFor="turno-servicio" className="block text-gray-700 font-medium mb-2">
+                    Servicio
+                </label>
+                <select
+                    id="turno-servicio"
+                    className="w-full border p-2 rounded"
+                    value={servicioSeleccionado}
+                    onChange={(event) => {
+                        setServicioSeleccionado(event.target.value);
+                        setSlots([]);
+                        setSlotSeleccionado(null);
+                    }}
+                >
+                    <option value="">-- Seleccioná un Servicio --</option>
+                    {servicios.map((servicio) => (
+                        <option key={servicio.id} value={servicio.id}>
+                            {servicio.nombre} ({servicio.duracion_estimada || 60} min)
+                        </option>
+                    ))}
+                </select>
+            </div>
+
+            <div className="mb-4">
+                <label htmlFor="turno-fecha" className="block text-gray-700 font-medium mb-2">
+                    Fecha
+                </label>
+                <input
+                    id="turno-fecha"
+                    type="date"
                     className="w-full border p-2 rounded"
                     value={fecha}
-                    onChange={(e) => setFecha(e.target.value)}
+                    onChange={(event) => {
+                        setFecha(event.target.value);
+                        setSlots([]);
+                        setSlotSeleccionado(null);
+                    }}
                 />
             </div>
 
-            {/* BOTÓN BUSCAR */}
-            <button 
+            <button
+                type="button"
                 onClick={consultarDisponibilidad}
                 disabled={loading}
-                className="w-full bg-rose-500 text-white py-2 px-4 rounded hover:bg-rose-600 transition disabled:bg-gray-300"
+                className="w-full bg-rose-500 text-white py-2 px-4 rounded hover:bg-rose-600 disabled:bg-gray-300"
             >
-                {loading ? 'Buscando huecos...' : 'Ver Horarios Disponibles'}
+                {loading ? 'Buscando horarios...' : 'Ver horarios disponibles'}
             </button>
 
-            {/* RESULTADOS (GRILLA DE HORARIOS) */}
-            {error && <p className="text-red-500 mt-4">{error}</p>}
-            {mensajeExito && <p className="text-green-600 mt-4 font-semibold">{mensajeExito}</p>}
+            {error && <p role="alert" className="text-red-600 mt-4">{error}</p>}
+            {mensajeExito && <p className="text-green-700 mt-4 font-semibold">{mensajeExito}</p>}
 
-            {horariosDisponibles.length > 0 && (
-                <div className="mt-6 animate-fade-in">
-                    <h3 className="text-lg font-semibold mb-3">Horarios Disponibles:</h3>
-                    <div className="grid grid-cols-3 gap-3">
-                        {horariosDisponibles.map((hora) => (
-                            <button
-                                key={hora}
-                                onClick={() => setHorarioSeleccionado(hora)}
-                                className={`py-2 px-4 rounded border text-center transition
-                                    ${horarioSeleccionado === hora 
-                                        ? 'bg-green-500 text-white border-green-600' 
-                                        : 'bg-gray-50 hover:bg-gray-100 text-gray-800'
+            {slots.length > 0 && (
+                <section className="mt-6" aria-labelledby="available-slots-title">
+                    <h2 id="available-slots-title" className="text-lg font-semibold mb-3">
+                        Horarios disponibles
+                    </h2>
+                    <div className="grid grid-cols-2 gap-3">
+                        {slots.map((slot) => {
+                            const key = `${slot.profesional_id}-${slot.hora}`;
+                            const selected = (
+                                slotSeleccionado?.profesional_id === slot.profesional_id
+                                && slotSeleccionado?.hora === slot.hora
+                            );
+                            return (
+                                <button
+                                    key={key}
+                                    type="button"
+                                    onClick={() => setSlotSeleccionado(slot)}
+                                    className={`py-2 px-3 rounded border ${
+                                        selected
+                                            ? 'bg-green-600 text-white'
+                                            : 'bg-gray-50 text-gray-800'
                                     }`}
-                            >
-                                {hora}
-                            </button>
-                        ))}
+                                >
+                                    {slot.hora} — {slot.profesional_nombre}
+                                </button>
+                            );
+                        })}
                     </div>
-                    
-                    {horarioSeleccionado && (
-                        <div className="mt-6 p-4 bg-green-50 border border-green-200 rounded">
-                            <p className="text-green-800 font-medium">
-                                Resumen: Servicio ID {servicioSeleccionado} el {fecha} a las {horarioSeleccionado} hs.
-                            </p>
-                            <button 
-                                onClick={confirmarTurno}
-                                disabled={guardando}
-                                className="mt-2 w-full bg-green-600 text-white py-2 rounded hover:bg-green-700 disabled:bg-gray-300"
-                            >
-                                {guardando ? 'Guardando...' : 'Confirmar Turno'}
-                            </button>
-                        </div>
-                    )}
-                </div>
+                </section>
             )}
-            
-            {!loading && horariosDisponibles.length === 0 && fecha && !error && (
-                <p className="mt-4 text-gray-500 text-center">No hay horarios disponibles para esta fecha. Intenta otro día.</p>
+
+            {slotSeleccionado && (
+                <button
+                    type="button"
+                    onClick={confirmarTurno}
+                    disabled={guardando}
+                    className="mt-6 w-full bg-green-600 text-white py-2 rounded hover:bg-green-700 disabled:bg-gray-300"
+                >
+                    {guardando ? 'Guardando...' : 'Crear Turno solicitado'}
+                </button>
             )}
-        </div>
+        </main>
     );
 };
+
 
 export default NuevoTurno;

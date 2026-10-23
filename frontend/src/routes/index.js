@@ -84,7 +84,7 @@ export const AppRoutes = () => {
                 <Route path={AUTH_ROUTES.RESETEAR_CLAVE} element={<ResetearClave />} />
 
                 {/* Session landing routes */}
-                <Route path={SESSION_ROUTES.OPERACIONES} element={<ProtectedRoute requiredAnyPermission={['gestion.view_global_agenda', 'usuarios.create_walkin_client']}><Operaciones /></ProtectedRoute>} />
+                <Route path={SESSION_ROUTES.OPERACIONES} element={<ProtectedRoute requiredAnyPermission={['gestion.view_global_agenda', 'usuarios.create_walkin_client', 'gestion.create_turno_for_client']}><Operaciones /></ProtectedRoute>} />
                 <Route path={SESSION_ROUTES.CUENTA_SIN_ACCESO} element={<CuentaSinAcceso />} />
                 <Route path={SESSION_ROUTES.ERROR_ACCESO} element={<ErrorAcceso />} />
                 <Route path={SESSION_ROUTES.ACCESO_DENEGADO} element={<AccesoDenegado />} />
@@ -112,7 +112,7 @@ export const AppRoutes = () => {
                 {/* Admin Routes */}
                 <Route path={ADMIN_ROUTES.DASHBOARD} element={<ProtectedRoute><DashboardAdmin /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.REPORTES} element={<ProtectedRoute requiredAnyPermission={['gestion.view_reports', 'gestion.view_financial_reports']}><Reportes /></ProtectedRoute>} />
-                <Route path={ADMIN_ROUTES.NUEVO_TURNO} element={<ProtectedRoute><NuevoTurno /></ProtectedRoute>} />
+                <Route path={ADMIN_ROUTES.NUEVO_TURNO} element={<ProtectedRoute requiredPermission="gestion.create_turno_for_client"><NuevoTurno /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.TURNOS} element={<ProtectedRoute requiredPermission="gestion.view_global_agenda"><GestionTurnos /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.GESTIONAR_RUTINAS} element={<ProtectedRoute><GestionarRutinas /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.RUTINA_DETALLE} element={<ProtectedRoute><DetalleRutina /></ProtectedRoute>} />

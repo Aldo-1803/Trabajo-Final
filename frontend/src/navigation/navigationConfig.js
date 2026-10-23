@@ -20,7 +20,8 @@ export const navigationItems = [
         placement: NAVIGATION_PLACEMENT.PRIMARY,
         anyPermissions: [
             'gestion.view_global_agenda',
-            'usuarios.create_walkin_client'
+            'usuarios.create_walkin_client',
+            'gestion.create_turno_for_client'
         ]
     },
     {
