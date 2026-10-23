@@ -7,6 +7,7 @@ import AlertasCriticas from '../../components/AlertasCriticas';
 const DashboardAdmin = () => {
     const [stats, setStats] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState('');
     const navigate = useNavigate();
 
     useEffect(() => {
@@ -20,16 +21,33 @@ const DashboardAdmin = () => {
                 setLoading(false);
             } catch (error) {
                 console.error("Error cargando dashboard", error);
-                // Si falla (ej: no es admin), redirigir o mostrar error
                 if (error.response && error.response.status === 403) {
-                    navigate('/perfil'); // No es admin, volver a perfil cliente
+                    setLoadError(
+                        'El dashboard administrativo todavía no está disponible para esta cuenta.'
+                    );
+                } else {
+                    setLoadError('No se pudo cargar el dashboard administrativo.');
                 }
+                setLoading(false);
             }
         };
         fetchStats();
     }, [navigate]);
 
     if (loading) return <div className="text-center mt-20" style={{ color: '#8B8682' }}>Cargando Panel de Control...</div>;
+
+    if (loadError) {
+        return (
+            <div className="min-h-screen flex items-center justify-center px-4" style={{ backgroundColor: '#F5F5EB' }}>
+                <div className="max-w-xl rounded-xl bg-white p-8 text-center shadow-md">
+                    <h2 className="text-2xl font-bold mb-3" style={{ color: '#817773' }}>
+                        Panel administrativo no disponible
+                    </h2>
+                    <p style={{ color: '#8B8682' }}>{loadError}</p>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="min-h-screen" style={{ backgroundColor: '#F5F5EB' }}>

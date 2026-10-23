@@ -6,6 +6,13 @@ export const AUTH_ROUTES = {
   RESETEAR_CLAVE: '/resetear-clave/:uid/:token',
 };
 
+// Rutas seguras de estado y experiencia inicial
+export const SESSION_ROUTES = {
+  OPERACIONES: '/operaciones',
+  CUENTA_SIN_ACCESO: '/cuenta-sin-acceso',
+  ERROR_ACCESO: '/error-acceso',
+};
+
 // Rutas de cliente
 export const CLIENTE_ROUTES = {
   PERFIL: '/perfil',
@@ -59,4 +66,7 @@ export const NO_HEADER_ROUTES = [
   AUTH_ROUTES.REGISTRO,
   AUTH_ROUTES.RECUPERAR_CONTRASENA,
   AUTH_ROUTES.RESETEAR_CLAVE,
+  SESSION_ROUTES.OPERACIONES,
+  SESSION_ROUTES.CUENTA_SIN_ACCESO,
+  SESSION_ROUTES.ERROR_ACCESO,
 ];

@@ -77,8 +77,11 @@ export const SessionProvider = ({ children }) => {
         latestRequest.current = requestId;
 
         if (!accessToken) {
-            setSession(createEmptySession(SESSION_STATUS.ANONYMOUS));
-            return null;
+            const anonymousSession = createEmptySession(
+                SESSION_STATUS.ANONYMOUS
+            );
+            setSession(anonymousSession);
+            return anonymousSession;
         }
 
         setSession(createEmptySession(SESSION_STATUS.LOADING));
@@ -112,8 +115,11 @@ export const SessionProvider = ({ children }) => {
 
             if (status === 401) {
                 clearStoredSession();
-                setSession(createEmptySession(SESSION_STATUS.ANONYMOUS));
-                return null;
+                const anonymousSession = createEmptySession(
+                    SESSION_STATUS.ANONYMOUS
+                );
+                setSession(anonymousSession);
+                return anonymousSession;
             }
 
             const error = {
@@ -121,8 +127,12 @@ export const SessionProvider = ({ children }) => {
                 detail: backendError?.detail || 'No se pudo cargar el contexto de sesión.',
                 httpStatus: status || null
             };
-            setSession(createEmptySession(SESSION_STATUS.ERROR, error));
-            return null;
+            const errorSession = createEmptySession(
+                SESSION_STATUS.ERROR,
+                error
+            );
+            setSession(errorSession);
+            return errorSession;
         }
     }, [clearStoredSession]);
 

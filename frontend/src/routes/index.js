@@ -1,13 +1,22 @@
 import React from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import ProtectedRoute from './ProtectedRoute';
-import { AUTH_ROUTES, CLIENTE_ROUTES, ADMIN_ROUTES, NO_HEADER_ROUTES } from './routes';
+import {
+    AUTH_ROUTES,
+    CLIENTE_ROUTES,
+    ADMIN_ROUTES,
+    SESSION_ROUTES,
+    NO_HEADER_ROUTES
+} from './routes';
 
 // Imports - Auth Pages
 import Login from '../pages/auth/Login';
 import Registro from '../pages/auth/Registro';
 import RecuperarContrasena from '../pages/auth/RecuperarContrasena';
 import ResetearClave from '../pages/auth/ResetearClave';
+import Operaciones from '../pages/session/Operaciones';
+import CuentaSinAcceso from '../pages/session/CuentaSinAcceso';
+import ErrorAcceso from '../pages/session/ErrorAcceso';
 
 // Imports - Cliente Pages
 import Perfil from '../pages/cliente/Perfil';
@@ -72,6 +81,11 @@ export const AppRoutes = () => {
                 <Route path={AUTH_ROUTES.REGISTRO} element={<Registro />} />
                 <Route path={AUTH_ROUTES.RECUPERAR_CONTRASENA} element={<RecuperarContrasena />} />
                 <Route path={AUTH_ROUTES.RESETEAR_CLAVE} element={<ResetearClave />} />
+
+                {/* Session landing routes */}
+                <Route path={SESSION_ROUTES.OPERACIONES} element={<ProtectedRoute><Operaciones /></ProtectedRoute>} />
+                <Route path={SESSION_ROUTES.CUENTA_SIN_ACCESO} element={<ProtectedRoute><CuentaSinAcceso /></ProtectedRoute>} />
+                <Route path={SESSION_ROUTES.ERROR_ACCESO} element={<ErrorAcceso />} />
 
                 {/* Cliente Routes */}
                 <Route path={CLIENTE_ROUTES.PERFIL} element={<ProtectedRoute><Perfil /></ProtectedRoute>} />
