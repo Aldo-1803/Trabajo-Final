@@ -100,6 +100,13 @@ export const navigationItems = [
         requiredPermission: 'gestion.manage_personal'
     },
     {
+        id: 'clients-management',
+        label: 'Clientes',
+        path: ADMIN_ROUTES.CLIENTES,
+        placement: NAVIGATION_PLACEMENT.PRIMARY,
+        requiredPermission: 'usuarios.view_clients'
+    },
+    {
         id: 'admin-products',
         label: 'Productos',
         path: ADMIN_ROUTES.PRODUCTOS,

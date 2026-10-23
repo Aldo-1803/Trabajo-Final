@@ -109,6 +109,19 @@ describe('Header basado en SessionContext', () => {
         expect(screen.getByRole('link', { name: 'Operaciones' })).toBeInTheDocument();
     });
 
+    test.each(['EMPLEADO', 'PROFESIONAL'])(
+        '%s con view_clients ve Gestión de Clientes',
+        (businessRole) => {
+            renderHeader({
+                businessRole,
+                permissions: ['usuarios.view_clients']
+            });
+
+            expect(screen.getByRole('link', { name: 'Clientes' }))
+                .toHaveAttribute('href', '/admin/clientes');
+        }
+    );
+
     test('ADMINISTRADOR no depende de is_staff y filtra por permisos', () => {
         renderHeader({
             businessRole: 'ADMINISTRADOR',

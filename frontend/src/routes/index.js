@@ -120,7 +120,7 @@ export const AppRoutes = () => {
                 <Route path={ADMIN_ROUTES.REGLAS} element={<ProtectedRoute><GestionarReglas /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.PRODUCTOS} element={<ProtectedRoute><GestionProductos /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.USUARIOS} element={<ProtectedRoute requiredPermission="usuarios.manage_users"><GestionUsuarios /></ProtectedRoute>} />
-                <Route path={ADMIN_ROUTES.CLIENTES} element={<ProtectedRoute><GestionClientes /></ProtectedRoute>} />
+                <Route path={ADMIN_ROUTES.CLIENTES} element={<ProtectedRoute requiredPermission="usuarios.view_clients"><GestionClientes /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.PERSONAL} element={<ProtectedRoute requiredPermission="gestion.manage_personal"><GestionPersonal /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.EQUIPAMIENTO} element={<ProtectedRoute><GestionEquipamiento /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.AGENDA} element={<ProtectedRoute><AgendaAdmin /></ProtectedRoute>} />

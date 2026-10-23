@@ -49,6 +49,7 @@ from .client_account_services import (
     create_client_account_by_staff,
 )
 from .cliente_filters import ClienteFilter
+from .permissions import CanViewClients
 from .roles import InconsistentBusinessRoleError
 
 from .models import (
@@ -525,16 +526,16 @@ class DiagnosticoView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
-# --- VIEWSET PARA LISTAR CLIENTES (ADMIN) ---
+# --- VIEWSET PARA CONSULTAR CLIENTES CON PERMISO CANÓNICO ---
 class ClienteViewSet(viewsets.ReadOnlyModelViewSet):
     """
-    ViewSet para que el admin pueda listar todos los clientes.
+    Consulta global de clientes para personal autorizado.
     Solo lectura (GET).
     Incluye filtrado, búsqueda y ordenamiento.
     """
     queryset = Cliente.objects.all().select_related('usuario')
     serializer_class = ClienteListSerializer
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [permissions.IsAuthenticated, CanViewClients]
     pagination_class = None
     
     # Configurar filtros, búsqueda y ordenamiento

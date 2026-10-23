@@ -1,17 +1,30 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
+import { useSession } from '../../context/SessionContext';
+import { notify } from '../../utils/notificaciones';
+import { getLandingPath } from '../../utils/sessionLanding';
 
 const GestionClientes = () => {
     // --- ESTADOS ---
     const [clientes, setClientes] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
-    const [modalAbierto, setModalAbierto] = useState(false);
-    const [clienteSeleccionado, setClienteSeleccionado] = useState(null);
-    const [fichasCliente, setFichasCliente] = useState([]);
-    const [cargandoFichas, setCargandoFichas] = useState(false);
+    const [modalNuevoClienteAbierto, setModalNuevoClienteAbierto] = useState(false);
+    const [creandoCliente, setCreandoCliente] = useState(false);
+    const [nuevoCliente, setNuevoCliente] = useState({
+        first_name: '',
+        last_name: '',
+        email: '',
+        telefono: '',
+        zona: '',
+        password_temporal: '',
+        motivo: ''
+    });
     const navigate = useNavigate();
+    const { session, hasPermission } = useSession();
+    const canCreateClient = hasPermission('usuarios.create_walkin_client');
+    const landingPath = getLandingPath(session) || '/login';
 
     // --- CARGA DE DATOS ---
     const fetchClientes = async () => {
@@ -23,7 +36,6 @@ const GestionClientes = () => {
                 return;
             }
 
-            // Llamamos al endpoint que arreglamos (ClienteViewSet)
             const response = await axios.get('http://127.0.0.1:8000/api/usuarios/clientes/', {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
@@ -32,10 +44,15 @@ const GestionClientes = () => {
             setError('');
         } catch (err) {
             console.error("Error cargando clientes:", err);
-            setError('No se pudo cargar la lista de clientes.');
-            
-            if (err.response?.status === 401) navigate('/login');
-            if (err.response?.status === 403) alert("No tienes permisos de administrador.");
+            setClientes([]);
+
+            if (err.response?.status === 401) {
+                navigate('/login');
+            } else if (err.response?.status === 403) {
+                setError('No tenés permisos para consultar clientes.');
+            } else {
+                setError('No se pudo cargar la lista de clientes.');
+            }
         } finally {
             setLoading(false);
         }
@@ -46,29 +63,51 @@ const GestionClientes = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const abrirModalFicha = async (cliente) => {
-        setClienteSeleccionado(cliente);
-        setModalAbierto(true);
-        setCargandoFichas(true);
-        try {
-            const token = localStorage.getItem('access_token');
-            const res = await axios.get(
-                `http://127.0.0.1:8000/api/gestion/fichas-tecnicas/por_cliente/?cliente_id=${cliente.id}`,
-                { headers: { 'Authorization': `Bearer ${token}` } }
-            );
-            setFichasCliente(res.data || []);
-        } catch (err) {
-            console.error('Error cargando fichas del cliente:', err);
-            setFichasCliente([]);
-        } finally {
-            setCargandoFichas(false);
-        }
+    const limpiarNuevoCliente = () => {
+        setNuevoCliente({
+            first_name: '',
+            last_name: '',
+            email: '',
+            telefono: '',
+            zona: '',
+            password_temporal: '',
+            motivo: ''
+        });
     };
 
-    const cerrarModalFicha = () => {
-        setModalAbierto(false);
-        setClienteSeleccionado(null);
-        setFichasCliente([]);
+    const handleNuevoClienteChange = (event) => {
+        const { name, value } = event.target;
+        setNuevoCliente((current) => ({ ...current, [name]: value }));
+    };
+
+    const crearCliente = async (event) => {
+        event.preventDefault();
+        setCreandoCliente(true);
+        try {
+            const token = localStorage.getItem('access_token');
+            await axios.post(
+                'http://127.0.0.1:8000/api/usuarios/admin/clientes/crear/',
+                nuevoCliente,
+                { headers: { 'Authorization': `Bearer ${token}` } }
+            );
+            setModalNuevoClienteAbierto(false);
+            limpiarNuevoCliente();
+            await fetchClientes();
+            notify.success('Cliente creado correctamente.');
+        } catch (err) {
+            const errorCode = err.response?.data?.error?.code;
+            const errorMessages = {
+                EMAIL_ALREADY_EXISTS: 'Ya existe una cuenta con ese email.',
+                INVALID_PASSWORD: 'La contraseña temporal no cumple los requisitos de seguridad.',
+                PERMISSION_DENIED: 'No tenés permisos para crear clientes.'
+            };
+            notify.error(
+                errorMessages[errorCode]
+                || 'No se pudo crear el cliente. Revisá los datos e intentá nuevamente.'
+            );
+        } finally {
+            setCreandoCliente(false);
+        }
     };
 
     // --- RENDERIZADO ---
@@ -80,15 +119,26 @@ const GestionClientes = () => {
                         <h1 className="text-3xl font-bold text-gray-800">Cartera de Clientes</h1>
                         <p className="text-gray-500">Visualización de perfiles registrados</p>
                     </div>
-                    <button 
-                        onClick={() => navigate('/admin-dashboard')}
-                        className="px-4 py-2 rounded-lg font-medium transition-all"
-                        style={{ color: '#817773', borderColor: '#C1B4A4', border: '1px solid' }}
-                        onMouseEnter={(e) => e.target.style.backgroundColor = '#F5F0EB'}
-                        onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
-                    >
-                        ← Volver al Dashboard
-                    </button>
+                    <div className="flex gap-3">
+                        {canCreateClient && (
+                            <button
+                                onClick={() => setModalNuevoClienteAbierto(true)}
+                                className="px-4 py-2 rounded-lg font-bold text-white transition-all"
+                                style={{ backgroundColor: '#817773' }}
+                            >
+                                + Nuevo cliente
+                            </button>
+                        )}
+                        <button
+                            onClick={() => navigate(landingPath)}
+                            className="px-4 py-2 rounded-lg font-medium transition-all"
+                            style={{ color: '#817773', borderColor: '#C1B4A4', border: '1px solid' }}
+                            onMouseEnter={(e) => e.target.style.backgroundColor = '#F5F0EB'}
+                            onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
+                        >
+                            ← Volver al inicio
+                        </button>
+                    </div>
                 </div>
 
                 {error && (
@@ -111,7 +161,6 @@ const GestionClientes = () => {
                                         <th className="px-6 py-3 text-left text-xs font-bold text-gray-800 uppercase tracking-wider">Contacto</th>
                                         <th className="px-6 py-3 text-left text-xs font-bold text-gray-800 uppercase tracking-wider">Ubicación</th>
                                         <th className="px-6 py-3 text-left text-xs font-bold text-gray-800 uppercase tracking-wider">Registro</th>
-                                        <th className="px-6 py-3 text-right text-xs font-bold text-gray-800 uppercase tracking-wider">Acciones</th>
                                     </tr>
                                 </thead>
                                 <tbody className="bg-white divide-y divide-gray-200">
@@ -141,17 +190,6 @@ const GestionClientes = () => {
                                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                                 {cliente.date_joined ? new Date(cliente.date_joined).toLocaleDateString() : '-'}
                                             </td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                                <button 
-                                                    className="font-semibold transition-all"
-                                                    style={{ color: '#817773' }}
-                                                    onMouseEnter={(e) => e.target.style.color = '#6B5F5B'}
-                                                    onMouseLeave={(e) => e.target.style.color = '#817773'}
-                                                    onClick={() => abrirModalFicha(cliente)}
-                                                >
-                                                    Ver Ficha
-                                                </button>
-                                            </td>
                                         </tr>
                                     ))}
                                 </tbody>
@@ -160,57 +198,125 @@ const GestionClientes = () => {
                     )}
                 </div>
             </div>
-            {modalAbierto && clienteSeleccionado && (
+            {modalNuevoClienteAbierto && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                    <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
-                        <div className="sticky top-0 bg-white border-b px-6 py-4 flex justify-between items-center">
-                            <div>
-                                <h2 className="text-xl font-bold text-gray-800">Historial Técnico</h2>
-                                <p className="text-sm text-gray-500">{clienteSeleccionado.first_name} {clienteSeleccionado.last_name}</p>
+                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto" style={{ borderTop: '4px solid #817773' }}>
+                        <h2 className="text-2xl font-bold text-gray-800 mb-2">Nuevo cliente</h2>
+                        <p className="text-sm text-gray-500 mb-6">Alta presencial con acceso mediante contraseña temporal.</p>
+                        <form onSubmit={crearCliente} className="space-y-4">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div>
+                                    <label htmlFor="new-client-first-name" className="block text-sm font-medium text-gray-700 mb-1">Nombre *</label>
+                                    <input
+                                        id="new-client-first-name"
+                                        type="text"
+                                        name="first_name"
+                                        value={nuevoCliente.first_name}
+                                        onChange={handleNuevoClienteChange}
+                                        required
+                                        className="w-full border border-gray-300 rounded-lg p-2"
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="new-client-last-name" className="block text-sm font-medium text-gray-700 mb-1">Apellido *</label>
+                                    <input
+                                        id="new-client-last-name"
+                                        type="text"
+                                        name="last_name"
+                                        value={nuevoCliente.last_name}
+                                        onChange={handleNuevoClienteChange}
+                                        required
+                                        className="w-full border border-gray-300 rounded-lg p-2"
+                                    />
+                                </div>
                             </div>
-                            <button
-                                onClick={cerrarModalFicha}
-                                className="text-gray-500 hover:text-gray-700 text-2xl"
-                            >
-                                ✕
-                            </button>
-                        </div>
-                        <div className="p-6 space-y-4">
-                            {cargandoFichas ? (
-                                <div className="text-center text-gray-500">Cargando historial...</div>
-                            ) : fichasCliente.length === 0 ? (
-                                <div className="text-center text-gray-500">No hay fichas técnicas registradas.</div>
-                            ) : (
-                                fichasCliente.map((ficha) => (
-                                    <div key={ficha.id} className="border rounded-lg p-4 shadow-sm bg-gray-50">
-                                        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                                            <div className="font-semibold text-gray-800">
-                                                {ficha.servicio_nombre} · {new Date(ficha.turno_fecha).toLocaleDateString('es-AR')}
-                                            </div>
-                                            <div className="text-xs text-gray-500">Profesional: {ficha.profesional_nombre || '—'}</div>
-                                        </div>
-                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                            <div>
-                                                <p className="text-xs font-semibold text-gray-500">Fórmula</p>
-                                                <p className="text-sm text-gray-700 whitespace-pre-wrap">{ficha.formula || '—'}</p>
-                                            </div>
-                                            <div>
-                                                <p className="text-xs font-semibold text-gray-500">Comentario al cliente</p>
-                                                <p className="text-sm text-gray-700 whitespace-pre-wrap">{ficha.comentario_cliente || '—'}</p>
-                                            </div>
-                                            <div>
-                                                <p className="text-xs font-semibold text-gray-500">Observaciones internas</p>
-                                                <p className="text-sm text-gray-700 whitespace-pre-wrap">{ficha.observaciones_proceso || '—'}</p>
-                                            </div>
-                                            <div>
-                                                <p className="text-xs font-semibold text-gray-500">Rutina recomendada</p>
-                                                <p className="text-sm text-gray-700">{ficha.rutina_recomendada_nombre || '—'}</p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                ))
-                            )}
-                        </div>
+                            <div>
+                                <label htmlFor="new-client-email" className="block text-sm font-medium text-gray-700 mb-1">Email *</label>
+                                <input
+                                    id="new-client-email"
+                                    type="email"
+                                    name="email"
+                                    value={nuevoCliente.email}
+                                    onChange={handleNuevoClienteChange}
+                                    required
+                                    className="w-full border border-gray-300 rounded-lg p-2"
+                                />
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div>
+                                    <label htmlFor="new-client-phone" className="block text-sm font-medium text-gray-700 mb-1">Teléfono</label>
+                                    <input
+                                        id="new-client-phone"
+                                        type="tel"
+                                        name="telefono"
+                                        value={nuevoCliente.telefono}
+                                        onChange={handleNuevoClienteChange}
+                                        className="w-full border border-gray-300 rounded-lg p-2"
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="new-client-zone" className="block text-sm font-medium text-gray-700 mb-1">Zona</label>
+                                    <input
+                                        id="new-client-zone"
+                                        type="text"
+                                        name="zona"
+                                        value={nuevoCliente.zona}
+                                        onChange={handleNuevoClienteChange}
+                                        className="w-full border border-gray-300 rounded-lg p-2"
+                                    />
+                                </div>
+                            </div>
+                            <div>
+                                <label htmlFor="new-client-password" className="block text-sm font-medium text-gray-700 mb-1">Contraseña temporal *</label>
+                                <input
+                                    id="new-client-password"
+                                    type="password"
+                                    name="password_temporal"
+                                    value={nuevoCliente.password_temporal}
+                                    onChange={handleNuevoClienteChange}
+                                    required
+                                    className="w-full border border-gray-300 rounded-lg p-2"
+                                />
+                                <p className="text-xs text-gray-500 mt-1">El cliente podrá cambiarla mediante recuperación de contraseña.</p>
+                            </div>
+                            <div>
+                                <label htmlFor="new-client-reason" className="block text-sm font-medium text-gray-700 mb-1">Motivo *</label>
+                                <textarea
+                                    id="new-client-reason"
+                                    name="motivo"
+                                    value={nuevoCliente.motivo}
+                                    onChange={handleNuevoClienteChange}
+                                    required
+                                    minLength={3}
+                                    maxLength={500}
+                                    rows={3}
+                                    className="w-full border border-gray-300 rounded-lg p-2"
+                                    placeholder="Ej.: Alta presencial en recepción"
+                                />
+                            </div>
+                            <div className="flex justify-end gap-3 pt-4 border-t">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setModalNuevoClienteAbierto(false);
+                                        limpiarNuevoCliente();
+                                    }}
+                                    disabled={creandoCliente}
+                                    className="px-4 py-2 border rounded-lg font-medium"
+                                    style={{ borderColor: '#C1B4A4', color: '#817773' }}
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={creandoCliente}
+                                    className="px-4 py-2 rounded-lg font-bold text-white disabled:opacity-60"
+                                    style={{ backgroundColor: '#817773' }}
+                                >
+                                    {creandoCliente ? 'Creando...' : 'Crear cliente'}
+                                </button>
+                            </div>
+                        </form>
                     </div>
                 </div>
             )}

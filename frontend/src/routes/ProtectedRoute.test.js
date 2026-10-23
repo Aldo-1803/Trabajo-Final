@@ -148,6 +148,28 @@ describe('ProtectedRoute declarativo con acceso por URL directa', () => {
         expectRedirect('/acceso-denegado');
     });
 
+    test.each(['EMPLEADO', 'PROFESIONAL'])(
+        '%s con view_clients entra directamente a Gestión de Clientes',
+        (businessRole) => {
+            renderDirectUrl('/admin/clientes', {
+                requiredPermission: 'usuarios.view_clients'
+            }, {
+                businessRole,
+                permissions: ['usuarios.view_clients']
+            });
+
+            expect(screen.getByText('Contenido protegido')).toBeInTheDocument();
+        }
+    );
+
+    test('sin view_clients no entra directamente a Gestión de Clientes', () => {
+        renderDirectUrl('/admin/clientes', {
+            requiredPermission: 'usuarios.view_clients'
+        }, { businessRole: 'EMPLEADO' });
+
+        expectRedirect('/acceso-denegado');
+    });
+
     test('un permiso individual habilita la ruta sin inferir el rol', () => {
         renderDirectUrl('/modulo-preparado', {
             requiredPermission: 'gestion.view_reports'
