@@ -46,7 +46,7 @@ from .serializers import (
     CategoriaServicioSerializer, ServicioSerializer, TurnoSerializer, RutinaSerializer, RutinaClienteSerializer,
     RutinaClienteCreateSerializer, ReglaDiagnosticoSerializer, NotificacionSerializer, ProductoSerializer, ImagenProductoSerializer, EquipamientoSerializer,
     UsuarioAccountStatusCommandSerializer, UsuarioAdminIdentityUpdateSerializer,
-    UsuarioAdminReadSerializer, UsuarioAdminSerializer, AgendaCuidadosSerializer,
+    UsuarioAdminReadSerializer, AgendaCuidadosSerializer,
     HorarioLaboralSerializer, BloqueoAgendaSerializer, PersonalSerializer,
     PersonalAccessCreateCommandSerializer,
     PersonalBusinessRoleChangeCommandSerializer,
@@ -3211,7 +3211,7 @@ class SeleccionarRutinaView(APIView):
 # ----------------------------------------------------
 class AdminUsuarioViewSet(viewsets.ModelViewSet):
     queryset = Usuario.objects.all()  # Cambiar a todos, luego filtramos en get_queryset
-    serializer_class = UsuarioAdminSerializer
+    serializer_class = UsuarioAdminReadSerializer
     permission_classes = [IsAdminUser] # Solo admins pueden entrar aquí
     
     # Configurar filtros
@@ -3228,11 +3228,12 @@ class AdminUsuarioViewSet(viewsets.ModelViewSet):
             return UsuarioAdminIdentityUpdateSerializer
         if self.action == 'partial_update':
             return UsuarioAdminIdentityUpdateSerializer
-        # POST remains legacy until its frontend consumer is migrated.
-        return UsuarioAdminSerializer
+        return UsuarioAdminReadSerializer
 
     def get_permissions(self):
-        if self.action in [
+        if self.action == 'create':
+            permission_classes = [AllowAny]
+        elif self.action in [
             'update',
             'partial_update',
             'desactivar_cuenta',
@@ -3242,6 +3243,15 @@ class AdminUsuarioViewSet(viewsets.ModelViewSet):
         else:
             permission_classes = [IsAdminUser]
         return [permission() for permission in permission_classes]
+
+    def create(self, request, *args, **kwargs):
+        raise MethodNotAllowed(
+            request.method,
+            detail=(
+                'La creación genérica de Usuario está deshabilitada. '
+                'Utilice una operación de alta semántica.'
+            ),
+        )
 
     def get_queryset(self):
         """

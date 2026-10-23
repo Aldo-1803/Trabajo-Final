@@ -317,8 +317,7 @@ class AdminUsuarioCrudContainmentTests(APITestCase):
         )
         self.assertNotIn('password', retrieve_response.data)
 
-    def test_legacy_post_behavior_is_preserved(self):
-        self.authenticate(self.staff_only)
+    def test_legacy_post_is_method_not_allowed_for_every_authenticated_actor(self):
         payload = {
             'email': 'legacy-created@test.com',
             'first_name': 'Alta',
@@ -327,20 +326,41 @@ class AdminUsuarioCrudContainmentTests(APITestCase):
             'is_staff': True,
             'is_active': False,
         }
-
-        response = self.client.post(
-            reverse('admin-usuarios-list'),
-            payload,
-            format='json',
+        administrator = self.create_user('business-admin@test.com')
+        administrator.groups.add(
+            Group.objects.get(name=BusinessRole.ADMINISTRADOR)
+        )
+        superuser = Usuario.objects.create_superuser(
+            email='protected-admin@test.com',
+            password='SuperuserPassword!2026',
+        )
+        ordinary_user = self.create_user('ordinary-user@test.com')
+        actors = (
+            None,
+            self.staff_only,
+            administrator,
+            superuser,
+            ordinary_user,
         )
 
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        created = Usuario.objects.get(email=payload['email'])
-        self.assertEqual(created.first_name, 'Alta')
-        self.assertEqual(created.last_name, 'Legacy')
-        self.assertTrue(created.is_staff)
-        self.assertFalse(created.is_active)
-        self.assertTrue(created.check_password(payload['password']))
+        for actor in actors:
+            actor_label = actor.email if actor is not None else 'anonymous'
+            with self.subTest(actor=actor_label):
+                self.client.force_authenticate(user=actor)
+                response = self.client.post(
+                    reverse('admin-usuarios-list'),
+                    payload,
+                    format='json',
+                )
+
+                self.assertEqual(
+                    response.status_code,
+                    status.HTTP_405_METHOD_NOT_ALLOWED,
+                )
+
+        self.assertFalse(
+            Usuario.objects.filter(email=payload['email']).exists()
+        )
 
 
 class LegacyPersonalStaffScriptRemovalTests(SimpleTestCase):

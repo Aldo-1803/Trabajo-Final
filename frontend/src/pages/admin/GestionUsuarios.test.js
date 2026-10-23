@@ -68,6 +68,7 @@ describe('GestionUsuarios account status actions', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Nuevo Personal' }));
         expect(mockNavigate).toHaveBeenCalledWith('/admin/personal');
         expect(screen.getByRole('button', { name: /Nuevo administrador/ })).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Nuevo Usuario' })).not.toBeInTheDocument();
     });
 
     test('abre alta de administrador sin checkbox ni controles técnicos', async () => {
@@ -158,6 +159,11 @@ describe('GestionUsuarios account status actions', () => {
         expect(payload).not.toHaveProperty('user_permissions');
         expect(payload).not.toHaveProperty('cliente');
         expect(payload).not.toHaveProperty('personal');
+        expect(
+            axios.post.mock.calls.some(
+                ([url]) => url === 'http://127.0.0.1:8000/api/gestion/admin/usuarios/'
+            )
+        ).toBe(false);
         await waitFor(() => {
             expect(screen.getByText('ana.admin@example.com')).toBeInTheDocument();
             expect(screen.getByText('Administrador')).toBeInTheDocument();
