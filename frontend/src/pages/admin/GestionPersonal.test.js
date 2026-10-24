@@ -3,6 +3,7 @@ import axios from 'axios';
 
 import GestionPersonal from './GestionPersonal';
 import { notify } from '../../utils/notificaciones';
+import { useSession } from '../../context/SessionContext';
 
 
 jest.mock('axios', () => ({
@@ -19,6 +20,9 @@ jest.mock('../../utils/notificaciones', () => ({
         error: jest.fn(),
         info: jest.fn()
     }
+}));
+jest.mock('../../context/SessionContext', () => ({
+    useSession: jest.fn()
 }));
 
 
@@ -139,6 +143,9 @@ describe('GestionPersonal access UI', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         localStorage.setItem('access_token', 'test-token');
+        useSession.mockReturnValue({
+            hasPermission: (permission) => permission === 'gestion.manage_personal'
+        });
         setupApi();
     });
 
@@ -172,6 +179,47 @@ describe('GestionPersonal access UI', () => {
         expect(clientRow).toHaveTextContent('Rol: CLIENTE');
         expect(clientRow).toHaveTextContent('Asistente / Lavado');
         expect(within(clientRow).getByRole('button', { name: 'Cambiar rol de acceso' })).toBeInTheDocument();
+    });
+
+    test('manage_personal sin manage_skills no ofrece controles de skills canónicas', async () => {
+        await renderLoaded();
+
+        expect(screen.queryByRole('button', { name: 'Asignar' })).not.toBeInTheDocument();
+        expect(screen.getAllByText('Skills canónicas: sin permiso de consulta')).toHaveLength(3);
+    });
+
+    test('manage_skills carga y permite revocar una habilidad canónica', async () => {
+        useSession.mockReturnValue({
+            hasPermission: (permission) => permission === 'gestion.manage_skills'
+        });
+        axios.get.mockImplementation((url) => {
+            if (url.includes('/personal/10/habilidades/')) {
+                return Promise.resolve({ data: [{
+                    id: 90,
+                    activa: true,
+                    habilidad: { id: 4, nombre: 'Coloración', activa: true }
+                }] });
+            }
+            if (url.endsWith('/habilidades/')) {
+                return Promise.resolve({ data: [{ id: 4, nombre: 'Coloración', activa: true }] });
+            }
+            if (url.includes('/habilidades/')) {
+                return Promise.resolve({ data: [] });
+            }
+            return Promise.resolve({ data: [personalSinUsuario] });
+        });
+        axios.post.mockResolvedValue({ data: { changed: true } });
+
+        render(<GestionPersonal />);
+
+        expect(await screen.findByText('Coloración')).toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: 'Revocar Coloración' }));
+
+        await waitFor(() => expect(axios.post).toHaveBeenCalledWith(
+            'http://127.0.0.1:8000/api/gestion/personal/10/habilidades/4/revocar/',
+            {},
+            { headers: { Authorization: 'Bearer test-token' } }
+        ));
     });
 
     test('no ofrece Eliminar ni dispone de un consumidor axios.delete', async () => {

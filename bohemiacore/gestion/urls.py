@@ -45,6 +45,7 @@ router.register(r'categorias-productos', views.CategoriaProductoViewSet, basenam
 router.register(r'productos', views.ProductoViewSet, basename='productos')
 router.register(r'imagenes-productos', views.ImagenProductoViewSet, basename='imagen-producto')
 router.register(r'personal', views.PersonalViewSet, basename='personal')
+router.register(r'habilidades', views.HabilidadViewSet, basename='habilidad')
 router.register(r'tipo-equipamiento', TipoEquipamientoViewSet, basename='tipo-equipamiento')
 router.register(r'equipamiento', views.EquipamientoViewSet, basename='equipamiento')
 router.register(r'fichas-tecnicas', FichaTecnicaViewSet, basename='ficha-tecnica')

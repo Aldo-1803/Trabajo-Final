@@ -70,6 +70,51 @@ class Personal(models.Model):
         return f"{self.nombre} ({self.get_rol_display()})"
 
 
+class Habilidad(models.Model):
+    """Catálogo canónico de habilitaciones técnicas de Personal."""
+    code = models.CharField(max_length=50, unique=True)
+    nombre = models.CharField(max_length=100)
+    descripcion = models.TextField(blank=True)
+    activa = models.BooleanField(default=True)
+
+    class Meta:
+        verbose_name = 'Habilidad'
+        verbose_name_plural = 'Habilidades'
+        ordering = ['nombre']
+
+    def __str__(self):
+        return f'{self.code} - {self.nombre}'
+
+
+class PersonalHabilidad(models.Model):
+    """Asignación auditable y reversible de una habilidad a Personal."""
+    personal = models.ForeignKey(
+        Personal,
+        on_delete=models.CASCADE,
+        related_name='habilidades_personal',
+    )
+    habilidad = models.ForeignKey(
+        Habilidad,
+        on_delete=models.PROTECT,
+        related_name='asignaciones_personal',
+    )
+    activa = models.BooleanField(default=True)
+    fecha_asignacion = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Habilidad de Personal'
+        verbose_name_plural = 'Habilidades de Personal'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['personal', 'habilidad'],
+                name='unique_personal_habilidad',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.personal} - {self.habilidad.code}'
+
+
 # ============================================================
 # SECCIÓN 2: SERVICIOS Y PRODUCTOS
 # ============================================================
@@ -182,6 +227,13 @@ class Servicio(models.Model):
         help_text="Cantidad mínima de días recomendada antes de repetir un servicio de la misma categoría."
     )
 
+    habilidades_requeridas = models.ManyToManyField(
+        Habilidad,
+        through='ServicioHabilidad',
+        related_name='servicios_requeridos',
+        blank=True,
+    )
+
     activo = models.BooleanField(default=True)
     puntaje_base = models.IntegerField(default=0)
     fecha_creacion = models.DateTimeField(auto_now_add=True)
@@ -200,6 +252,33 @@ class Servicio(models.Model):
         if self.categoria:
             return f"[{self.categoria.nombre}] {self.nombre}"
         return self.nombre
+
+
+class ServicioHabilidad(models.Model):
+    """Requisito técnico obligatorio de un Servicio (semántica AND)."""
+    servicio = models.ForeignKey(
+        Servicio,
+        on_delete=models.CASCADE,
+        related_name='requisitos_habilidad',
+    )
+    habilidad = models.ForeignKey(
+        Habilidad,
+        on_delete=models.PROTECT,
+        related_name='requisitos_servicio',
+    )
+
+    class Meta:
+        verbose_name = 'Habilidad requerida por Servicio'
+        verbose_name_plural = 'Habilidades requeridas por Servicio'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['servicio', 'habilidad'],
+                name='unique_servicio_habilidad',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.servicio} requiere {self.habilidad.code}'
 
 class CategoriaProducto(models.Model):
     nombre = models.CharField(max_length=100, unique=True)

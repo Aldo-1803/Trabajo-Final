@@ -36,3 +36,10 @@ class CanCancelAnyTurno(BasePermission):
 
     def has_permission(self, request, view):
         return request.user.has_perm(BusinessPermission.CANCEL_ANY_TURNO)
+
+
+class CanManageSkills(BasePermission):
+    message = 'No tiene permisos para gestionar habilidades técnicas.'
+
+    def has_permission(self, request, view):
+        return request.user.has_perm(BusinessPermission.MANAGE_SKILLS)

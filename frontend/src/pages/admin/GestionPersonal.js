@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { notify } from '../../utils/notificaciones';
+import { useSession } from '../../context/SessionContext';
 
 const GestionPersonal = () => {
     const [personal, setPersonal] = useState([]);
@@ -28,12 +29,18 @@ const GestionPersonal = () => {
     const [motivoAccion, setMotivoAccion] = useState('');
     const [procesandoAccion, setProcesandoAccion] = useState(false);
     const [personalRolAcceso, setPersonalRolAcceso] = useState(null);
+    const [catalogoHabilidades, setCatalogoHabilidades] = useState([]);
+    const [habilidadesPorPersonal, setHabilidadesPorPersonal] = useState({});
+    const [habilidadSeleccionada, setHabilidadSeleccionada] = useState({});
     const [modalCambiarRol, setModalCambiarRol] = useState(false);
     const [cambiandoRol, setCambiandoRol] = useState(false);
     const [formRolAcceso, setFormRolAcceso] = useState({
         role: 'EMPLEADO',
         motivo: ''
     });
+    const { hasPermission } = useSession();
+    const canManagePersonal = hasPermission('gestion.manage_personal');
+    const canManageSkills = hasPermission('gestion.manage_skills');
     
     const [form, setForm] = useState({
         nombre: '',
@@ -62,7 +69,8 @@ const GestionPersonal = () => {
 
     useEffect(() => {
         cargarPersonal();
-    }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [canManageSkills]);
 
     const cargarPersonal = async () => {
         setLoading(true);
@@ -71,7 +79,35 @@ const GestionPersonal = () => {
             const res = await axios.get('http://127.0.0.1:8000/api/gestion/personal/', {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
-            setPersonal(Array.isArray(res.data) ? res.data : res.data.results || []);
+            const personalData = Array.isArray(res.data) ? res.data : res.data.results || [];
+            setPersonal(personalData);
+            if (canManageSkills) {
+                const [catalogResponse, assignmentResponses] = await Promise.all([
+                    axios.get('http://127.0.0.1:8000/api/gestion/habilidades/', {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    }),
+                    Promise.all(personalData.map((item) => axios.get(
+                        `http://127.0.0.1:8000/api/gestion/personal/${item.id}/habilidades/`,
+                        { headers: { 'Authorization': `Bearer ${token}` } }
+                    )))
+                ]);
+                setCatalogoHabilidades(
+                    Array.isArray(catalogResponse.data)
+                        ? catalogResponse.data
+                        : catalogResponse.data.results || []
+                );
+                setHabilidadesPorPersonal(
+                    personalData.reduce((result, item, index) => ({
+                        ...result,
+                        [item.id]: Array.isArray(assignmentResponses[index].data)
+                            ? assignmentResponses[index].data
+                            : []
+                    }), {})
+                );
+            } else {
+                setCatalogoHabilidades([]);
+                setHabilidadesPorPersonal({});
+            }
         } catch (error) {
             console.error('Error al cargar personal:', error);
             setMensaje('❌ Error al cargar personal');
@@ -153,6 +189,31 @@ const GestionPersonal = () => {
             titulo: 'Revocar acceso total',
             endpoint: 'revocar-acceso-total',
             exito: 'Acceso total revocado correctamente.'
+        }
+    };
+
+    const gestionarHabilidad = async (personalId, action, skillId) => {
+        const token = localStorage.getItem('access_token');
+        const actionUrls = {
+            asignar: `personal/${personalId}/habilidades/asignar/`,
+            revocar: `personal/${personalId}/habilidades/${skillId}/revocar/`,
+            reactivar: `personal/${personalId}/habilidades/${skillId}/reactivar/`
+        };
+        try {
+            await axios.post(
+                `http://127.0.0.1:8000/api/gestion/${actionUrls[action]}`,
+                action === 'asignar' ? { habilidad_id: Number(skillId) } : {},
+                { headers: { 'Authorization': `Bearer ${token}` } }
+            );
+            notify.success('Habilidad técnica actualizada.');
+            await cargarPersonal();
+        } catch (error) {
+            const code = error.response?.data?.error?.code;
+            notify.error(
+                code === 'INACTIVE_SKILL'
+                    ? 'La habilidad está inactiva y no puede asignarse.'
+                    : 'No se pudo actualizar la habilidad técnica.'
+            );
         }
     };
 
@@ -420,15 +481,17 @@ const GestionPersonal = () => {
                         <h1 className="text-4xl font-bold text-gray-800">Gestión de Personal</h1>
                         <p className="text-gray-600 mt-2">Administra el equipo de profesionales del salón</p>
                     </div>
-                    <button
-                        onClick={() => abrirModal()}
-                        className="text-white px-6 py-3 rounded-lg font-bold transition-all"
-                        style={{ backgroundColor: '#817773' }}
-                        onMouseEnter={(e) => e.target.style.backgroundColor = '#6B5F5B'}
-                        onMouseLeave={(e) => e.target.style.backgroundColor = '#817773'}
-                    >
-                        + Nuevo Personal
-                    </button>
+                    {canManagePersonal && (
+                        <button
+                            onClick={() => abrirModal()}
+                            className="text-white px-6 py-3 rounded-lg font-bold transition-all"
+                            style={{ backgroundColor: '#817773' }}
+                            onMouseEnter={(e) => e.target.style.backgroundColor = '#6B5F5B'}
+                            onMouseLeave={(e) => e.target.style.backgroundColor = '#817773'}
+                        >
+                            + Nuevo Personal
+                        </button>
+                    )}
                 </div>
 
                 {/* MENSAJE */}
@@ -473,10 +536,66 @@ const GestionPersonal = () => {
                                         </td>
                                         <td className="px-4 py-3 text-sm text-gray-600">
                                             <div className="flex gap-2 flex-wrap">
-                                                {p.realiza_diagnostico && <span className="px-2 py-1 rounded text-xs font-medium text-white" style={{ backgroundColor: '#817773' }}>Diagnóstico</span>}
-                                                {p.realiza_lavado && <span className="px-2 py-1 rounded text-xs font-medium text-white" style={{ backgroundColor: '#C1B4A4' }}>Lavado</span>}
-                                                {p.realiza_color && <span className="px-2 py-1 rounded text-xs font-medium text-white" style={{ backgroundColor: '#A89484' }}>Color</span>}
+                                                {canManageSkills ? (
+                                                    (habilidadesPorPersonal[p.id] || []).map((assignment) => (
+                                                        <span
+                                                            key={assignment.id}
+                                                            className={`px-2 py-1 rounded text-xs font-medium ${assignment.activa ? 'text-white' : 'text-gray-500 line-through bg-gray-100'}`}
+                                                            style={assignment.activa ? { backgroundColor: '#817773' } : undefined}
+                                                        >
+                                                            {assignment.habilidad?.nombre}
+                                                            {!assignment.activa && ' (revocada)'}
+                                                        </span>
+                                                    ))
+                                                ) : (
+                                                    <span className="text-xs text-gray-500">Skills canónicas: sin permiso de consulta</span>
+                                                )}
                                             </div>
+                                            <p className="mt-2 text-xs text-gray-400">
+                                                Legacy: {[p.realiza_diagnostico && 'Diagnóstico', p.realiza_lavado && 'Lavado', p.realiza_color && 'Color'].filter(Boolean).join(', ') || 'ninguna'}
+                                            </p>
+                                            {canManageSkills && (
+                                                <div className="mt-2 flex flex-wrap items-center gap-2">
+                                                    <select
+                                                        aria-label={`Asignar habilidad a ${p.nombre}`}
+                                                        value={habilidadSeleccionada[p.id] || ''}
+                                                        onChange={(event) => setHabilidadSeleccionada({
+                                                            ...habilidadSeleccionada,
+                                                            [p.id]: event.target.value
+                                                        })}
+                                                        className="max-w-36 rounded border p-1 text-xs"
+                                                    >
+                                                        <option value="">Agregar habilidad</option>
+                                                        {catalogoHabilidades
+                                                            .filter((skill) => skill.activa && !(habilidadesPorPersonal[p.id] || []).some(
+                                                                (assignment) => assignment.habilidad?.id === skill.id
+                                                            ))
+                                                            .map((skill) => <option key={skill.id} value={skill.id}>{skill.nombre}</option>)}
+                                                    </select>
+                                                    <button
+                                                        type="button"
+                                                        disabled={!habilidadSeleccionada[p.id]}
+                                                        onClick={() => gestionarHabilidad(p.id, 'asignar', habilidadSeleccionada[p.id])}
+                                                        className="rounded border px-2 py-1 text-xs font-semibold disabled:opacity-50"
+                                                    >
+                                                        Asignar
+                                                    </button>
+                                                    {(habilidadesPorPersonal[p.id] || []).map((assignment) => (
+                                                        <button
+                                                            key={`action-${assignment.id}`}
+                                                            type="button"
+                                                            onClick={() => gestionarHabilidad(
+                                                                p.id,
+                                                                assignment.activa ? 'revocar' : 'reactivar',
+                                                                assignment.habilidad.id
+                                                            )}
+                                                            className="rounded border px-2 py-1 text-xs"
+                                                        >
+                                                            {assignment.activa ? `Revocar ${assignment.habilidad.nombre}` : `Reactivar ${assignment.habilidad.nombre}`}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            )}
                                         </td>
                                         <td className="px-4 py-3">
                                             <span className={p.activo ? 'text-green-700 font-bold' : 'text-red-700 font-bold'}>
@@ -534,15 +653,17 @@ const GestionPersonal = () => {
                                         </td>
                                         <td className="px-4 py-3 text-right">
                                             <div className="flex flex-wrap justify-end gap-2">
-                                                <button
-                                                    onClick={() => abrirModal(p)}
-                                                    className="font-semibold transition-all"
-                                                    style={{ color: '#817773' }}
-                                                    onMouseEnter={(e) => e.target.style.color = '#6B5F5B'}
-                                                    onMouseLeave={(e) => e.target.style.color = '#817773'}
-                                                >
-                                                    Editar
-                                                </button>
+                                                {canManagePersonal && (
+                                                    <button
+                                                        onClick={() => abrirModal(p)}
+                                                        className="font-semibold transition-all"
+                                                        style={{ color: '#817773' }}
+                                                        onMouseEnter={(e) => e.target.style.color = '#6B5F5B'}
+                                                        onMouseLeave={(e) => e.target.style.color = '#817773'}
+                                                    >
+                                                        Editar
+                                                    </button>
+                                                )}
                                                 <button
                                                     type="button"
                                                     onClick={() => abrirAccionSemantica(p.activo ? 'desactivar' : 'reactivar', p)}
@@ -986,39 +1107,43 @@ const GestionPersonal = () => {
                                     </div>
                                 </div>
 
-                                {/* Habilidades Técnicas */}
+                                {/* Flags legacy: la operación vigente sigue leyéndolos hasta Incremento B. */}
                                 <div className="border-t pt-4" style={{ borderColor: '#E8DCC4' }}>
-                                    <h3 className="font-semibold mb-3" style={{ color: '#817773' }}>Habilidades Técnicas</h3>
+                                    <h3 className="font-semibold mb-1" style={{ color: '#817773' }}>Flags técnicos legacy</h3>
+                                    <p className="mb-3 text-xs text-gray-500">Solo lectura durante la transición a habilidades canónicas.</p>
                                     <div className="space-y-3">
                                         <label className="flex items-center gap-3 cursor-pointer">
                                             <input
                                                 type="checkbox"
                                                 name="realiza_diagnostico"
                                                 checked={form.realiza_diagnostico}
-                                                onChange={handleChange}
+                                                readOnly
+                                                disabled
                                                 className="w-4 h-4"
                                             />
-                                            <span className="text-sm text-gray-700">Realiza Diagnóstico</span>
+                                            <span className="text-sm text-gray-700">Realiza Diagnóstico (legacy)</span>
                                         </label>
                                         <label className="flex items-center gap-3 cursor-pointer">
                                             <input
                                                 type="checkbox"
                                                 name="realiza_lavado"
                                                 checked={form.realiza_lavado}
-                                                onChange={handleChange}
+                                                readOnly
+                                                disabled
                                                 className="w-4 h-4"
                                             />
-                                            <span className="text-sm text-gray-700">Realiza Lavado</span>
+                                            <span className="text-sm text-gray-700">Realiza Lavado (legacy)</span>
                                         </label>
                                         <label className="flex items-center gap-3 cursor-pointer">
                                             <input
                                                 type="checkbox"
                                                 name="realiza_color"
                                                 checked={form.realiza_color}
-                                                onChange={handleChange}
+                                                readOnly
+                                                disabled
                                                 className="w-4 h-4"
                                             />
-                                            <span className="text-sm text-gray-700">Realiza Color</span>
+                                            <span className="text-sm text-gray-700">Realiza Color (legacy)</span>
                                         </label>
                                     </div>
                                 </div>

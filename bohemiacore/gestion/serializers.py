@@ -4,6 +4,7 @@ from .models import (
     EstadoGeneral, Equipamiento, Producto, ImagenProducto, ReglaDiagnostico,
     Notificacion, Rutina, AgendaCuidados, RutinaCliente, Servicio,
     CategoriaServicio, Turno, DetalleTurno, HorarioLaboral, BloqueoAgenda, Personal,
+    Habilidad, PersonalHabilidad,
     TipoEquipamiento, FichaTecnica, DiagnosticoCapilar, RequisitoServicio,
     CategoriaProducto, Promocion, Configuracion, ConfiguracionRetoque,
     Carrito, CarritoItem, ContenidoEducativo, MeGusta, ContenidoGuardado,
@@ -553,6 +554,36 @@ class PersonalSerializer(serializers.ModelSerializer):
             }
             for h in horarios
         ]
+
+
+class HabilidadSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Habilidad
+        fields = ['id', 'code', 'nombre', 'descripcion', 'activa']
+        read_only_fields = fields
+
+
+class PersonalHabilidadSerializer(serializers.ModelSerializer):
+    habilidad = HabilidadSerializer(read_only=True)
+
+    class Meta:
+        model = PersonalHabilidad
+        fields = ['id', 'habilidad', 'activa', 'fecha_asignacion']
+        read_only_fields = fields
+
+
+class PersonalHabilidadAssignCommandSerializer(serializers.Serializer):
+    habilidad_id = serializers.IntegerField(min_value=1)
+
+    def to_internal_value(self, data):
+        if hasattr(data, 'keys'):
+            unexpected_fields = set(data.keys()) - set(self.fields)
+            if unexpected_fields:
+                raise serializers.ValidationError({
+                    field: ['Este campo no está permitido.']
+                    for field in sorted(unexpected_fields)
+                })
+        return super().to_internal_value(data)
 
 
 class PersonalUserLinkCommandSerializer(serializers.Serializer):

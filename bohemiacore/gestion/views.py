@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 from .models import (
     TipoCabello, GrosorCabello, PorosidadCabello, CueroCabelludo, EstadoGeneral, CategoriaServicio, Servicio, Turno, DetalleTurno,
     Configuracion, ListaEspera, Producto, ImagenProducto, Equipamiento, Rutina, Notificacion, AgendaCuidados, Producto, ReglaDiagnostico,
-    RutinaCliente, HorarioLaboral, BloqueoAgenda, Personal, TipoEquipamiento, FichaTecnica, DiagnosticoCapilar, RequisitoServicio,
+    RutinaCliente, HorarioLaboral, BloqueoAgenda, Personal, Habilidad, PersonalHabilidad, TipoEquipamiento, FichaTecnica, DiagnosticoCapilar, RequisitoServicio,
     CategoriaProducto, Promocion, ConfiguracionRetoque, DiasSemana, Carrito, CarritoItem, ContenidoEducativo, MeGusta, ContenidoGuardado,
     OrdenPendiente, OrdenCompra, OrdenItem, Pago, ConfiguracionDiagnostico,
     #PasoRutinaCliente
@@ -55,6 +55,8 @@ from .serializers import (
     UsuarioAccountStatusCommandSerializer, UsuarioAdminIdentityUpdateSerializer,
     UsuarioAdminReadSerializer, AgendaCuidadosSerializer,
     HorarioLaboralSerializer, BloqueoAgendaSerializer, PersonalSerializer,
+    HabilidadSerializer, PersonalHabilidadSerializer,
+    PersonalHabilidadAssignCommandSerializer,
     PersonalAccessCreateCommandSerializer,
     PersonalBusinessRoleChangeCommandSerializer,
     PersonalStatusChangeCommandSerializer,
@@ -72,6 +74,7 @@ from .permissions import (
     CanRegisterTurnoArrival,
     CanReprogramAnyTurno,
     CanViewGlobalAgenda,
+    CanManageSkills,
 )
 from .turno_creation_services import (
     TurnoAvailabilityService,
@@ -138,6 +141,15 @@ from .personal_access_services import (
     revoke_work_access_and_disable_account,
     revoke_work_access_keep_client,
     WorkAccessRevocationConflict,
+)
+from .personal_skill_services import (
+    InactiveSkill,
+    PersonalSkillAssignmentNotFound,
+    PersonalSkillNotFound,
+    PersonalSkillPermissionDenied,
+    assign_skill,
+    reactivate_skill,
+    revoke_skill,
 )
 from usuarios.access_services import (
     AccountDeactivationConflict,
@@ -525,6 +537,14 @@ class ServiciosQuimicosViewSet(viewsets.ReadOnlyModelViewSet):
         ).order_by('nombre')
 
 
+class HabilidadViewSet(viewsets.ReadOnlyModelViewSet):
+    """Catálogo administrativo de skills técnicas."""
+    queryset = Habilidad.objects.all().order_by('nombre')
+    serializer_class = HabilidadSerializer
+    permission_classes = [IsAuthenticated, CanManageSkills]
+    pagination_class = None
+
+
 class PersonalViewSet(viewsets.ModelViewSet):
     """
     Gestiona Personal mediante altas, edición y operaciones semánticas.
@@ -545,6 +565,13 @@ class PersonalViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action in [
+            'habilidades',
+            'asignar_habilidad',
+            'revocar_habilidad',
+            'reactivar_habilidad',
+        ]:
+            permission_classes = [IsAuthenticated, CanManageSkills]
+        elif self.action in [
             'destroy',
             'vincular_usuario',
             'crear_acceso',
@@ -570,6 +597,106 @@ class PersonalViewSet(viewsets.ModelViewSet):
                 'semánticas de estado o revocación de acceso.'
             ),
         )
+
+    @staticmethod
+    def _skill_error(code, detail, status_code):
+        return Response(
+            {'error': {'code': code, 'detail': detail}},
+            status=status_code,
+        )
+
+    def _run_skill_command(self, command, *, skill_id):
+        try:
+            return command(
+                actor=self.request.user,
+                personal_id=self.kwargs['pk'],
+                skill_id=skill_id,
+            )
+        except PersonalSkillPermissionDenied:
+            return self._skill_error(
+                'PERMISSION_DENIED',
+                'No tiene permisos para gestionar habilidades técnicas.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except PersonalSkillNotFound:
+            return self._skill_error(
+                'SKILL_OR_PERSONAL_NOT_FOUND',
+                'El Personal o la habilidad solicitada no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+        except PersonalSkillAssignmentNotFound:
+            return self._skill_error(
+                'SKILL_ASSIGNMENT_NOT_FOUND',
+                'El Personal no tiene asignada esa habilidad.',
+                status.HTTP_404_NOT_FOUND,
+            )
+        except InactiveSkill:
+            return self._skill_error(
+                'INACTIVE_SKILL',
+                'La habilidad está inactiva y no puede asignarse ni reactivarse.',
+                status.HTTP_409_CONFLICT,
+            )
+
+    @action(detail=True, methods=['get'], url_path='habilidades')
+    def habilidades(self, request, pk=None):
+        personal = self.get_object()
+        assignments = (
+            PersonalHabilidad.objects.filter(personal=personal)
+            .select_related('habilidad')
+            .order_by('habilidad__nombre')
+        )
+        return Response(PersonalHabilidadSerializer(assignments, many=True).data)
+
+    @action(detail=True, methods=['post'], url_path='habilidades/asignar')
+    def asignar_habilidad(self, request, pk=None):
+        command = PersonalHabilidadAssignCommandSerializer(data=request.data)
+        if not command.is_valid():
+            return self._skill_error(
+                'INVALID_PAYLOAD',
+                'El payload de asignación de habilidad es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        result = self._run_skill_command(
+            assign_skill,
+            skill_id=command.validated_data['habilidad_id'],
+        )
+        if isinstance(result, Response):
+            return result
+        return Response({
+            'changed': result.changed,
+            'event': result.event,
+            'assignment': PersonalHabilidadSerializer(result.assignment).data,
+        })
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path=r'habilidades/(?P<habilidad_id>[^/.]+)/revocar',
+    )
+    def revocar_habilidad(self, request, pk=None, habilidad_id=None):
+        result = self._run_skill_command(revoke_skill, skill_id=habilidad_id)
+        if isinstance(result, Response):
+            return result
+        return Response({
+            'changed': result.changed,
+            'event': result.event,
+            'assignment': PersonalHabilidadSerializer(result.assignment).data,
+        })
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path=r'habilidades/(?P<habilidad_id>[^/.]+)/reactivar',
+    )
+    def reactivar_habilidad(self, request, pk=None, habilidad_id=None):
+        result = self._run_skill_command(reactivate_skill, skill_id=habilidad_id)
+        if isinstance(result, Response):
+            return result
+        return Response({
+            'changed': result.changed,
+            'event': result.event,
+            'assignment': PersonalHabilidadSerializer(result.assignment).data,
+        })
 
     @action(
         detail=True,
