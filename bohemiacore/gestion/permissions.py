@@ -2,6 +2,8 @@ from rest_framework.permissions import BasePermission
 
 from usuarios.roles import BusinessPermission
 
+from .technical_skill_access import DIAGNOSIS_SKILL_CODE, user_has_active_skill
+
 
 class CanViewGlobalAgenda(BasePermission):
     message = 'No tiene permisos para consultar la agenda global.'
@@ -43,3 +45,38 @@ class CanManageSkills(BasePermission):
 
     def has_permission(self, request, view):
         return request.user.has_perm(BusinessPermission.MANAGE_SKILLS)
+
+
+class CanCreateDiagnosisWithSkill(BasePermission):
+    message = (
+        'Se requiere permiso para crear diagnósticos y la habilidad '
+        'DIAGNOSTICO activa.'
+    )
+
+    def has_permission(self, request, view):
+        return (
+            request.user.has_perm(BusinessPermission.CREATE_DIAGNOSIS)
+            and user_has_active_skill(request.user, DIAGNOSIS_SKILL_CODE)
+        )
+
+
+class CanReadOwnedOrManageDiagnosis(BasePermission):
+    message = 'No tiene permisos para consultar estos diagnósticos.'
+
+    def has_permission(self, request, view):
+        user = request.user
+        if not getattr(user, 'is_active', False):
+            return False
+        if getattr(user, 'cliente', None) is not None:
+            return True
+        return (
+            user.has_perm(BusinessPermission.MANAGE_TECHNICAL_RECORD)
+            and user_has_active_skill(user, DIAGNOSIS_SKILL_CODE)
+        )
+
+
+class CanFinalizeService(BasePermission):
+    message = 'No tiene permisos para finalizar Servicios.'
+
+    def has_permission(self, request, view):
+        return request.user.has_perm(BusinessPermission.FINALIZE_SERVICE)

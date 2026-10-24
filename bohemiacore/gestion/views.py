@@ -70,7 +70,10 @@ from .serializers import (
 )
 from .permissions import (
     CanCancelAnyTurno,
+    CanCreateDiagnosisWithSkill,
     CanCreateTurnoForClient,
+    CanFinalizeService,
+    CanReadOwnedOrManageDiagnosis,
     CanRegisterTurnoArrival,
     CanReprogramAnyTurno,
     CanViewGlobalAgenda,
@@ -152,6 +155,7 @@ from .personal_skill_services import (
     revoke_skill,
 )
 from .service_skill_compatibility import service_skill_policy
+from .technical_skill_access import DIAGNOSIS_SKILL_CODE, user_has_active_skill
 from usuarios.access_services import (
     AccountDeactivationConflict,
     AccountReactivationConflict,
@@ -1458,6 +1462,12 @@ class TurnoViewSet(viewsets.ModelViewSet):
             permission_classes = [IsAuthenticated, CanReprogramAnyTurno]
         elif self.action == 'cancelar':
             permission_classes = [IsAuthenticated, CanCancelAnyTurno]
+        elif self.action == 'finalizar_turno':
+            permission_classes = [
+                IsAuthenticated,
+                CanFinalizeService,
+                CanCreateDiagnosisWithSkill,
+            ]
         else:
             permission_classes = [IsAuthenticated]
         return [permission() for permission in permission_classes]
@@ -1517,6 +1527,8 @@ class TurnoViewSet(viewsets.ModelViewSet):
                 queryset = queryset.filter(profesional=personal)
         elif self.action in self.SAFE_DETAIL_ACTIONS:
             queryset = self._readable_turnos()
+        elif self.action == 'finalizar_turno':
+            queryset = queryset
         else:
             queryset = self._legacy_action_queryset()
              
@@ -2412,6 +2424,7 @@ class TurnoViewSet(viewsets.ModelViewSet):
         if cliente.tipo_cabello or cliente.grosor_cabello or cliente.porosidad_cabello or cliente.cuero_cabelludo or cliente.estado_general:
             diag = DiagnosticoCapilar.objects.create(
                 cliente=cliente,
+                profesional=request.user,
                 tipo_cabello=cliente.tipo_cabello,
                 grosor_cabello=cliente.grosor_cabello,
                 porosidad_cabello=cliente.porosidad_cabello,
@@ -4185,37 +4198,58 @@ class RequisitoServicioViewSet(viewsets.ModelViewSet):
 class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
     """
     ViewSet para gestionar diagnósticos capilares.
-    - Lectura: Cualquier usuario autenticado puede ver diagnósticos (especialmente clientes sus propios)
-    - Creación/Edición: Solo staff (profes
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_class = DiagnosticoCapilarFilter
-    search_fields = ['cliente__usuario__first_name', 'cliente__usuario__last_name']
-    ordering_fields = ['fecha_creacion']ionales) pueden crear y editar
+    - Clientes: lectura limitada a sus propios diagnósticos.
+    - Lectura técnica global: manage_technical_record + DIAGNOSTICO activa.
+    - Creación/edición: create_diagnosis + DIAGNOSTICO activa.
+    - Eliminación física: no permitida.
     """
     queryset = DiagnosticoCapilar.objects.all()
     serializer_class = DiagnosticoCapilarSerializer
     permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = DiagnosticoCapilarFilter
+    search_fields = ['cliente__usuario__first_name', 'cliente__usuario__last_name']
+    ordering_fields = ['fecha_diagnostico']
+
+    WRITE_ACTIONS = {'create', 'update', 'partial_update'}
+
+    def get_permissions(self):
+        if self.action in self.WRITE_ACTIONS:
+            permission_classes = [IsAuthenticated, CanCreateDiagnosisWithSkill]
+        elif self.action in {
+            'list',
+            'retrieve',
+            'por_cliente',
+            'mis_diagnosticos',
+        }:
+            permission_classes = [IsAuthenticated, CanReadOwnedOrManageDiagnosis]
+        else:
+            permission_classes = [IsAuthenticated]
+        return [permission() for permission in permission_classes]
     
     def get_queryset(self):
         """
-        Clientes ven solo sus diagnósticos.
-        Staff ve todos.
+        Clientes ven sólo sus diagnósticos. La lectura global requiere
+        manage_technical_record y DIAGNOSTICO activa.
         """
-        if self.request.user.is_staff:
-            return DiagnosticoCapilar.objects.all()
-        
-        # Cliente solo ve sus propios diagnósticos
-        try:
-            cliente = Cliente.objects.get(usuario=self.request.user)
-            return DiagnosticoCapilar.objects.filter(cliente=cliente)
-        except Cliente.DoesNotExist:
-            return DiagnosticoCapilar.objects.none()
-    
-    def create(self, request, *args, **kwargs):
-        """Solo staff puede crear diagnósticos"""
-        if not request.user.is_staff:
-            raise PermissionDenied("Solo profesionales pueden crear diagnósticos.")
-        return super().create(request, *args, **kwargs)
+        queryset = super().get_queryset()
+        user = self.request.user
+
+        if self.action in self.WRITE_ACTIONS:
+            if user.has_perm(BusinessPermission.MANAGE_TECHNICAL_RECORD):
+                return queryset
+            return queryset.filter(profesional=user)
+
+        if (
+            user.has_perm(BusinessPermission.MANAGE_TECHNICAL_RECORD)
+            and user_has_active_skill(user, DIAGNOSIS_SKILL_CODE)
+        ):
+            return queryset
+
+        cliente = getattr(user, 'cliente', None)
+        if cliente is not None:
+            return queryset.filter(cliente=cliente)
+        return queryset.none()
     
     def perform_create(self, serializer):
         """
@@ -4223,16 +4257,13 @@ class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
         automáticamente después de guardar el diagnóstico.
         """
         # 1. Guarda el diagnóstico en la base de datos
-        diagnostico = serializer.save()
+        diagnostico = serializer.save(profesional=self.request.user)
         
         # 2. Dispara el motor de análisis (dos niveles)
         self._ejecutar_motor_diagnostico(diagnostico)
     
-    def update(self, request, *args, **kwargs):
-        """Solo staff puede actualizar diagnósticos"""
-        if not request.user.is_staff:
-            raise PermissionDenied("Solo profesionales pueden actualizar diagnósticos.")
-        return super().update(request, *args, **kwargs)
+    def destroy(self, request, *args, **kwargs):
+        raise MethodNotAllowed(request.method)
     
     @action(detail=False, methods=['get'])
     def por_cliente(self, request):
@@ -4247,7 +4278,21 @@ class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        diagnosticos = DiagnosticoCapilar.objects.filter(cliente_id=cliente_id).order_by('-fecha_diagnostico')
+        own_client = getattr(request.user, 'cliente', None)
+        can_read_globally = (
+            request.user.has_perm(BusinessPermission.MANAGE_TECHNICAL_RECORD)
+            and user_has_active_skill(request.user, DIAGNOSIS_SKILL_CODE)
+        )
+        if not can_read_globally and (
+            own_client is None or str(own_client.pk) != str(cliente_id)
+        ):
+            raise PermissionDenied(
+                'No tiene permisos para consultar diagnósticos de otro Cliente.'
+            )
+
+        diagnosticos = DiagnosticoCapilar.objects.filter(
+            cliente_id=cliente_id
+        ).order_by('-fecha_diagnostico')
         serializer = self.get_serializer(diagnosticos, many=True)
         return Response(serializer.data)
     
@@ -4465,50 +4510,31 @@ class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
                 # Obtener día de la semana (0=lunes, 6=domingo)
                 dia_semana = fecha_busqueda.weekday()
                 
-                # 4. BUSCAR HORARIOS DEL PERSONAL PARA ESTE DÍA
-                horarios_disponibles = HorarioLaboral.objects.filter(
-                    activo=True,
-                    dia_semana=dia_semana,
-                    personal__isnull=False
+                # 4. Usar la misma disponibilidad/compatibilidad canónica de Turnos.
+                horarios_disponibles = TurnoAvailabilityService.matching_schedules(
+                    fecha=fecha_busqueda,
+                    servicio=servicio,
                 )
-                
-                # Filtrar por tipo de servicio (Diseño vs Complemento)
-                categoria_nombre = servicio.categoria.nombre if servicio.categoria else ""
-                
-                if "Diseño" in categoria_nombre or "Color" in categoria_nombre:
-                    # Servicios de color/diseño: necesitan permite_diseno_color=True
-                    horarios_disponibles = horarios_disponibles.filter(permite_diseno_color=True)
-                    tipo_servicio = "Diseño"
-                else:
-                    # Servicios cortos (corte, nutrición): necesitan permite_complemento=True
-                    horarios_disponibles = horarios_disponibles.filter(permite_complemento=True)
-                    tipo_servicio = "Complemento"
-                
-                logger.info(f"[DIAGNOSTICO] {fecha_busqueda} ({DiasSemana(dia_semana).label}): {horarios_disponibles.count()} horarios disponibles para {tipo_servicio}")
+
+                logger.info(
+                    f"[DIAGNOSTICO] {fecha_busqueda} "
+                    f"({DiasSemana(dia_semana).label}): "
+                    f"{horarios_disponibles.count()} horarios compatibles"
+                )
                 
                 # 5. ITERAR POR CADA HORARIO DISPONIBLE
                 for horario in horarios_disponibles:
                     personal = horario.personal
                     
-                    # Verificar si el personal tiene bloqueo en esta fecha
-                    bloqueo = BloqueoAgenda.objects.filter(
-                        personal=personal,
-                        fecha_inicio__date__lte=fecha_busqueda,
-                        fecha_fin__date__gte=fecha_busqueda
-                    ).exists()
-                    
-                    if bloqueo:
-                        logger.info(f"[DIAGNOSTICO] {personal.nombre} tiene bloqueo en {fecha_busqueda}")
-                        continue
-                    
-                    # 6. GENERAR SLOTS PARA ESTE HORARIO
+                    # 5. GENERAR SLOTS PARA ESTE HORARIO
                     try:
                         slots = turno_viewset._generar_slots_disponibles(
                             fecha_busqueda,
                             horario,
                             duracion_minutos,
                             intervalo_minutos=15,
-                            servicios_ids=[servicio.id]
+                            servicios_ids=[servicio.id],
+                            servicios=(servicio,),
                         )
                         
                         if slots:

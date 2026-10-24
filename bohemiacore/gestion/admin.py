@@ -332,6 +332,11 @@ class PersonalAdmin(admin.ModelAdmin):
     list_display = ('nombre', 'apellido', 'rol', 'activo', 'skills_resumen')
     list_filter = ('rol', 'activo')
     search_fields = ('nombre', 'apellido', 'email')
+    readonly_fields = (
+        'realiza_diagnostico',
+        'realiza_color',
+        'realiza_lavado',
+    )
     
     # Aquí incrustamos los horarios dentro del personal
     inlines = [HorarioLaboralInline]
@@ -345,7 +350,10 @@ class PersonalAdmin(admin.ModelAdmin):
         }),
         ('Habilidades Técnicas', {
             'fields': ('realiza_diagnostico', 'realiza_color', 'realiza_lavado'),
-            'description': 'Define qué tipos de turno puede atender esta persona.'
+            'description': (
+                'Flags legacy de sólo lectura. La autoridad operativa está '
+                'en PersonalHabilidad.'
+            )
         }),
     )
 

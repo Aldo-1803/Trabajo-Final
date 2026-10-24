@@ -48,8 +48,8 @@ class Personal(models.Model):
     telefono = models.CharField(max_length=20, blank=True, null=True)
     email = models.EmailField(blank=True, null=True)
     
-    # LEGACY - compatibility only. No son autoridad operativa de Turnos.
-    # Se conservan temporalmente para consumidores aún no migrados (Diagnóstico).
+    # LEGACY - compatibility only. No son autoridad operativa de Turnos ni
+    # Diagnóstico. Se conservan temporalmente hasta su retiro final.
     realiza_diagnostico = models.BooleanField(default=False)
     realiza_lavado = models.BooleanField(default=True)
     realiza_color = models.BooleanField(default=False)

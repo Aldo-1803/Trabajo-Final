@@ -531,6 +531,9 @@ class PersonalSerializer(serializers.ModelSerializer):
             'usuario_email',
             'usuario_activo',
             'usuario_business_role',
+            'realiza_diagnostico',
+            'realiza_lavado',
+            'realiza_color',
         ]
 
     def get_usuario_business_role(self, obj):
@@ -1056,25 +1059,25 @@ class DiagnosticoCapilarSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             'id', 'fecha_diagnostico', 'cliente_email', 'profesional_nombre',
+            'profesional',
             'tipo_cabello_nombre', 'grosor_cabello_nombre', 'porosidad_cabello_nombre',
             'cuero_cabelludo_nombre', 'estado_general_nombre', 'regla_diagnostico_accion',
-            'regla_diagnostico_mensaje',
+            'regla_diagnostico', 'regla_diagnostico_mensaje',
             'rutina_sugerida_nombre', 'mensaje_diagnostico', 'rutina_asignada_nombre',
-            'servicio_urgente_nombre', 'servicio_urgente_id', 'rutina_asignada_id',
+            'rutina_sugerida', 'rutina_asignada',
+            'servicio_urgente', 'servicio_urgente_nombre', 'servicio_urgente_id',
+            'rutina_asignada_id',
             'turno_sugerido', 'turno_sugerido_id'
         ]
-    
-    def create(self, validated_data):
-        """Auto-asigna el profesional actual al crear el diagnóstico"""
-        request = self.context.get('request')
-        if request and request.user.is_authenticated:
-            # Intenta obtener el Usuario del request
-            try:
-                usuario = Usuario.objects.get(email=request.user.email)
-                validated_data['profesional'] = usuario
-            except Usuario.DoesNotExist:
-                pass
-        return super().create(validated_data)
+
+    def validate(self, attrs):
+        if self.instance is not None and 'cliente' in self.initial_data:
+            requested_client = self.initial_data.get('cliente')
+            if str(requested_client) != str(self.instance.cliente_id):
+                raise serializers.ValidationError({
+                    'cliente': 'El Cliente del diagnóstico no puede modificarse.'
+                })
+        return attrs
 
 
 class ConfiguracionDiagnosticoSerializer(serializers.ModelSerializer):

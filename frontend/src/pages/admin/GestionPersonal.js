@@ -1107,7 +1107,7 @@ const GestionPersonal = () => {
                                     </div>
                                 </div>
 
-                                {/* Flags legacy: la operación vigente sigue leyéndolos hasta Incremento B. */}
+                                {/* Flags legacy: compatibilidad de datos, sin autoridad operativa. */}
                                 <div className="border-t pt-4" style={{ borderColor: '#E8DCC4' }}>
                                     <h3 className="font-semibold mb-1" style={{ color: '#817773' }}>Flags técnicos legacy</h3>
                                     <p className="mb-3 text-xs text-gray-500">Solo lectura durante la transición a habilidades canónicas.</p>
