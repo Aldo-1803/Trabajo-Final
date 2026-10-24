@@ -51,10 +51,9 @@ Para Servicios, replica exactamente la clasificación vigente en
 - categoría normalizada que contiene `complemento` → `LAVADO`;
 - las demás categorías no reciben requisito inventado.
 
-No fue posible inspeccionar registros de categorías en este entorno porque
-Django no puede iniciar sin `simple_history`; por ello no se declararon
-categorías ambiguas adicionales. La migración deja sin requisito todo nombre
-que no coincide con la regla legacy comprobable.
+La base local inspeccionada no contiene categorías ni Servicios (0/0), por lo
+que no hay categorías reales ambiguas o inesperadas que reportar. La migración
+deja sin requisito todo nombre que no coincide con la regla legacy comprobable.
 
 ## API y autorización
 
@@ -95,13 +94,20 @@ autoridad por permiso individual, staff sin permiso, Cliente, anónimo,
 ADMINISTRADOR con `is_staff=False`, rollback de auditoría y backfill de las ocho
 combinaciones de flags legacy más clasificación de Servicios.
 
+- El intérprete global carece de `django-simple-history`, pero el `venv` raíz
+  esperado incorpora `django-simple-history 3.11.0` con Django 5.2.7. No se
+  cambiaron dependencias; el repositorio no posee manifiesto de dependencias,
+  una inconsistencia pendiente de BH-060.
+- `venv\Scripts\python.exe manage.py check`: exitoso.
+- `venv\Scripts\python.exe manage.py makemigrations --check`: sin cambios.
+- La migración `0021` se aplicó correctamente en la base de pruebas aislada.
+- Tests BH-056: **13/13 aprobados**.
+- Regresión personal/access, roles y `/me/`: **59/59 aprobados**.
+- Regresión de creación, disponibilidad, lectura, gestión y llegada de Turnos:
+  **73/73 aprobados**.
 - Frontend focalizado: **8 suites / 125 tests aprobados**.
-- Build frontend: exitoso; warnings preexistentes fuera de este incremento.
-- `python -m compileall gestion`: exitoso.
-- `git diff --check`: sin errores.
-- `python manage.py check`, `makemigrations --check` y las suites backend no
-  iniciaron por `ModuleNotFoundError: simple_history` durante `django.setup`.
-  Es deuda de entorno BH-060; no se alteraron dependencias.
+- Build frontend, `python -m compileall gestion` y `git diff --check`:
+  exitosos (el build conserva warnings preexistentes fuera de este incremento).
 
 ## Siguiente límite
 

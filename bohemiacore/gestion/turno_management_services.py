@@ -86,7 +86,9 @@ def _locked_turno(turno_id):
         return (
             Turno.objects.select_for_update()
             .select_related('cliente', 'cliente__usuario')
-            .prefetch_related('detalles__servicio')
+            .prefetch_related(
+                'detalles__servicio__requisitos_habilidad__habilidad'
+            )
             .get(pk=turno_id)
         )
     except Turno.DoesNotExist:
@@ -98,7 +100,9 @@ def _locked_owned_turno(actor, turno_id):
         return (
             Turno.objects.select_for_update()
             .select_related('cliente', 'cliente__usuario')
-            .prefetch_related('detalles__servicio')
+            .prefetch_related(
+                'detalles__servicio__requisitos_habilidad__habilidad'
+            )
             .get(pk=turno_id, cliente__usuario=actor)
         )
     except Turno.DoesNotExist:

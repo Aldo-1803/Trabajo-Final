@@ -151,6 +151,7 @@ from .personal_skill_services import (
     reactivate_skill,
     revoke_skill,
 )
+from .service_skill_compatibility import service_skill_policy
 from usuarios.access_services import (
     AccountDeactivationConflict,
     AccountReactivationConflict,
@@ -1350,7 +1351,9 @@ class DisponibilidadTurnosView(APIView):
             )
 
         try:
-            servicio = Servicio.objects.get(id=servicio_id, activo=True)
+            servicio = Servicio.objects.prefetch_related(
+                'requisitos_habilidad__habilidad'
+            ).get(id=servicio_id, activo=True)
         except Servicio.DoesNotExist:
             return Response(
                 {"error": "El servicio especificado no existe."},
@@ -1747,6 +1750,30 @@ class TurnoViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='selector-personal')
     def selector_personal(self, request):
         personal = Personal.objects.filter(activo=True).order_by('nombre', 'apellido')
+        raw_service_ids = request.query_params.getlist('servicio_ids')
+        if raw_service_ids:
+            service_ids = []
+            try:
+                for raw_value in raw_service_ids:
+                    service_ids.extend(
+                        int(value)
+                        for value in raw_value.split(',')
+                        if value.strip()
+                    )
+            except ValueError:
+                raise ValidationError({
+                    'servicio_ids': 'Los IDs de Servicio deben ser enteros.'
+                })
+
+            services = list(
+                Servicio.objects.filter(pk__in=service_ids, activo=True)
+                .prefetch_related('requisitos_habilidad__habilidad')
+            )
+            if len({service.pk for service in services}) != len(set(service_ids)):
+                raise ValidationError({
+                    'servicio_ids': 'Uno o más Servicios no existen o están inactivos.'
+                })
+            personal = service_skill_policy(services).filter_personal(personal)
         return Response([
             {
                 'id': persona.pk,
@@ -2044,7 +2071,9 @@ class TurnoViewSet(viewsets.ModelViewSet):
             )
         
         try:
-            servicio = Servicio.objects.get(id=servicio_id, activo=True)
+            servicio = Servicio.objects.prefetch_related(
+                'requisitos_habilidad__habilidad'
+            ).get(id=servicio_id, activo=True)
         except Servicio.DoesNotExist:
             return Response(
                 {"error": "El servicio no existe"},
@@ -2068,7 +2097,9 @@ class TurnoViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             detalles_turno = list(
-                turno_excluido.detalles.select_related('servicio').all()
+                turno_excluido.detalles.select_related('servicio').prefetch_related(
+                    'servicio__requisitos_habilidad__habilidad'
+                ).all()
             )
             slot_services = [detalle.servicio for detalle in detalles_turno]
             duracion_minutos = (
@@ -2129,6 +2160,7 @@ class TurnoViewSet(viewsets.ModelViewSet):
             reglas = TurnoAvailabilityService.matching_schedules(
                 fecha=fecha_consulta,
                 servicio=servicio,
+                servicios=slot_services,
             )
             
             if not reglas.exists():
@@ -2187,9 +2219,13 @@ class TurnoViewSet(viewsets.ModelViewSet):
         servicios=None,
     ):
         servicio = (
-            Servicio.objects.filter(pk=servicios_ids[0], activo=True).first()
-            if servicios_ids
-            else None
+            servicios[0]
+            if servicios
+            else (
+                Servicio.objects.filter(pk=servicios_ids[0], activo=True).first()
+                if servicios_ids
+                else None
+            )
         )
         if servicio is None:
             return []

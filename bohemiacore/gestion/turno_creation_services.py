@@ -18,6 +18,7 @@ from .models import (
     Servicio,
     Turno,
 )
+from .service_skill_compatibility import service_skill_policy
 
 
 ACTIVE_TURNO_STATES = (
@@ -40,7 +41,17 @@ class TurnoCreationError(Exception):
 
 class TurnoAvailabilityService:
     @classmethod
-    def matching_schedules(cls, *, fecha, servicio, profesional=None):
+    def matching_schedules(
+        cls,
+        *,
+        fecha,
+        servicio,
+        profesional=None,
+        servicios=None,
+        skill_policy=None,
+    ):
+        slot_services = tuple(servicios or (servicio,))
+        policy = skill_policy or service_skill_policy(slot_services)
         rules = HorarioLaboral.objects.filter(
             personal__activo=True,
             dia_semana=fecha.weekday(),
@@ -52,17 +63,9 @@ class TurnoAvailabilityService:
         if profesional is not None:
             rules = rules.filter(personal=profesional)
 
-        categoria = (servicio.categoria.nombre if servicio.categoria else '').lower()
-        if 'diseño' in categoria or 'color' in categoria:
-            rules = rules.filter(
-                permite_diseno_color=True,
-                personal__realiza_color=True,
-            )
-        elif 'complemento' in categoria:
-            rules = rules.filter(
-                permite_complemento=True,
-                personal__realiza_lavado=True,
-            )
+        compatible_personal = policy.filter_personal(Personal.objects.all())
+        rules = rules.filter(personal_id__in=compatible_personal.values('pk'))
+        rules = policy.filter_schedule_flags(rules)
 
         return rules.select_related('personal')
 
@@ -81,6 +84,8 @@ class TurnoAvailabilityService:
         servicio,
         profesional,
         duracion_minutos=None,
+        servicios=None,
+        skill_policy=None,
     ):
         duracion = duracion_minutos or servicio.duracion_estimada or 60
         inicio, fin = cls._slot_datetimes(fecha, hora_inicio, duracion)
@@ -88,6 +93,8 @@ class TurnoAvailabilityService:
             fecha=fecha,
             servicio=servicio,
             profesional=profesional,
+            servicios=servicios,
+            skill_policy=skill_policy,
         )
 
         return any(
@@ -233,6 +240,7 @@ class TurnoAvailabilityService:
         excluir_turno_id=None,
         duracion_minutos=None,
         servicios=None,
+        skill_policy=None,
     ):
         if not profesional.activo:
             raise TurnoCreationError(
@@ -246,6 +254,20 @@ class TurnoAvailabilityService:
                 'INACTIVE_SERVICE',
                 'El Servicio seleccionado no está activo.',
                 'servicio',
+            )
+
+        policy = skill_policy or service_skill_policy(slot_services)
+        if not policy.is_executable:
+            raise TurnoCreationError(
+                'INACTIVE_REQUIRED_SKILL',
+                'El Servicio tiene una habilidad requerida inactiva.',
+                'servicio',
+            )
+        if not policy.personal_can_perform(profesional):
+            raise TurnoCreationError(
+                'PERSONAL_SKILL_MISMATCH',
+                'El Personal seleccionado no cumple las habilidades requeridas.',
+                'profesional',
             )
 
         duracion = duracion_minutos or servicio.duracion_estimada or 60
@@ -270,16 +292,15 @@ class TurnoAvailabilityService:
                 'fecha',
             )
 
-        if check_schedule and not all(
-            cls._matching_schedule_exists(
+        if check_schedule and not cls._matching_schedule_exists(
                 fecha=fecha,
                 hora_inicio=hora_inicio,
-                servicio=slot_service,
+                servicio=servicio,
                 profesional=profesional,
                 duracion_minutos=duracion,
-            )
-            for slot_service in slot_services
-        ):
+                servicios=slot_services,
+                skill_policy=policy,
+            ):
             raise TurnoCreationError(
                 'OUTSIDE_WORK_SCHEDULE',
                 'El horario no está habilitado para el Servicio y Personal seleccionados.',
@@ -346,9 +367,12 @@ class TurnoAvailabilityService:
         excluir_turno_id=None,
         duracion_minutos=None,
         servicios=None,
+        skill_policy=None,
     ):
         slots = []
         duracion = duracion_minutos or servicio.duracion_estimada or 60
+        slot_services = tuple(servicios or (servicio,))
+        policy = skill_policy or service_skill_policy(slot_services)
         current_minute = schedule.hora_inicio.hour * 60 + schedule.hora_inicio.minute
         end_minute = schedule.hora_fin.hour * 60 + schedule.hora_fin.minute
 
@@ -366,6 +390,7 @@ class TurnoAvailabilityService:
                 excluir_turno_id=excluir_turno_id,
                 duracion_minutos=duracion,
                 servicios=servicios,
+                skill_policy=policy,
             ):
                 slots.append({
                     'hora': hora_inicio.strftime('%H:%M'),
@@ -430,7 +455,9 @@ class TurnoCreationService:
             )
 
         try:
-            servicio = Servicio.objects.select_for_update().get(
+            servicio = Servicio.objects.select_for_update().prefetch_related(
+                'requisitos_habilidad__habilidad'
+            ).get(
                 pk=servicio_id,
                 activo=True,
             )
