@@ -126,6 +126,13 @@ export const navigationItems = [
         requiredPermission: 'usuarios.view_clients'
     },
     {
+        id: 'client-create',
+        label: 'Nuevo cliente',
+        path: ADMIN_ROUTES.NUEVO_CLIENTE,
+        placement: NAVIGATION_PLACEMENT.PRIMARY,
+        requiredPermission: 'usuarios.create_walkin_client'
+    },
+    {
         id: 'admin-products',
         label: 'Productos',
         path: ADMIN_ROUTES.PRODUCTOS,

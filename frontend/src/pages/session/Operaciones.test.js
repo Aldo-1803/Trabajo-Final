@@ -95,7 +95,7 @@ describe('Operaciones por permisos efectivos', () => {
         });
 
         expect(screen.getByRole('link', { name: 'Nuevo cliente' }))
-            .toHaveAttribute('href', '/admin/clientes');
+            .toHaveAttribute('href', '/admin/clientes/nuevo');
         expect(screen.queryByText('Turnos de hoy')).not.toBeInTheDocument();
         expect(axios.get).not.toHaveBeenCalled();
     });

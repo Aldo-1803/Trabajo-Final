@@ -187,7 +187,7 @@ const Operaciones = () => {
                                 Registrá un Cliente presencial desde la gestión existente.
                             </p>
                             <Link
-                                to="/admin/clientes"
+                                to="/admin/clientes/nuevo"
                                 className="inline-flex rounded-lg bg-stone-700 px-4 py-2 font-semibold text-white hover:bg-stone-800"
                             >
                                 Nuevo cliente

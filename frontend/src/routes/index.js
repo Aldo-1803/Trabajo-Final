@@ -52,6 +52,7 @@ import GestionarReglas from '../pages/admin/GestionarReglas';
 import GestionProductos from '../pages/admin/GestionProductos';
 import GestionUsuarios from '../pages/admin/GestionUsuarios';
 import GestionClientes from '../pages/admin/GestionClientes';
+import NuevoCliente from '../pages/admin/NuevoCliente';
 import GestionEquipamiento from '../pages/admin/GestionEquipamiento';
 import GestionPersonal from '../pages/admin/GestionPersonal';
 import ConfiguracionAdmin from '../pages/admin/ConfiguracionAdmin';
@@ -125,6 +126,7 @@ export const AppRoutes = () => {
                 <Route path={ADMIN_ROUTES.PRODUCTOS} element={<ProtectedRoute><GestionProductos /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.USUARIOS} element={<ProtectedRoute requiredPermission="usuarios.manage_users"><GestionUsuarios /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.CLIENTES} element={<ProtectedRoute requiredPermission="usuarios.view_clients"><GestionClientes /></ProtectedRoute>} />
+                <Route path={ADMIN_ROUTES.NUEVO_CLIENTE} element={<ProtectedRoute requiredPermission="usuarios.create_walkin_client"><NuevoCliente /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.PERSONAL} element={<ProtectedRoute requiredPermission="gestion.manage_personal"><GestionPersonal /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.EQUIPAMIENTO} element={<ProtectedRoute><GestionEquipamiento /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.AGENDA} element={<ProtectedRoute requiredPermission="gestion.view_global_agenda"><AgendaAdmin /></ProtectedRoute>} />
