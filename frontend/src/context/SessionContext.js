@@ -168,6 +168,14 @@ export const SessionProvider = ({ children }) => {
         [session.profiles]
     );
 
+    const hasActiveProfile = useCallback(
+        (profileName) => (
+            session.profiles?.[profileName]?.exists === true
+            && session.profiles?.[profileName]?.active === true
+        ),
+        [session.profiles]
+    );
+
     const value = useMemo(() => ({
         session,
         user: session.user,
@@ -184,7 +192,8 @@ export const SessionProvider = ({ children }) => {
         hasPermission,
         hasAnyPermission,
         hasRole,
-        hasProfile
+        hasProfile,
+        hasActiveProfile
     }), [
         session,
         refreshSession,
@@ -192,7 +201,8 @@ export const SessionProvider = ({ children }) => {
         hasPermission,
         hasAnyPermission,
         hasRole,
-        hasProfile
+        hasProfile,
+        hasActiveProfile
     ]);
 
     return (

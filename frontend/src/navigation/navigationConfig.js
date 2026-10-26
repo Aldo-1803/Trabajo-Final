@@ -25,6 +25,14 @@ export const navigationItems = [
         ]
     },
     {
+        id: 'technical-review',
+        label: 'Revisión técnica',
+        path: SESSION_ROUTES.REVISION_TECNICA,
+        placement: NAVIGATION_PLACEMENT.PRIMARY,
+        requiredPermission: 'gestion.review_technical_booking',
+        requiredActiveProfile: 'personal'
+    },
+    {
         id: 'client-turnos',
         label: 'Mis Turnos',
         path: CLIENTE_ROUTES.MIS_TURNOS,
@@ -42,6 +50,13 @@ export const navigationItems = [
         id: 'client-reservar',
         label: 'Reservar',
         path: CLIENTE_ROUTES.RESERVAR,
+        placement: NAVIGATION_PLACEMENT.PRIMARY,
+        requiredProfile: 'cliente'
+    },
+    {
+        id: 'client-technical-requests',
+        label: 'Solicitudes técnicas',
+        path: CLIENTE_ROUTES.SOLICITUDES_TECNICAS,
         placement: NAVIGATION_PLACEMENT.PRIMARY,
         requiredProfile: 'cliente'
     },
@@ -166,6 +181,13 @@ export const isNavigationItemVisible = (item, access) => {
     if (
         item.requiredProfile
         && !access.hasProfile(item.requiredProfile)
+    ) {
+        return false;
+    }
+
+    if (
+        item.requiredActiveProfile
+        && !access.hasActiveProfile?.(item.requiredActiveProfile)
     ) {
         return false;
     }

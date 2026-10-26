@@ -3,8 +3,11 @@ from datetime import datetime, timedelta
 from django.utils import timezone
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.core.validators import MaxValueValidator, MinValueValidator
 import logging
+import uuid
 from simple_history.models import HistoricalRecords
+from .private_storage import private_payment_receipt_storage
 
 # ============================================================
 # SECCIÓN 1: USUARIOS Y PERSONAL
@@ -21,6 +24,42 @@ class DiasSemana(models.IntegerChoices):
     VIERNES = 4, 'Viernes'
     SABADO = 5, 'Sábado'
     DOMINGO = 6, 'Domingo'
+
+
+class TechnicalRiskOutcome(models.TextChoices):
+    APTO = 'APTO', 'Apto'
+    ADVERTENCIA = 'ADVERTENCIA', 'Advertencia'
+    REQUIERE_REVISION = 'REQUIERE_REVISION', 'Requiere revisión'
+    NO_APTO = 'NO_APTO', 'No apto'
+
+
+TECHNICAL_RISK_OUTCOME_ORDER = {
+    TechnicalRiskOutcome.APTO: 0,
+    TechnicalRiskOutcome.ADVERTENCIA: 1,
+    TechnicalRiskOutcome.REQUIERE_REVISION: 2,
+    TechnicalRiskOutcome.NO_APTO: 3,
+}
+
+
+PAYMENT_CURRENCY_MINOR_UNITS = {
+    'ARS': 2,
+    'BOB': 2,
+    'BRL': 2,
+    'CLP': 0,
+    'EUR': 2,
+    'PYG': 0,
+    'USD': 2,
+    'UYU': 2,
+}
+PAYMENT_CURRENCY_CHOICES = tuple(
+    (code, code) for code in PAYMENT_CURRENCY_MINOR_UNITS
+)
+MANUAL_PAYMENT_METHODS = (
+    'CASH',
+    'BANK_TRANSFER',
+    'EXTERNAL_CARD',
+    'OTHER',
+)
 
 
 class Personal(models.Model):
@@ -281,6 +320,74 @@ class ServicioHabilidad(models.Model):
     def __str__(self):
         return f'{self.servicio} requiere {self.habilidad.code}'
 
+
+class FamiliaProcesoTecnico(models.Model):
+    """Clasificación técnica estable, independiente de la categoría comercial."""
+    code = models.CharField(max_length=50, unique=True)
+    nombre = models.CharField(max_length=100)
+    descripcion = models.TextField(blank=True)
+    activa = models.BooleanField(default=True)
+
+    class Meta:
+        verbose_name = 'Familia de proceso técnico'
+        verbose_name_plural = 'Familias de procesos técnicos'
+        ordering = ['nombre']
+
+    def __str__(self):
+        return f'{self.code} - {self.nombre}'
+
+
+class PerfilTecnicoServicio(models.Model):
+    class EstadoClasificacion(models.TextChoices):
+        PENDIENTE = 'PENDIENTE', 'Pendiente'
+        CLASIFICADO = 'CLASIFICADO', 'Clasificado'
+
+    class NivelRiesgo(models.TextChoices):
+        NO_DEFINIDO = 'NO_DEFINIDO', 'No definido'
+        BAJO = 'BAJO', 'Bajo'
+        MEDIO = 'MEDIO', 'Medio'
+        ALTO = 'ALTO', 'Alto'
+
+    servicio = models.OneToOneField(
+        Servicio,
+        on_delete=models.CASCADE,
+        related_name='perfil_tecnico',
+    )
+    familia = models.ForeignKey(
+        FamiliaProcesoTecnico,
+        on_delete=models.PROTECT,
+        related_name='perfiles_servicio',
+        null=True,
+        blank=True,
+    )
+    estado_clasificacion = models.CharField(
+        max_length=20,
+        choices=EstadoClasificacion.choices,
+        default=EstadoClasificacion.PENDIENTE,
+    )
+    nivel_riesgo = models.CharField(
+        max_length=20,
+        choices=NivelRiesgo.choices,
+        default=NivelRiesgo.NO_DEFINIDO,
+    )
+    activa = models.BooleanField(default=True)
+
+    class Meta:
+        verbose_name = 'Perfil técnico de Servicio'
+        verbose_name_plural = 'Perfiles técnicos de Servicios'
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(estado_clasificacion='PENDIENTE')
+                    | ~models.Q(nivel_riesgo='NO_DEFINIDO')
+                ),
+                name='classified_service_has_risk_level',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.servicio} - {self.estado_clasificacion}'
+
 class CategoriaProducto(models.Model):
     nombre = models.CharField(max_length=100, unique=True)
     descripcion = models.TextField(blank=True, null=True)
@@ -381,8 +488,8 @@ class Producto(models.Model):
     
     @property
     def stock_disponible(self):
-        """Calcula lo que realmente se puede vender ahora mismo"""
-        return max(0, self.stock_real - self.stock_comprometido)
+        """Proyección comercial; una inconsistencia legacy no se oculta con clamp."""
+        return self.stock_real - self.stock_comprometido
     
     def necesita_reposicion(self):
         """Devuelve True si el stock disponible está por debajo del mínimo"""
@@ -427,9 +534,246 @@ class Producto(models.Model):
             ('view_stock', 'Can view stock'),
             ('manage_stock', 'Can manage stock'),
         ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(stock_real__gte=0),
+                name='product_nonnegative_real_stock',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(stock_minimo__gte=0),
+                name='product_nonnegative_minimum_stock',
+            ),
+        ]
 
     def __str__(self):
         return f"{self.marca} - {self.nombre} ({self.stock_disponible} ud.)"
+
+
+class ImmutableStockMovementQuerySet(models.QuerySet):
+    immutable_error = 'Los movimientos de stock son inmutables.'
+
+    def update(self, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+    def delete(self):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_create(self, objs, *args, **kwargs):
+        raise ValidationError(
+            'La creación masiva de movimientos de stock no está permitida.'
+        )
+
+    def update_or_create(self, defaults=None, create_defaults=None, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+
+class StockMovementManager(
+    models.Manager.from_queryset(ImmutableStockMovementQuerySet)
+):
+    def _create_from_inventory_service(self, **values):
+        movement = self.model(**values)
+        movement._allow_inventory_service_create = True
+        movement.save(force_insert=True, using=self.db)
+        return movement
+
+
+class MovimientoStock(models.Model):
+    class Type(models.TextChoices):
+        OPENING_BALANCE = 'OPENING_BALANCE', 'Saldo inicial'
+        RECEIPT_IN = 'RECEIPT_IN', 'Recepción'
+        ORDER_SALE_OUT = 'ORDER_SALE_OUT', 'Salida por venta'
+        MANUAL_ADJUSTMENT = 'MANUAL_ADJUSTMENT', 'Ajuste manual'
+        CORRECTION = 'CORRECTION', 'Corrección'
+
+    class ActorKind(models.TextChoices):
+        HUMAN = 'HUMAN', 'Humano'
+        SYSTEM = 'SYSTEM', 'Sistema'
+
+    producto = models.ForeignKey(
+        Producto,
+        on_delete=models.PROTECT,
+        related_name='movimientos_stock',
+    )
+    delta = models.IntegerField()
+    tipo = models.CharField(max_length=24, choices=Type.choices)
+    reason_code = models.CharField(max_length=50)
+    nota = models.CharField(max_length=500, blank=True, default='')
+    actor_kind = models.CharField(max_length=10, choices=ActorKind.choices)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='movimientos_stock',
+        null=True,
+        blank=True,
+    )
+    created_at = models.DateTimeField(default=timezone.now, editable=False)
+    reference_type = models.CharField(max_length=50, blank=True, default='')
+    reference_id = models.CharField(max_length=100, blank=True, default='')
+    idempotency_key = models.CharField(max_length=128, unique=True)
+    stock_before = models.IntegerField()
+    stock_after = models.IntegerField()
+    reverses_movement = models.ForeignKey(
+        'self',
+        on_delete=models.PROTECT,
+        related_name='correction_movements',
+        null=True,
+        blank=True,
+    )
+
+    objects = StockMovementManager()
+
+    class Meta:
+        verbose_name = 'Movimiento de stock'
+        verbose_name_plural = 'Movimientos de stock'
+        ordering = ['-created_at', '-pk']
+        base_manager_name = 'objects'
+        default_manager_name = 'objects'
+        constraints = [
+            models.CheckConstraint(
+                condition=~models.Q(delta=0),
+                name='stock_movement_nonzero_delta',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(stock_before__gte=0),
+                name='stock_movement_nonnegative_before',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(stock_after__gte=0),
+                name='stock_movement_nonnegative_after',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    stock_after=models.F('stock_before') + models.F('delta')
+                ),
+                name='stock_movement_coherent_balance',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(actor_kind='HUMAN', actor__isnull=False)
+                    | models.Q(actor_kind='SYSTEM', actor__isnull=True)
+                ),
+                name='stock_movement_coherent_actor',
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(reason_code=''),
+                name='stock_movement_reason_required',
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(idempotency_key=''),
+                name='stock_movement_key_required',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(reverses_movement__isnull=True)
+                    | ~models.Q(pk=models.F('reverses_movement_id'))
+                ),
+                name='stock_movement_not_self_reversing',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(tipo='CORRECTION', reverses_movement__isnull=False)
+                    | (
+                        ~models.Q(tipo='CORRECTION')
+                        & models.Q(reverses_movement__isnull=True)
+                    )
+                ),
+                name='stock_movement_correction_reference',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(tipo__in=['OPENING_BALANCE', 'RECEIPT_IN'], delta__gt=0)
+                    | models.Q(tipo='ORDER_SALE_OUT', delta__lt=0)
+                    | models.Q(tipo__in=['MANUAL_ADJUSTMENT', 'CORRECTION'])
+                ),
+                name='stock_movement_fixed_type_sign',
+            ),
+            models.UniqueConstraint(
+                fields=['reverses_movement'],
+                condition=models.Q(reverses_movement__isnull=False),
+                name='stock_movement_one_correction',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['producto', '-created_at'],
+                name='stock_move_product_time_idx',
+            ),
+            models.Index(
+                fields=['tipo', '-created_at'],
+                name='stock_move_type_time_idx',
+            ),
+        ]
+
+    def clean(self):
+        errors = {}
+        if self.delta == 0:
+            errors['delta'] = 'El delta debe ser distinto de cero.'
+        if not self.reason_code or not self.reason_code.strip():
+            errors['reason_code'] = 'El motivo estructurado es obligatorio.'
+        if not self.idempotency_key or not self.idempotency_key.strip():
+            errors['idempotency_key'] = 'La clave de idempotencia es obligatoria.'
+        if self.actor_kind == self.ActorKind.HUMAN and self.actor_id is None:
+            errors['actor'] = 'Un movimiento humano requiere actor.'
+        if self.actor_kind == self.ActorKind.SYSTEM and self.actor_id is not None:
+            errors['actor'] = 'Un movimiento de sistema no admite actor humano.'
+        if self.stock_before is not None and self.stock_before < 0:
+            errors['stock_before'] = 'El saldo anterior no puede ser negativo.'
+        if self.stock_after is not None and self.stock_after < 0:
+            errors['stock_after'] = 'El saldo posterior no puede ser negativo.'
+        if (
+            self.stock_before is not None
+            and self.stock_after is not None
+            and self.delta is not None
+            and self.stock_after != self.stock_before + self.delta
+        ):
+            errors['stock_after'] = 'El saldo posterior no coincide con el delta.'
+        if self.tipo == self.Type.CORRECTION:
+            if self.reverses_movement_id is None:
+                errors['reverses_movement'] = (
+                    'Una corrección debe referenciar el movimiento compensado.'
+                )
+            elif (
+                self.producto_id is not None
+                and self.reverses_movement.producto_id != self.producto_id
+            ):
+                errors['reverses_movement'] = (
+                    'La corrección debe pertenecer al mismo Producto.'
+                )
+        elif self.reverses_movement_id is not None:
+            errors['reverses_movement'] = (
+                'Sólo una corrección puede referenciar otro movimiento.'
+            )
+        if self.tipo in {self.Type.OPENING_BALANCE, self.Type.RECEIPT_IN}:
+            if self.delta is not None and self.delta <= 0:
+                errors['delta'] = 'Este tipo requiere un delta positivo.'
+        if self.tipo == self.Type.ORDER_SALE_OUT:
+            if self.delta is not None and self.delta >= 0:
+                errors['delta'] = 'Una salida por venta requiere un delta negativo.'
+        if self.pk and self.reverses_movement_id == self.pk:
+            errors['reverses_movement'] = (
+                'Un movimiento no puede corregirse a sí mismo.'
+            )
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError('Un movimiento de stock persistido es inmutable.')
+        if not getattr(self, '_allow_inventory_service_create', False):
+            raise ValidationError(
+                'Un movimiento de stock sólo puede crearse mediante inventario.'
+            )
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Un movimiento de stock no puede eliminarse.')
+
+    def __str__(self):
+        return f'{self.producto_id} {self.tipo} {self.delta:+d}'
 
 
 class ImagenProducto(models.Model):
@@ -505,7 +849,7 @@ class Promocion(models.Model):
         ('RETOQUE', 'Pack Retoque Servicio'),
         ('LAST_MINUTE', 'Promoción Last Minute'),
     ]
-    
+
     nombre = models.CharField(
         max_length=100,
         help_text="Nombre de la promoción (ej: 'Combo Hidratación Profunda')"
@@ -1154,6 +1498,14 @@ class Configuracion(models.Model):
         default=60, 
         help_text="Cuanto tiempo antes se puede reservar"
     )
+    slot_hold_ttl_minutes = models.PositiveSmallIntegerField(
+        default=15,
+        validators=[MinValueValidator(1), MaxValueValidator(120)],
+        help_text=(
+            "Minutos de vigencia de una reserva temporal de agenda. "
+            "No modifica HOLDs ya creados."
+        ),
+    )
     
     # Política de Señas
     monto_sena = models.DecimalField(
@@ -1306,6 +1658,15 @@ class Configuracion(models.Model):
         permissions = [
             ('manage_payment_configuration', 'Can manage payment configuration'),
             ('manage_configuration', 'Can manage configuration'),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(slot_hold_ttl_minutes__gte=1)
+                    & models.Q(slot_hold_ttl_minutes__lte=120)
+                ),
+                name='config_slot_hold_ttl_range',
+            ),
         ]
 
     def save(self, *args, **kwargs):
@@ -1946,6 +2307,16 @@ class DiagnosticoCapilar(models.Model):
     Registro de diagnóstico realizado a un cliente.
     Tabla maestra que guarda el histórico de evaluaciones del cabello.
     """
+    class Procedencia(models.TextChoices):
+        PROFESIONAL = 'PROFESIONAL', 'Profesional'
+        AUTORREPORTE = 'AUTORREPORTE', 'Autorreporte'
+        POST_SERVICIO_AUTOMATICO = (
+            'POST_SERVICIO_AUTOMATICO',
+            'Post-servicio automático',
+        )
+        MIGRADO = 'MIGRADO', 'Migrado'
+        DESCONOCIDO = 'DESCONOCIDO', 'Desconocido'
+
     cliente = models.ForeignKey(
         'usuarios.Cliente',
         on_delete=models.CASCADE,
@@ -2049,6 +2420,11 @@ class DiagnosticoCapilar(models.Model):
     )
     
     fecha_diagnostico = models.DateTimeField(auto_now_add=True)
+    procedencia = models.CharField(
+        max_length=30,
+        choices=Procedencia.choices,
+        default=Procedencia.DESCONOCIDO,
+    )
 
     history = HistoricalRecords()
     
@@ -2063,6 +2439,1472 @@ class DiagnosticoCapilar(models.Model):
     def __str__(self):
         return f"Diagnóstico {self.cliente} - {self.fecha_diagnostico.strftime('%d/%m/%Y')}"
 
+
+class PoliticaRiesgoTecnico(models.Model):
+    class Estado(models.TextChoices):
+        BORRADOR = 'BORRADOR', 'Borrador'
+        PUBLICADA = 'PUBLICADA', 'Publicada'
+        RETIRADA = 'RETIRADA', 'Retirada'
+
+    version = models.CharField(max_length=50, unique=True)
+    estado = models.CharField(
+        max_length=20,
+        choices=Estado.choices,
+        default=Estado.BORRADOR,
+    )
+    creada_at = models.DateTimeField(auto_now_add=True)
+    publicada_at = models.DateTimeField(null=True, blank=True)
+    publicada_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='politicas_riesgo_publicadas',
+    )
+
+    class Meta:
+        verbose_name = 'Política de riesgo técnico'
+        verbose_name_plural = 'Políticas de riesgo técnico'
+        ordering = ['-creada_at']
+        permissions = [
+            (
+                'manage_technical_risk_policy',
+                'Can manage technical risk policies',
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        allow_publication = getattr(self, '_allow_explicit_publication', False)
+        if not self.pk and self.estado != self.Estado.BORRADOR:
+            raise ValidationError(
+                'Toda política debe crearse como borrador y publicarse explícitamente.'
+            )
+        if self.pk:
+            current = type(self).objects.filter(pk=self.pk).first()
+            if current is not None:
+                if current.estado == self.Estado.PUBLICADA:
+                    raise ValidationError(
+                        'Una política publicada es inmutable.'
+                    )
+                if current.version != self.version:
+                    raise ValidationError(
+                        'La versión de una política no puede modificarse.'
+                    )
+                if (
+                    self.estado == self.Estado.PUBLICADA
+                    and current.estado != self.Estado.PUBLICADA
+                    and not allow_publication
+                ):
+                    raise ValidationError(
+                        'La publicación sólo puede realizarse mediante el servicio explícito.'
+                    )
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.estado == self.Estado.PUBLICADA:
+            raise ValidationError('Una política publicada no puede eliminarse.')
+        return super().delete(*args, **kwargs)
+
+    def __str__(self):
+        return f'Política técnica {self.version} ({self.estado})'
+
+
+class ReglaRiesgoTecnicoBase(models.Model):
+    code = models.CharField(max_length=80)
+    severidad = models.PositiveSmallIntegerField(default=0)
+    prioridad = models.IntegerField(default=0)
+    mensaje_cliente = models.TextField(blank=True)
+    mensaje_profesional = models.TextField(blank=True)
+    activa = models.BooleanField(default=True)
+
+    class Meta:
+        abstract = True
+
+    def _ensure_draft_policy(self):
+        if self.pk:
+            original_policy_id = type(self).objects.values_list(
+                'politica_id', flat=True
+            ).get(pk=self.pk)
+            if original_policy_id != self.politica_id:
+                raise ValidationError('Una regla no puede moverse a otra política.')
+        else:
+            original_policy_id = self.politica_id
+        policy_state = PoliticaRiesgoTecnico.objects.values_list(
+            'estado', flat=True
+        ).get(pk=original_policy_id)
+        if policy_state != PoliticaRiesgoTecnico.Estado.BORRADOR:
+            raise ValidationError(
+                'Las reglas de una política publicada o retirada son inmutables.'
+            )
+
+    def save(self, *args, **kwargs):
+        self._ensure_draft_policy()
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        self._ensure_draft_policy()
+        return super().delete(*args, **kwargs)
+
+
+class ReglaIntervaloTecnico(ReglaRiesgoTecnicoBase):
+    politica = models.ForeignKey(
+        PoliticaRiesgoTecnico,
+        on_delete=models.PROTECT,
+        related_name='reglas_intervalo',
+    )
+    servicio_origen = models.ForeignKey(
+        Servicio,
+        on_delete=models.PROTECT,
+        related_name='reglas_intervalo_como_origen',
+        null=True,
+        blank=True,
+    )
+    familia_origen = models.ForeignKey(
+        FamiliaProcesoTecnico,
+        on_delete=models.PROTECT,
+        related_name='reglas_intervalo_como_origen',
+        null=True,
+        blank=True,
+    )
+    servicio_destino = models.ForeignKey(
+        Servicio,
+        on_delete=models.PROTECT,
+        related_name='reglas_intervalo_como_destino',
+        null=True,
+        blank=True,
+    )
+    familia_destino = models.ForeignKey(
+        FamiliaProcesoTecnico,
+        on_delete=models.PROTECT,
+        related_name='reglas_intervalo_como_destino',
+        null=True,
+        blank=True,
+    )
+    dias_minimos = models.PositiveIntegerField()
+    outcome = models.CharField(
+        max_length=25,
+        choices=TechnicalRiskOutcome.choices,
+    )
+
+    class Meta:
+        verbose_name = 'Regla de intervalo técnico'
+        verbose_name_plural = 'Reglas de intervalo técnico'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['politica', 'code'],
+                name='unique_interval_rule_code_per_policy',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    (
+                        models.Q(servicio_origen__isnull=False)
+                        & models.Q(familia_origen__isnull=True)
+                    )
+                    | (
+                        models.Q(servicio_origen__isnull=True)
+                        & models.Q(familia_origen__isnull=False)
+                    )
+                ),
+                name='interval_rule_exactly_one_origin',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    (
+                        models.Q(servicio_destino__isnull=False)
+                        & models.Q(familia_destino__isnull=True)
+                    )
+                    | (
+                        models.Q(servicio_destino__isnull=True)
+                        & models.Q(familia_destino__isnull=False)
+                    )
+                ),
+                name='interval_rule_exactly_one_destination',
+            ),
+        ]
+
+
+class ReglaDiagnosticoTecnico(ReglaRiesgoTecnicoBase):
+    politica = models.ForeignKey(
+        PoliticaRiesgoTecnico,
+        on_delete=models.PROTECT,
+        related_name='reglas_diagnostico_tecnico',
+    )
+    servicio_destino = models.ForeignKey(
+        Servicio,
+        on_delete=models.PROTECT,
+        related_name='reglas_diagnostico_tecnico',
+        null=True,
+        blank=True,
+    )
+    familia_destino = models.ForeignKey(
+        FamiliaProcesoTecnico,
+        on_delete=models.PROTECT,
+        related_name='reglas_diagnostico_tecnico',
+        null=True,
+        blank=True,
+    )
+    requiere_diagnostico = models.BooleanField(default=True)
+    antiguedad_maxima_dias = models.PositiveIntegerField(null=True, blank=True)
+    outcome_si_falta = models.CharField(
+        max_length=25,
+        choices=TechnicalRiskOutcome.choices,
+        default=TechnicalRiskOutcome.REQUIERE_REVISION,
+    )
+    outcome_si_vencido = models.CharField(
+        max_length=25,
+        choices=TechnicalRiskOutcome.choices,
+        default=TechnicalRiskOutcome.REQUIERE_REVISION,
+    )
+    outcome_si_incompleto = models.CharField(
+        max_length=25,
+        choices=TechnicalRiskOutcome.choices,
+        default=TechnicalRiskOutcome.REQUIERE_REVISION,
+    )
+    outcome_si_procedencia_no_confiable = models.CharField(
+        max_length=25,
+        choices=TechnicalRiskOutcome.choices,
+        default=TechnicalRiskOutcome.REQUIERE_REVISION,
+    )
+
+    class Meta:
+        verbose_name = 'Regla de diagnóstico técnico'
+        verbose_name_plural = 'Reglas de diagnóstico técnico'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['politica', 'code'],
+                name='unique_diagnosis_rule_code_per_policy',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    (
+                        models.Q(servicio_destino__isnull=False)
+                        & models.Q(familia_destino__isnull=True)
+                    )
+                    | (
+                        models.Q(servicio_destino__isnull=True)
+                        & models.Q(familia_destino__isnull=False)
+                    )
+                ),
+                name='diagnosis_rule_exactly_one_destination',
+            ),
+        ]
+
+
+class ReglaFrecuenciaTecnica(ReglaRiesgoTecnicoBase):
+    politica = models.ForeignKey(
+        PoliticaRiesgoTecnico,
+        on_delete=models.PROTECT,
+        related_name='reglas_frecuencia',
+    )
+    servicio = models.ForeignKey(
+        Servicio,
+        on_delete=models.PROTECT,
+        related_name='reglas_frecuencia_tecnica',
+        null=True,
+        blank=True,
+    )
+    familia = models.ForeignKey(
+        FamiliaProcesoTecnico,
+        on_delete=models.PROTECT,
+        related_name='reglas_frecuencia_tecnica',
+        null=True,
+        blank=True,
+    )
+    ventana_dias = models.PositiveIntegerField()
+    cantidad_maxima = models.PositiveIntegerField()
+    outcome = models.CharField(
+        max_length=25,
+        choices=TechnicalRiskOutcome.choices,
+    )
+
+    class Meta:
+        verbose_name = 'Regla de frecuencia técnica'
+        verbose_name_plural = 'Reglas de frecuencia técnica'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['politica', 'code'],
+                name='unique_frequency_rule_code_per_policy',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    (
+                        models.Q(servicio__isnull=False)
+                        & models.Q(familia__isnull=True)
+                    )
+                    | (
+                        models.Q(servicio__isnull=True)
+                        & models.Q(familia__isnull=False)
+                    )
+                ),
+                name='frequency_rule_exactly_one_selector',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(cantidad_maxima__gte=1),
+                name='frequency_rule_positive_maximum',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(ventana_dias__gte=1),
+                name='frequency_rule_positive_window',
+            ),
+        ]
+
+
+class ImmutableTechnicalRiskEvaluationQuerySet(models.QuerySet):
+    immutable_error = 'Las evaluaciones de riesgo técnico son inmutables.'
+
+    def update(self, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+    def delete(self):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_create(self, objs, *args, **kwargs):
+        raise ValidationError(
+            'La creación masiva de evaluaciones de riesgo técnico no está '
+            'permitida; use el servicio de persistencia auditado.'
+        )
+
+    def update_or_create(self, defaults=None, create_defaults=None, **kwargs):
+        raise ValidationError(
+            'update_or_create no está permitido para evaluaciones de riesgo '
+            'técnico inmutables.'
+        )
+
+
+class ImmutableTechnicalRiskEvaluationManager(
+    models.Manager.from_queryset(ImmutableTechnicalRiskEvaluationQuerySet)
+):
+    def _set_superseded_by(self, *, evaluation_id, replacement_id):
+        """Ruta interna acotada; las reglas y auditoría viven en el servicio."""
+        queryset = self.get_queryset().filter(
+            pk=evaluation_id,
+            superseded_by__isnull=True,
+        )
+        return models.QuerySet.update(
+            queryset,
+            superseded_by_id=replacement_id,
+        )
+
+
+class EvaluacionRiesgoTecnico(models.Model):
+    cliente = models.ForeignKey(
+        'usuarios.Cliente',
+        on_delete=models.PROTECT,
+        related_name='evaluaciones_riesgo_tecnico',
+    )
+    politica = models.ForeignKey(
+        PoliticaRiesgoTecnico,
+        on_delete=models.PROTECT,
+        related_name='evaluaciones',
+    )
+    outcome = models.CharField(
+        max_length=25,
+        choices=TechnicalRiskOutcome.choices,
+    )
+    severity = models.PositiveSmallIntegerField(default=0)
+    fecha_solicitada = models.DateField()
+    evaluated_at = models.DateTimeField(auto_now_add=True)
+    input_snapshot = models.JSONField()
+    result_snapshot = models.JSONField()
+    superseded_by = models.ForeignKey(
+        'self',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='evaluaciones_superadas',
+    )
+    objects = ImmutableTechnicalRiskEvaluationManager()
+
+    class Meta:
+        verbose_name = 'Evaluación de riesgo técnico'
+        verbose_name_plural = 'Evaluaciones de riesgo técnico'
+        ordering = ['-evaluated_at']
+        base_manager_name = 'objects'
+        default_manager_name = 'objects'
+        permissions = [
+            (
+                'review_technical_booking',
+                'Can review technical bookings',
+            ),
+        ]
+
+    def clean(self):
+        errors = {}
+        if not isinstance(self.input_snapshot, dict):
+            errors['input_snapshot'] = 'Debe ser un objeto JSON.'
+        elif not {'cliente_id', 'servicios', 'fecha_solicitada'} <= set(
+            self.input_snapshot
+        ):
+            errors['input_snapshot'] = 'El snapshot de entrada está incompleto.'
+        if not isinstance(self.result_snapshot, dict):
+            errors['result_snapshot'] = 'Debe ser un objeto JSON.'
+        elif not {'outcome', 'policy_version', 'rule_codes'} <= set(
+            self.result_snapshot
+        ):
+            errors['result_snapshot'] = 'El snapshot de resultado está incompleto.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError(
+                'Una evaluación de riesgo técnico persistida es inmutable.'
+            )
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError(
+            'Una evaluación de riesgo técnico persistida no puede eliminarse.'
+        )
+
+
+class SolicitudTecnicaReserva(models.Model):
+    class Estado(models.TextChoices):
+        EVALUANDO = 'EVALUANDO', 'Evaluando'
+        ADVERTENCIA_PENDIENTE = (
+            'ADVERTENCIA_PENDIENTE',
+            'Advertencia pendiente',
+        )
+        APROBADA_TECNICAMENTE = (
+            'APROBADA_TECNICAMENTE',
+            'Aprobada técnicamente',
+        )
+        EN_REVISION = 'EN_REVISION', 'En revisión'
+        INFORMACION_REQUERIDA = (
+            'INFORMACION_REQUERIDA',
+            'Información requerida',
+        )
+        RECHAZADA_TECNICAMENTE = (
+            'RECHAZADA_TECNICAMENTE',
+            'Rechazada técnicamente',
+        )
+        SUPERADA = 'SUPERADA', 'Superada'
+        VENCIDA = 'VENCIDA', 'Vencida'
+
+    cliente = models.ForeignKey(
+        'usuarios.Cliente',
+        on_delete=models.PROTECT,
+        related_name='solicitudes_tecnicas',
+    )
+    fecha_preferida = models.DateField()
+    hora_preferida = models.TimeField()
+    personal_preferido = models.ForeignKey(
+        Personal,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='solicitudes_tecnicas_preferidas',
+    )
+    servicios = models.ManyToManyField(
+        Servicio,
+        through='SolicitudTecnicaServicio',
+        related_name='solicitudes_tecnicas',
+    )
+    estado = models.CharField(
+        max_length=30,
+        choices=Estado.choices,
+        default=Estado.EVALUANDO,
+    )
+    intento = models.PositiveIntegerField(default=1)
+    evaluacion_vigente = models.OneToOneField(
+        EvaluacionRiesgoTecnico,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='solicitud_tecnica_vigente',
+    )
+    fecha_recomendada = models.DateField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Solicitud técnica de reserva'
+        verbose_name_plural = 'Solicitudes técnicas de reserva'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['cliente', '-created_at']),
+            models.Index(fields=['estado', '-created_at']),
+        ]
+
+
+class SolicitudTecnicaServicio(models.Model):
+    solicitud = models.ForeignKey(
+        SolicitudTecnicaReserva,
+        on_delete=models.CASCADE,
+        related_name='servicios_solicitados',
+    )
+    servicio = models.ForeignKey(
+        Servicio,
+        on_delete=models.PROTECT,
+        related_name='intenciones_tecnicas',
+    )
+    orden = models.PositiveSmallIntegerField(default=0)
+    nombre_snapshot = models.CharField(max_length=100)
+
+    class Meta:
+        ordering = ['orden', 'pk']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['solicitud', 'servicio'],
+                name='unique_service_per_technical_request',
+            ),
+        ]
+
+
+class SlotHold(models.Model):
+    """Reserva temporal persistida de recursos de agenda."""
+
+    class State(models.TextChoices):
+        ACTIVE = 'ACTIVE', 'Activo'
+        CONSUMED = 'CONSUMED', 'Consumido'
+        RELEASED = 'RELEASED', 'Liberado'
+        EXPIRED = 'EXPIRED', 'Vencido'
+
+    class ReleaseReason(models.TextChoices):
+        CLIENT_CANCELLED = 'CLIENT_CANCELLED', 'Cancelado por el Cliente'
+        TTL_EXPIRED = 'TTL_EXPIRED', 'Vencimiento del tiempo de reserva'
+        TECHNICAL_REQUEST_INVALIDATED = (
+            'TECHNICAL_REQUEST_INVALIDATED',
+            'Solicitud técnica invalidada',
+        )
+        RESOURCE_INVALIDATED = 'RESOURCE_INVALIDATED', 'Recurso invalidado'
+        PAYMENT_INTENT_CANCELLED = (
+            'PAYMENT_INTENT_CANCELLED',
+            'Intento de pago cancelado',
+        )
+        PAYMENT_INTENT_EXPIRED = (
+            'PAYMENT_INTENT_EXPIRED',
+            'Intento de pago vencido',
+        )
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    solicitud = models.ForeignKey(
+        SolicitudTecnicaReserva,
+        on_delete=models.PROTECT,
+        related_name='slot_holds',
+    )
+    evaluacion = models.ForeignKey(
+        EvaluacionRiesgoTecnico,
+        on_delete=models.PROTECT,
+        related_name='slot_holds',
+    )
+    cliente = models.ForeignKey(
+        'usuarios.Cliente',
+        on_delete=models.PROTECT,
+        related_name='slot_holds',
+    )
+    personal = models.ForeignKey(
+        Personal,
+        on_delete=models.PROTECT,
+        related_name='slot_holds',
+    )
+    starts_at = models.DateTimeField()
+    ends_at = models.DateTimeField()
+    state = models.CharField(
+        max_length=10,
+        choices=State.choices,
+        default=State.ACTIVE,
+    )
+    expires_at = models.DateTimeField()
+    created_at = models.DateTimeField(default=timezone.now, editable=False)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='slot_holds_created',
+    )
+    consumed_at = models.DateTimeField(null=True, blank=True)
+    released_at = models.DateTimeField(null=True, blank=True)
+    expired_at = models.DateTimeField(null=True, blank=True)
+    release_reason = models.CharField(
+        max_length=40,
+        choices=ReleaseReason.choices,
+        blank=True,
+        default='',
+    )
+    consumed_turno = models.OneToOneField(
+        Turno,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='consumed_slot_hold',
+    )
+    idempotency_key = models.CharField(max_length=128, unique=True)
+    consumption_idempotency_key = models.CharField(
+        max_length=128,
+        unique=True,
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        ordering = ['-created_at']
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(starts_at__lt=models.F('ends_at')),
+                name='slot_hold_valid_interval',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(created_at__lt=models.F('expires_at'))
+                    & models.Q(expires_at__lte=models.F('starts_at'))
+                ),
+                name='slot_hold_valid_expiry',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        state='ACTIVE',
+                        consumed_at__isnull=True,
+                        released_at__isnull=True,
+                        expired_at__isnull=True,
+                        consumed_turno__isnull=True,
+                        consumption_idempotency_key__isnull=True,
+                        release_reason='',
+                    )
+                    | models.Q(
+                        state='CONSUMED',
+                        consumed_at__isnull=False,
+                        released_at__isnull=True,
+                        expired_at__isnull=True,
+                        consumed_turno__isnull=False,
+                        consumption_idempotency_key__isnull=False,
+                        release_reason='',
+                    )
+                    | (
+                        models.Q(
+                            state='RELEASED',
+                            consumed_at__isnull=True,
+                            released_at__isnull=False,
+                            expired_at__isnull=True,
+                            consumed_turno__isnull=True,
+                            consumption_idempotency_key__isnull=True,
+                        )
+                        & ~models.Q(release_reason='')
+                    )
+                    | (
+                        models.Q(
+                            state='EXPIRED',
+                            consumed_at__isnull=True,
+                            released_at__isnull=True,
+                            expired_at__isnull=False,
+                            consumed_turno__isnull=True,
+                            consumption_idempotency_key__isnull=True,
+                        )
+                        & ~models.Q(release_reason='')
+                    )
+                ),
+                name='slot_hold_state_timestamps_ok',
+            ),
+            models.UniqueConstraint(
+                fields=['solicitud'],
+                condition=models.Q(state='ACTIVE'),
+                name='slot_hold_one_active_request',
+            ),
+            models.UniqueConstraint(
+                fields=['solicitud'],
+                condition=models.Q(state='CONSUMED'),
+                name='slot_hold_one_consumed_req',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['state', 'expires_at'],
+                name='slot_hold_state_exp_idx',
+            ),
+            models.Index(
+                fields=['personal', 'starts_at', 'ends_at'],
+                name='slot_hold_person_time_idx',
+            ),
+            models.Index(
+                fields=['cliente', 'starts_at', 'ends_at'],
+                name='slot_hold_client_time_idx',
+            ),
+        ]
+
+
+class SlotHoldService(models.Model):
+    hold = models.ForeignKey(
+        SlotHold,
+        on_delete=models.CASCADE,
+        related_name='service_snapshots',
+    )
+    servicio = models.ForeignKey(
+        Servicio,
+        on_delete=models.PROTECT,
+        related_name='slot_hold_snapshots',
+    )
+    orden = models.PositiveSmallIntegerField()
+    nombre_snapshot = models.CharField(max_length=100)
+    duracion_minutos_snapshot = models.PositiveIntegerField()
+
+    class Meta:
+        ordering = ['orden', 'pk']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['hold', 'servicio'],
+                name='slot_hold_service_unique',
+            ),
+        ]
+
+
+class SlotHoldEquipmentRequirement(models.Model):
+    hold = models.ForeignKey(
+        SlotHold,
+        on_delete=models.CASCADE,
+        related_name='equipment_requirements',
+    )
+    tipo_equipamiento = models.ForeignKey(
+        TipoEquipamiento,
+        on_delete=models.PROTECT,
+        related_name='slot_hold_requirements',
+    )
+    cantidad_snapshot = models.PositiveIntegerField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['hold', 'tipo_equipamiento'],
+                name='slot_hold_equipment_unique',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(cantidad_snapshot__gte=1),
+                name='slot_hold_equipment_positive',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['tipo_equipamiento', 'hold'],
+                name='slot_hold_equipment_idx',
+            ),
+        ]
+
+
+class PaymentPolicyQuerySet(models.QuerySet):
+    immutable_error = 'Una política de pago publicada o retirada es inmutable.'
+
+    def update(self, **kwargs):
+        if 'version' in kwargs:
+            raise ValidationError(
+                'La versión de una política de pago no puede modificarse.'
+            )
+        if 'status' in kwargs and kwargs['status'] != 'DRAFT':
+            raise ValidationError(
+                'La publicación sólo puede realizarse mediante el servicio.'
+            )
+        if self.exclude(status='DRAFT').exists():
+            raise ValidationError(self.immutable_error)
+        return super().update(**kwargs)
+
+    def delete(self):
+        if self.exclude(status='DRAFT').exists():
+            raise ValidationError(self.immutable_error)
+        return super().delete()
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        raise ValidationError(
+            'bulk_update no está permitido para políticas de pago.'
+        )
+
+    def bulk_create(self, objs, *args, **kwargs):
+        raise ValidationError(
+            'bulk_create no está permitido para políticas de pago.'
+        )
+
+    def update_or_create(self, defaults=None, create_defaults=None, **kwargs):
+        raise ValidationError(
+            'update_or_create no está permitido para políticas de pago.'
+        )
+
+
+class PaymentPolicyManager(models.Manager.from_queryset(PaymentPolicyQuerySet)):
+    def _retire_published(self, *, exclude_id=None):
+        queryset = self.get_queryset().filter(status='PUBLISHED')
+        if exclude_id is not None:
+            queryset = queryset.exclude(pk=exclude_id)
+        return models.QuerySet.update(queryset, status='RETIRED')
+
+
+class PaymentPolicy(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = 'DRAFT', 'Borrador'
+        PUBLISHED = 'PUBLISHED', 'Publicada'
+        RETIRED = 'RETIRED', 'Retirada'
+
+    class AllowedMode(models.TextChoices):
+        DEPOSIT_ONLY = 'DEPOSIT_ONLY', 'Sólo seña'
+        FULL_ONLY = 'FULL_ONLY', 'Sólo total'
+        DEPOSIT_OR_FULL = 'DEPOSIT_OR_FULL', 'Seña o total'
+
+    class DepositKind(models.TextChoices):
+        FIXED = 'FIXED', 'Monto fijo'
+        PERCENTAGE = 'PERCENTAGE', 'Porcentaje'
+
+    class FixedExceedsTotalBehavior(models.TextChoices):
+        REJECT = 'REJECT', 'Rechazar'
+        CAP_TO_TOTAL = 'CAP_TO_TOTAL', 'Limitar al total'
+
+    version = models.CharField(max_length=50, unique=True)
+    status = models.CharField(
+        max_length=15,
+        choices=Status.choices,
+        default=Status.DRAFT,
+    )
+    allowed_mode = models.CharField(max_length=20, choices=AllowedMode.choices)
+    deposit_kind = models.CharField(
+        max_length=15,
+        choices=DepositKind.choices,
+        null=True,
+        blank=True,
+    )
+    deposit_value = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    fixed_exceeds_total_behavior = models.CharField(
+        max_length=15,
+        choices=FixedExceedsTotalBehavior.choices,
+        null=True,
+        blank=True,
+    )
+    currency = models.CharField(
+        max_length=3,
+        choices=PAYMENT_CURRENCY_CHOICES,
+    )
+    intent_ttl_minutes = models.PositiveIntegerField(
+        validators=[MinValueValidator(1)]
+    )
+    enabled_manual_methods = models.JSONField(default=list, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='payment_policies_created',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    published_at = models.DateTimeField(null=True, blank=True)
+    objects = PaymentPolicyManager()
+
+    class Meta:
+        ordering = ['-created_at']
+        base_manager_name = 'objects'
+        default_manager_name = 'objects'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['status'],
+                condition=models.Q(status='PUBLISHED'),
+                name='payment_policy_one_published',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(intent_ttl_minutes__gte=1),
+                name='payment_policy_positive_ttl',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        allowed_mode='FULL_ONLY',
+                        deposit_kind__isnull=True,
+                        deposit_value__isnull=True,
+                        fixed_exceeds_total_behavior__isnull=True,
+                    )
+                    | models.Q(
+                        allowed_mode__in=['DEPOSIT_ONLY', 'DEPOSIT_OR_FULL'],
+                        deposit_kind='PERCENTAGE',
+                        deposit_value__gt=0,
+                        deposit_value__lte=100,
+                        fixed_exceeds_total_behavior__isnull=True,
+                    )
+                    | models.Q(
+                        allowed_mode__in=['DEPOSIT_ONLY', 'DEPOSIT_OR_FULL'],
+                        deposit_kind='FIXED',
+                        deposit_value__gt=0,
+                        fixed_exceeds_total_behavior__isnull=False,
+                    )
+                ),
+                name='payment_policy_deposit_configuration',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(status='DRAFT', published_at__isnull=True)
+                    | models.Q(
+                        status__in=['PUBLISHED', 'RETIRED'],
+                        published_at__isnull=False,
+                    )
+                ),
+                name='payment_policy_publication_timestamp',
+            ),
+        ]
+
+    def clean(self):
+        errors = {}
+        if self.allowed_mode == self.AllowedMode.FULL_ONLY:
+            if any(
+                value is not None
+                for value in (
+                    self.deposit_kind,
+                    self.deposit_value,
+                    self.fixed_exceeds_total_behavior,
+                )
+            ):
+                errors['allowed_mode'] = (
+                    'FULL_ONLY no admite configuración de seña.'
+                )
+        elif self.deposit_kind == self.DepositKind.PERCENTAGE:
+            if self.deposit_value is None or not (0 < self.deposit_value <= 100):
+                errors['deposit_value'] = (
+                    'El porcentaje debe ser mayor que cero y no superar 100.'
+                )
+            if self.fixed_exceeds_total_behavior is not None:
+                errors['fixed_exceeds_total_behavior'] = (
+                    'El comportamiento de monto fijo no aplica a porcentajes.'
+                )
+        elif self.deposit_kind == self.DepositKind.FIXED:
+            if self.deposit_value is None or self.deposit_value <= 0:
+                errors['deposit_value'] = 'El monto fijo debe ser mayor que cero.'
+            if self.fixed_exceeds_total_behavior is None:
+                errors['fixed_exceeds_total_behavior'] = (
+                    'Debe definir el comportamiento si el fijo supera el total.'
+                )
+        else:
+            errors['deposit_kind'] = (
+                'Una política que admite seña requiere un tipo de seña.'
+            )
+        if self.currency not in PAYMENT_CURRENCY_MINOR_UNITS:
+            errors['currency'] = 'La moneda no está soportada.'
+        methods = self.enabled_manual_methods
+        if not isinstance(methods, list):
+            errors['enabled_manual_methods'] = 'Debe ser una lista.'
+        else:
+            invalid = set(methods) - set(MANUAL_PAYMENT_METHODS)
+            if invalid or len(methods) != len(set(methods)):
+                errors['enabled_manual_methods'] = (
+                    'Los medios manuales deben ser válidos y no repetirse.'
+                )
+            else:
+                self.enabled_manual_methods = sorted(methods)
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        allow_publication = getattr(self, '_allow_publication_transition', False)
+        if not self.pk and self.status != self.Status.DRAFT:
+            raise ValidationError(
+                'Toda política de pago debe crearse como borrador.'
+            )
+        if self.pk:
+            current = type(self).objects.filter(pk=self.pk).first()
+            if current is not None:
+                if current.version != self.version:
+                    raise ValidationError(
+                        'La versión de una política de pago no puede modificarse.'
+                    )
+                if current.status != self.Status.DRAFT:
+                    raise ValidationError(
+                        'Una política de pago publicada o retirada es inmutable.'
+                    )
+                if (
+                    self.status == self.Status.PUBLISHED
+                    and not allow_publication
+                ):
+                    raise ValidationError(
+                        'La publicación sólo puede realizarse mediante el servicio.'
+                    )
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.status != self.Status.DRAFT:
+            raise ValidationError(
+                'Una política de pago publicada o retirada no puede eliminarse.'
+            )
+        return super().delete(*args, **kwargs)
+
+
+class ImmutablePaymentIntentQuerySet(models.QuerySet):
+    immutable_error = 'Los PaymentIntent son inmutables fuera de sus servicios.'
+
+    def update(self, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+    def delete(self):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_create(self, objs, *args, **kwargs):
+        raise ValidationError(
+            'La creación masiva de PaymentIntent no está permitida.'
+        )
+
+    def update_or_create(self, defaults=None, create_defaults=None, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+
+class PaymentIntentManager(
+    models.Manager.from_queryset(ImmutablePaymentIntentQuerySet)
+):
+    def _create_from_service(self, **values):
+        intent = self.model(**values)
+        intent._allow_service_create = True
+        intent.save(force_insert=True, using=self.db)
+        return intent
+
+    def _transition(self, *, intent_id, from_statuses, **values):
+        queryset = self.get_queryset().filter(
+            pk=intent_id,
+            status__in=from_statuses,
+        )
+        return models.QuerySet.update(queryset, **values)
+
+
+class PaymentIntent(models.Model):
+    class Mode(models.TextChoices):
+        DEPOSIT = 'DEPOSIT', 'Seña'
+        FULL = 'FULL', 'Total'
+
+    class Status(models.TextChoices):
+        CREATED = 'CREATED', 'Creado'
+        PENDING = 'PENDING', 'Pendiente'
+        APPROVED = 'APPROVED', 'Aprobado'
+        REJECTED = 'REJECTED', 'Rechazado'
+        EXPIRED = 'EXPIRED', 'Vencido'
+        CANCELLED = 'CANCELLED', 'Cancelado'
+
+    ACTIVE_STATUSES = (Status.CREATED, Status.PENDING)
+    TERMINAL_FAILURE_STATUSES = (
+        Status.REJECTED,
+        Status.EXPIRED,
+        Status.CANCELLED,
+    )
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    solicitud = models.ForeignKey(
+        SolicitudTecnicaReserva,
+        on_delete=models.PROTECT,
+        related_name='payment_intents',
+    )
+    slot_hold = models.ForeignKey(
+        SlotHold,
+        on_delete=models.PROTECT,
+        related_name='payment_intents',
+    )
+    cliente = models.ForeignKey(
+        'usuarios.Cliente',
+        on_delete=models.PROTECT,
+        related_name='payment_intents',
+    )
+    policy = models.ForeignKey(
+        PaymentPolicy,
+        on_delete=models.PROTECT,
+        related_name='payment_intents',
+    )
+    policy_snapshot = models.JSONField()
+    mode = models.CharField(max_length=10, choices=Mode.choices)
+    total_amount_snapshot = models.DecimalField(max_digits=12, decimal_places=2)
+    required_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    currency = models.CharField(max_length=3, choices=PAYMENT_CURRENCY_CHOICES)
+    status = models.CharField(
+        max_length=12,
+        choices=Status.choices,
+        default=Status.CREATED,
+    )
+    expires_at = models.DateTimeField()
+    created_at = models.DateTimeField(default=timezone.now, editable=False)
+    pending_at = models.DateTimeField(null=True, blank=True)
+    approved_at = models.DateTimeField(null=True, blank=True)
+    terminal_at = models.DateTimeField(null=True, blank=True)
+    terminal_reason = models.CharField(max_length=50, blank=True, default='')
+    idempotency_key = models.CharField(max_length=128, unique=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='payment_intents_created',
+    )
+    confirmed_turno = models.OneToOneField(
+        'Turno',
+        on_delete=models.PROTECT,
+        related_name='payment_intent',
+        null=True,
+        blank=True,
+    )
+    confirmation_operation_key = models.CharField(
+        max_length=128,
+        unique=True,
+        null=True,
+        blank=True,
+    )
+    objects = PaymentIntentManager()
+
+    class Meta:
+        ordering = ['-created_at']
+        base_manager_name = 'objects'
+        default_manager_name = 'objects'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['slot_hold'],
+                condition=models.Q(status__in=['CREATED', 'PENDING']),
+                name='payment_intent_one_active_hold',
+            ),
+            models.UniqueConstraint(
+                fields=['slot_hold'],
+                condition=models.Q(status='APPROVED'),
+                name='payment_intent_one_approved_hold',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(total_amount_snapshot__gt=0),
+                name='payment_intent_positive_total',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(required_amount__gt=0)
+                    & models.Q(
+                        required_amount__lte=models.F('total_amount_snapshot')
+                    )
+                ),
+                name='payment_intent_valid_required',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(created_at__lt=models.F('expires_at')),
+                name='payment_intent_valid_expiry',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        status='CREATED',
+                        pending_at__isnull=True,
+                        approved_at__isnull=True,
+                        terminal_at__isnull=True,
+                        terminal_reason='',
+                    )
+                    | models.Q(
+                        status='PENDING',
+                        pending_at__isnull=False,
+                        approved_at__isnull=True,
+                        terminal_at__isnull=True,
+                        terminal_reason='',
+                    )
+                    | models.Q(
+                        status='APPROVED',
+                        approved_at__isnull=False,
+                        terminal_at__isnull=True,
+                        terminal_reason='',
+                    )
+                    | (
+                        models.Q(
+                            status__in=['REJECTED', 'EXPIRED', 'CANCELLED'],
+                            approved_at__isnull=True,
+                            terminal_at__isnull=False,
+                        )
+                        & ~models.Q(terminal_reason='')
+                    )
+                ),
+                name='payment_intent_status_timestamps',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['status', 'expires_at'],
+                name='payment_intent_status_exp_idx',
+            ),
+            models.Index(
+                fields=['cliente', '-created_at'],
+                name='payment_intent_client_idx',
+            ),
+        ]
+
+    def clean(self):
+        errors = {}
+        if self.solicitud_id and self.slot_hold_id:
+            if self.slot_hold.solicitud_id != self.solicitud_id:
+                errors['solicitud'] = 'La solicitud no coincide con el HOLD.'
+        if self.cliente_id and self.slot_hold_id:
+            if self.slot_hold.cliente_id != self.cliente_id:
+                errors['cliente'] = 'El Cliente no coincide con el HOLD.'
+        if self.policy_id and self.currency != self.policy.currency:
+            errors['currency'] = 'La moneda no coincide con la política.'
+        if not isinstance(self.policy_snapshot, dict):
+            errors['policy_snapshot'] = 'Debe ser un objeto JSON.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if self._state.adding and not getattr(
+            self,
+            '_allow_service_create',
+            False,
+        ):
+            raise ValidationError(
+                'Un PaymentIntent sólo puede crearse mediante su servicio.'
+            )
+        if not self._state.adding:
+            raise ValidationError(
+                'Un PaymentIntent persistido sólo cambia mediante servicios.'
+            )
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Un PaymentIntent no puede eliminarse.')
+
+
+class ImmutablePaymentIntentLineQuerySet(models.QuerySet):
+    immutable_error = 'Las líneas de PaymentIntent son inmutables.'
+
+    def update(self, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+    def delete(self):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_create(self, objs, *args, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+    def update_or_create(self, defaults=None, create_defaults=None, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+
+class PaymentIntentLineManager(
+    models.Manager.from_queryset(ImmutablePaymentIntentLineQuerySet)
+):
+    def _create_from_service(self, **values):
+        line = self.model(**values)
+        line._allow_service_create = True
+        line.save(force_insert=True, using=self.db)
+        return line
+
+
+class PaymentIntentLine(models.Model):
+    intent = models.ForeignKey(
+        PaymentIntent,
+        on_delete=models.PROTECT,
+        related_name='lines',
+    )
+    servicio = models.ForeignKey(
+        Servicio,
+        on_delete=models.PROTECT,
+        related_name='payment_intent_lines',
+    )
+    orden = models.PositiveSmallIntegerField()
+    nombre_snapshot = models.CharField(max_length=100)
+    cantidad = models.PositiveIntegerField(default=1)
+    precio_unitario_snapshot = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+    )
+    descuento = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    subtotal = models.DecimalField(max_digits=12, decimal_places=2)
+    moneda = models.CharField(max_length=3, choices=PAYMENT_CURRENCY_CHOICES)
+    objects = PaymentIntentLineManager()
+
+    class Meta:
+        ordering = ['orden', 'pk']
+        base_manager_name = 'objects'
+        default_manager_name = 'objects'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['intent', 'orden'],
+                name='payment_intent_line_unique_order',
+            ),
+            models.UniqueConstraint(
+                fields=['intent', 'servicio'],
+                name='payment_intent_line_unique_service',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(cantidad__gte=1),
+                name='payment_intent_line_positive_quantity',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(precio_unitario_snapshot__gte=0)
+                    & models.Q(descuento__gte=0)
+                    & models.Q(subtotal__gte=0)
+                ),
+                name='payment_intent_line_nonnegative_amounts',
+            ),
+        ]
+
+    def clean(self):
+        errors = {}
+        gross = self.precio_unitario_snapshot * self.cantidad
+        if self.descuento > gross:
+            errors['descuento'] = 'El descuento no puede superar el bruto.'
+        if self.subtotal != gross - self.descuento:
+            errors['subtotal'] = 'El subtotal no coincide con la línea.'
+        if self.intent_id and self.moneda != self.intent.currency:
+            errors['moneda'] = 'La moneda no coincide con el Intent.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if self._state.adding and not getattr(
+            self,
+            '_allow_service_create',
+            False,
+        ):
+            raise ValidationError(
+                'Una línea de PaymentIntent sólo puede crearla su servicio.'
+            )
+        if not self._state.adding:
+            raise ValidationError('Una línea de PaymentIntent es inmutable.')
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Una línea de PaymentIntent no puede eliminarse.')
+
+
+class EvaluacionSolicitudTecnica(models.Model):
+    solicitud = models.ForeignKey(
+        SolicitudTecnicaReserva,
+        on_delete=models.PROTECT,
+        related_name='intentos_evaluacion',
+    )
+    evaluacion = models.OneToOneField(
+        EvaluacionRiesgoTecnico,
+        on_delete=models.PROTECT,
+        related_name='intento_solicitud_tecnica',
+    )
+    intento = models.PositiveIntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['intento']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['solicitud', 'intento'],
+                name='unique_technical_request_attempt',
+            ),
+        ]
+
+
+class AceptacionAdvertenciaTecnica(models.Model):
+    solicitud = models.ForeignKey(
+        SolicitudTecnicaReserva,
+        on_delete=models.PROTECT,
+        related_name='aceptaciones_advertencia',
+    )
+    evaluacion = models.OneToOneField(
+        EvaluacionRiesgoTecnico,
+        on_delete=models.PROTECT,
+        related_name='aceptacion_advertencia',
+    )
+    policy_version = models.CharField(max_length=50)
+    warning_codes = models.JSONField(default=list)
+    warning_texts = models.JSONField(default=list)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='advertencias_tecnicas_aceptadas',
+    )
+    accepted_at = models.DateTimeField(auto_now_add=True)
+
+
+class ImmutableTechnicalReviewDecisionQuerySet(models.QuerySet):
+    immutable_error = 'Las decisiones de revisión técnica son inmutables.'
+
+    def update(self, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+    def delete(self):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_create(self, objs, *args, **kwargs):
+        raise ValidationError(
+            'La creación masiva de decisiones de revisión técnica no está '
+            'permitida; use el servicio de revisión auditado.'
+        )
+
+    def update_or_create(self, defaults=None, create_defaults=None, **kwargs):
+        raise ValidationError(
+            'update_or_create no está permitido para decisiones de revisión '
+            'técnica inmutables.'
+        )
+
+
+class ImmutableTechnicalReviewDecisionManager(
+    models.Manager.from_queryset(ImmutableTechnicalReviewDecisionQuerySet)
+):
+    pass
+
+
+class DecisionRevisionTecnica(models.Model):
+    class Accion(models.TextChoices):
+        APROBAR = 'APROBAR', 'Aprobar'
+        RECHAZAR = 'RECHAZAR', 'Rechazar'
+        SOLICITAR_INFORMACION = (
+            'SOLICITAR_INFORMACION',
+            'Solicitar información',
+        )
+        RECOMENDAR_OTRA_FECHA = (
+            'RECOMENDAR_OTRA_FECHA',
+            'Recomendar otra fecha',
+        )
+
+    solicitud = models.ForeignKey(
+        SolicitudTecnicaReserva,
+        on_delete=models.PROTECT,
+        related_name='decisiones_revision',
+    )
+    evaluacion = models.ForeignKey(
+        EvaluacionRiesgoTecnico,
+        on_delete=models.PROTECT,
+        related_name='decisiones_revision',
+    )
+    policy_version = models.CharField(max_length=50)
+    accion = models.CharField(max_length=30, choices=Accion.choices)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='decisiones_revision_tecnica',
+    )
+    motivo_interno = models.TextField(blank=True)
+    mensaje_cliente = models.TextField(blank=True)
+    datos_faltantes = models.JSONField(default=list, blank=True)
+    fecha_recomendada = models.DateField(null=True, blank=True)
+    estado_anterior = models.CharField(
+        max_length=30,
+        choices=SolicitudTecnicaReserva.Estado.choices,
+    )
+    estado_nuevo = models.CharField(
+        max_length=30,
+        choices=SolicitudTecnicaReserva.Estado.choices,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    objects = ImmutableTechnicalReviewDecisionManager()
+
+    class Meta:
+        ordering = ['-created_at']
+        base_manager_name = 'objects'
+        default_manager_name = 'objects'
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError(
+                'Una decisión de revisión técnica persistida es inmutable.'
+            )
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError(
+            'Una decisión de revisión técnica persistida no puede eliminarse.'
+        )
+
+
 class Notificacion(models.Model):
     """
     Sistema de notificaciones para usuarios.
@@ -2074,7 +3916,7 @@ class Notificacion(models.Model):
         ('recordatorio', 'Recordatorio'),
         ('ADELANTO', 'Oferta de Adelanto de Turno'),
     ]
-    
+
     CANAL_CHOICES = [
         ('app', 'Aplicación (In-App)'),
         ('email', 'Correo Electrónico'),
@@ -2089,8 +3931,8 @@ class Notificacion(models.Model):
     ]
 
     usuario = models.ForeignKey(
-        'usuarios.Usuario', 
-        on_delete=models.CASCADE, 
+        'usuarios.Usuario',
+        on_delete=models.CASCADE,
         related_name='notificaciones'
     )
     tipo = models.CharField(max_length=50, choices=TIPO_CHOICES, default='informativa')
@@ -2099,7 +3941,7 @@ class Notificacion(models.Model):
     mensaje = models.TextField()
     estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='pendiente')
     fecha_envio = models.DateTimeField(auto_now_add=True)
-    
+
     # Referencia genérica
     origen_entidad = models.CharField(max_length=50, blank=True, null=True)
     origen_id = models.IntegerField(blank=True, null=True)
@@ -2129,7 +3971,7 @@ class Auditoria(models.Model):
         ('MODIFICACION', 'Modificación'),
         ('BAJA', 'Baja / Eliminación'),
     ]
-    
+
     tabla = models.CharField(
         max_length=100,
         help_text="Nombre de la tabla modificada"
@@ -2164,14 +4006,14 @@ class Auditoria(models.Model):
         blank=True,
         help_text="Valores nuevos"
     )
-    
+
     # Campo para distinguir entre usuario autenticado y anonimo
     ip_address = models.GenericIPAddressField(
         null=True,
         blank=True,
         help_text="IP desde donde se realizó la acción"
     )
-    
+
     class Meta:
         verbose_name = "Auditoría"
         verbose_name_plural = "Auditorías"
@@ -2189,7 +4031,7 @@ class Auditoria(models.Model):
 
     def __str__(self):
         return f"{self.accion} en {self.tabla} (ID: {self.registro_id}) - {self.fecha_hora.strftime('%d/%m/%Y %H:%M')}"
-    
+
     def obtener_diferencias(self):
         """
         Calcula y retorna solo los campos que cambiaron.
@@ -2197,51 +4039,51 @@ class Auditoria(models.Model):
         """
         if self.accion == 'MODIFICACION' and self.valor_anterior and self.valor_nuevo:
             diferencias = {}
-            
+
             for campo, valor_nuevo in self.valor_nuevo.items():
                 valor_anterior = self.valor_anterior.get(campo)
-                
+
                 # Solo incluir campos que efectivamente cambiaron
                 if valor_anterior != valor_nuevo:
                     diferencias[campo] = {
                         'antes': valor_anterior,
                         'ahora': valor_nuevo
                     }
-            
+
             return diferencias
-        
+
         elif self.accion == 'ALTA':
             # Para ALTA, retornar todos los valores nuevos
             return {
                 'accion': 'CREACIÓN',
                 'valores': self.valor_nuevo or {}
             }
-        
+
         elif self.accion == 'BAJA':
             # Para BAJA, retornar todos los valores eliminados
             return {
                 'accion': 'ELIMINACIÓN',
                 'valores': self.valor_anterior or {}
             }
-        
+
         return {}
-    
+
     def obtener_diferencias_texto(self):
         """
         Retorna un texto formateado de los cambios.
         Ejemplo: "nombre: 'Juan' → 'Carlos', estado: 'activo' → 'inactivo'"
         """
         diferencias = self.obtener_diferencias()
-        
+
         if not diferencias:
             return "Sin cambios"
-        
+
         if self.accion == 'MODIFICACION':
             return ", ".join([
                 f"<strong>{k}</strong>: '{v['antes']}' → '{v['ahora']}'"
                 for k, v in diferencias.items()
             ])
-        
+
         return "N/A"
 
 
@@ -2253,7 +4095,7 @@ class OrdenCompra(models.Model):
         ('RECHAZADO', 'Rechazado'),
         ('CANCELADO', 'Cancelado'),
     )
-    
+
     codigo = models.CharField(max_length=20, unique=True)
     cliente = models.ForeignKey(
         'usuarios.Cliente',
@@ -2278,50 +4120,471 @@ class OrdenCompra(models.Model):
         return f"{self.codigo} - {self.cliente} - ${self.total}"
 
 
+class ImmutablePagoQuerySet(models.QuerySet):
+    immutable_error = 'Los Pagos financieros son inmutables fuera de sus servicios.'
+
+    def update(self, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+    def delete(self):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_create(self, objs, *args, **kwargs):
+        raise ValidationError('La creación masiva de Pagos no está permitida.')
+
+    def update_or_create(self, defaults=None, create_defaults=None, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+
+class PagoManager(models.Manager.from_queryset(ImmutablePagoQuerySet)):
+    def _create_booking_from_service(self, **values):
+        payment = self.model(**values)
+        payment._allow_booking_create = True
+        payment.save(force_insert=True, using=self.db)
+        return payment
+
+    def _transition(self, *, payment_id, from_statuses, **values):
+        queryset = self.get_queryset().filter(
+            pk=payment_id,
+            status__in=from_statuses,
+        )
+        return models.QuerySet.update(queryset, **values)
+
+    def _link_turno(self, *, payment_ids, turno_id):
+        queryset = self.get_queryset().filter(
+            pk__in=payment_ids,
+            payment_intent__isnull=False,
+            payment_intent__confirmed_turno_id=turno_id,
+            turno__isnull=True,
+        )
+        return models.QuerySet.update(queryset, turno_id=turno_id)
+
+
 class Pago(models.Model):
     METODO_PAGO_CHOICES = (
         ('EFECTIVO', 'Efectivo'),
         ('TRANSFERENCIA', 'Transferencia'),
         ('MERCADO_PAGO', 'Mercado Pago'),
+        ('CASH', 'Efectivo manual'),
+        ('BANK_TRANSFER', 'Transferencia bancaria manual'),
+        ('EXTERNAL_CARD', 'Tarjeta externa'),
+        ('OTHER', 'Otro medio manual'),
+    )
+
+    class Method(models.TextChoices):
+        CASH = 'CASH', 'Efectivo'
+        BANK_TRANSFER = 'BANK_TRANSFER', 'Transferencia bancaria'
+        EXTERNAL_CARD = 'EXTERNAL_CARD', 'Tarjeta externa'
+        OTHER = 'OTHER', 'Otro'
+
+    class Purpose(models.TextChoices):
+        CONFIRMATION = 'CONFIRMATION', 'Confirmación'
+        BALANCE = 'BALANCE', 'Saldo'
+
+    class Status(models.TextChoices):
+        PENDING_RECONCILIATION = (
+            'PENDING_RECONCILIATION',
+            'Pendiente de conciliación',
+        )
+        RECONCILED = 'RECONCILED', 'Conciliado'
+        REJECTED = 'REJECTED', 'Rechazado'
+        REVERSED = 'REVERSED', 'Revertido'
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    payment_intent = models.ForeignKey(
+        PaymentIntent,
+        on_delete=models.PROTECT,
+        related_name='payments',
+        null=True,
+        blank=True,
     )
 
     orden = models.ForeignKey(
         OrdenCompra,
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         related_name='pagos',
         null=True,
         blank=True
     )
     turno = models.ForeignKey(
         'Turno',
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         related_name='pagos',
         null=True,
         blank=True
     )
-    monto = models.DecimalField(max_digits=10, decimal_places=2)
+    monto = models.DecimalField(max_digits=12, decimal_places=2)
     metodo_pago = models.CharField(max_length=20, choices=METODO_PAGO_CHOICES)
+    currency = models.CharField(
+        max_length=3,
+        choices=PAYMENT_CURRENCY_CHOICES,
+        default='ARS',
+    )
+    purpose = models.CharField(
+        max_length=15,
+        choices=Purpose.choices,
+        default=Purpose.BALANCE,
+    )
+    status = models.CharField(
+        max_length=24,
+        choices=Status.choices,
+        default=Status.RECONCILED,
+    )
     transaccion_id = models.CharField(max_length=255, null=True, blank=True, unique=True)
     fecha_pago = models.DateTimeField(default=timezone.now)
-    comprobante_foto = models.ImageField(
-        upload_to='pagos/comprobantes/',
+    recorded_at = models.DateTimeField(default=timezone.now, editable=False)
+    recorded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='payments_recorded',
+        null=True,
+        blank=True,
+    )
+    reconciled_at = models.DateTimeField(null=True, blank=True)
+    reconciled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='payments_reconciled',
+        null=True,
+        blank=True,
+    )
+    manual_reference = models.CharField(max_length=80, blank=True, default='')
+    comprobante_foto = models.FileField(
+        upload_to='booking/%Y/%m/',
+        storage=private_payment_receipt_storage,
         blank=True,
         null=True
     )
+    receipt_sha256 = models.CharField(max_length=64, blank=True, default='')
+    idempotency_key = models.CharField(
+        max_length=128,
+        null=True,
+        blank=True,
+        unique=True,
+    )
+    terminal_reason = models.CharField(max_length=100, blank=True, default='')
     es_sena = models.BooleanField(default=False)
 
     history = HistoricalRecords()
+    objects = PagoManager()
 
     class Meta:
         verbose_name = "Pago"
         verbose_name_plural = "Pagos"
-        ordering = ['-fecha_pago']
+        ordering = ['-recorded_at', '-pk']
+        base_manager_name = 'objects'
+        default_manager_name = 'objects'
         permissions = [
             ('register_payment', 'Can register payments'),
         ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(monto__gt=0),
+                name='payment_positive_amount',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    (
+                        models.Q(payment_intent__isnull=False)
+                        & models.Q(orden__isnull=True)
+                    )
+                    | (
+                        models.Q(payment_intent__isnull=True)
+                        & models.Q(orden__isnull=False)
+                    )
+                ),
+                name='payment_exactly_one_context',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(orden__isnull=True)
+                    | models.Q(turno__isnull=True)
+                ),
+                name='payment_order_without_turno',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(orden__isnull=False)
+                    | (
+                        models.Q(recorded_by__isnull=False)
+                        & models.Q(idempotency_key__isnull=False)
+                    )
+                ),
+                name='booking_payment_actor_and_key',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(orden__isnull=False)
+                    | models.Q(
+                        status='PENDING_RECONCILIATION',
+                        reconciled_at__isnull=True,
+                        reconciled_by__isnull=True,
+                    )
+                    | models.Q(
+                        status='RECONCILED',
+                        reconciled_at__isnull=False,
+                        reconciled_by__isnull=False,
+                        terminal_reason='',
+                    )
+                    | (
+                        models.Q(
+                            status__in=['REJECTED', 'REVERSED'],
+                            reconciled_at__isnull=False,
+                            reconciled_by__isnull=False,
+                        )
+                        & ~models.Q(terminal_reason='')
+                    )
+                ),
+                name='booking_payment_status_metadata',
+            ),
+            models.UniqueConstraint(
+                fields=['metodo_pago', 'manual_reference'],
+                condition=(
+                    models.Q(payment_intent__isnull=False)
+                    & models.Q(
+                        metodo_pago__in=['BANK_TRANSFER', 'EXTERNAL_CARD']
+                    )
+                    & ~models.Q(manual_reference='')
+                ),
+                name='payment_unique_manual_reference',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['payment_intent', 'status'],
+                name='payment_intent_status_idx',
+            ),
+            models.Index(
+                fields=['status', '-recorded_at'],
+                name='payment_status_recorded_idx',
+            ),
+        ]
+
+    @property
+    def amount(self):
+        return self.monto
+
+    @property
+    def method(self):
+        return self.metodo_pago
+
+    @property
+    def occurred_at(self):
+        return self.fecha_pago
+
+    @property
+    def receipt(self):
+        return self.comprobante_foto
+
+    def clean(self):
+        errors = {}
+        has_intent = self.payment_intent_id is not None
+        has_order = self.orden_id is not None
+        if has_intent == has_order:
+            errors['payment_intent'] = (
+                'El Pago debe pertenecer exactamente a un Intent o una Orden.'
+            )
+        if has_order and self.turno_id is not None:
+            errors['turno'] = (
+                'Un Pago legacy de Orden no puede tener Turno asociado.'
+            )
+        if has_intent:
+            if (
+                self.turno_id is not None
+                and self.turno_id != self.payment_intent.confirmed_turno_id
+            ):
+                errors['turno'] = (
+                    'El Turno no coincide con el confirmado por el Intent.'
+                )
+            if self.currency != self.payment_intent.currency:
+                errors['currency'] = 'La moneda no coincide con el Intent.'
+            if self.metodo_pago not in self.Method.values:
+                errors['metodo_pago'] = 'El medio manual no es válido.'
+            if self.recorded_by_id is None:
+                errors['recorded_by'] = 'El actor de registro es obligatorio.'
+            if not self.idempotency_key:
+                errors['idempotency_key'] = (
+                    'La clave de idempotencia es obligatoria.'
+                )
+        if self.monto is not None and self.monto <= 0:
+            errors['monto'] = 'El importe debe ser mayor que cero.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError('Un Pago financiero persistido es inmutable.')
+        if (
+            self.payment_intent_id is not None
+            and not getattr(self, '_allow_booking_create', False)
+        ):
+            raise ValidationError(
+                'Un Pago de booking sólo puede crearse mediante su servicio.'
+            )
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Un Pago financiero no puede eliminarse.')
 
     def __str__(self):
-        return f"Pago {self.id} - {self.orden.codigo} - ${self.monto}"
+        context = (
+            f'Intent {self.payment_intent_id}'
+            if self.payment_intent_id
+            else f'Orden {self.orden_id}'
+        )
+        return f'Pago {self.id} - {context} - {self.currency} {self.monto}'
+
+
+class ImmutablePaymentReconciliationCaseQuerySet(models.QuerySet):
+    immutable_error = 'Los casos de conciliación financiera son inmutables.'
+
+    def update(self, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+    def delete(self):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_create(self, objs, *args, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+
+class PaymentReconciliationCaseManager(
+    models.Manager.from_queryset(ImmutablePaymentReconciliationCaseQuerySet)
+):
+    def _create_from_service(self, **values):
+        case = self.model(**values)
+        case._allow_service_create = True
+        case.save(force_insert=True, using=self.db)
+        return case
+
+
+class PaymentReconciliationCase(models.Model):
+    """Excepción financiera provider-neutral pendiente de resolución manual."""
+
+    class Type(models.TextChoices):
+        LATE_PAYMENT = 'LATE_PAYMENT', 'Pago tardío'
+        BOOKING_CONFIRMATION_FAILED = (
+            'BOOKING_CONFIRMATION_FAILED',
+            'Confirmación de agenda fallida',
+        )
+
+    class Status(models.TextChoices):
+        OPEN = 'OPEN', 'Abierto'
+        RESOLVED = 'RESOLVED', 'Resuelto'
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    payment_intent = models.ForeignKey(
+        PaymentIntent,
+        on_delete=models.PROTECT,
+        related_name='reconciliation_cases',
+    )
+    slot_hold = models.ForeignKey(
+        SlotHold,
+        on_delete=models.PROTECT,
+        related_name='payment_reconciliation_cases',
+    )
+    turno = models.ForeignKey(
+        'Turno',
+        on_delete=models.PROTECT,
+        related_name='payment_reconciliation_cases',
+        null=True,
+        blank=True,
+    )
+    payments = models.ManyToManyField(
+        Pago,
+        related_name='reconciliation_cases',
+        blank=True,
+    )
+    case_type = models.CharField(max_length=40, choices=Type.choices)
+    status = models.CharField(
+        max_length=12,
+        choices=Status.choices,
+        default=Status.OPEN,
+    )
+    reason_code = models.CharField(max_length=50)
+    operation_key = models.CharField(max_length=128, unique=True)
+    details = models.JSONField(default=dict, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='payment_reconciliation_cases_created',
+    )
+    created_at = models.DateTimeField(default=timezone.now, editable=False)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    objects = PaymentReconciliationCaseManager()
+
+    class Meta:
+        ordering = ['-created_at', '-pk']
+        base_manager_name = 'objects'
+        default_manager_name = 'objects'
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        status='OPEN',
+                        resolved_at__isnull=True,
+                    )
+                    | models.Q(
+                        status='RESOLVED',
+                        resolved_at__isnull=False,
+                    )
+                ),
+                name='payment_reconciliation_case_status_time',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['status', '-created_at'],
+                name='payment_case_status_cr_idx',
+            ),
+            models.Index(
+                fields=['payment_intent', 'case_type'],
+                name='payment_case_intent_type_idx',
+            ),
+        ]
+
+    def clean(self):
+        errors = {}
+        if (
+            self.payment_intent_id
+            and self.slot_hold_id
+            and self.payment_intent.slot_hold_id != self.slot_hold_id
+        ):
+            errors['slot_hold'] = 'El HOLD no coincide con el Intent.'
+        if not self.operation_key:
+            errors['operation_key'] = 'La operation key es obligatoria.'
+        if not self.reason_code:
+            errors['reason_code'] = 'La razón es obligatoria.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if self._state.adding and not getattr(
+            self,
+            '_allow_service_create',
+            False,
+        ):
+            raise ValidationError(
+                'Un caso de conciliación sólo puede crearse mediante su servicio.'
+            )
+        if not self._state.adding:
+            raise ValidationError(
+                'Un caso de conciliación persistido sólo cambia mediante servicios.'
+            )
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Un caso de conciliación no puede eliminarse.')
 
 
 class OrdenItem(models.Model):

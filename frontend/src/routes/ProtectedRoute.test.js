@@ -25,11 +25,13 @@ const sessionContext = ({
     status = 'authenticated',
     businessRole = 'CLIENTE',
     permissions = [],
-    clientProfile = false
+    clientProfile = false,
+    personalProfile = false,
+    personalActive = false
 } = {}) => {
     const profiles = {
         cliente: { exists: clientProfile },
-        personal: { exists: businessRole === 'PROFESIONAL' }
+        personal: { exists: personalProfile || businessRole === 'PROFESIONAL', active: personalActive }
     };
 
     return {
@@ -41,7 +43,10 @@ const sessionContext = ({
             required.some((permission) => permissions.includes(permission))
         ),
         hasRole: (role) => businessRole === role,
-        hasProfile: (profile) => profiles[profile]?.exists === true
+        hasProfile: (profile) => profiles[profile]?.exists === true,
+        hasActiveProfile: (profile) => (
+            profiles[profile]?.exists === true && profiles[profile]?.active === true
+        )
     };
 };
 
@@ -136,6 +141,54 @@ describe('ProtectedRoute declarativo con acceso por URL directa', () => {
         renderDirectUrl('/perfil', {
             requiredProfile: 'cliente'
         }, { businessRole: 'PROFESIONAL', clientProfile: true });
+
+        expect(screen.getByText('Contenido protegido')).toBeInTheDocument();
+    });
+
+    test('Personal activo entra directamente a mi agenda laboral sin agenda global', () => {
+        renderDirectUrl('/mi-agenda-laboral', {
+            requiredActiveProfile: 'personal'
+        }, {
+            businessRole: 'PROFESIONAL',
+            personalProfile: true,
+            personalActive: true
+        });
+
+        expect(screen.getByText('Contenido protegido')).toBeInTheDocument();
+    });
+
+    test('Personal inactivo no entra a mi agenda laboral', () => {
+        renderDirectUrl('/mi-agenda-laboral', {
+            requiredActiveProfile: 'personal'
+        }, {
+            businessRole: 'PROFESIONAL',
+            personalProfile: true,
+            personalActive: false
+        });
+
+        expectRedirect('/acceso-denegado');
+    });
+
+    test('Cliente sin perfil Personal no entra a mi agenda laboral', () => {
+        renderDirectUrl('/mi-agenda-laboral', {
+            requiredActiveProfile: 'personal'
+        }, {
+            businessRole: 'CLIENTE',
+            clientProfile: true
+        });
+
+        expectRedirect('/acceso-denegado');
+    });
+
+    test('PROFESIONAL con Cliente y Personal activos conserva agenda laboral', () => {
+        renderDirectUrl('/mi-agenda-laboral', {
+            requiredActiveProfile: 'personal'
+        }, {
+            businessRole: 'PROFESIONAL',
+            clientProfile: true,
+            personalProfile: true,
+            personalActive: true
+        });
 
         expect(screen.getByText('Contenido protegido')).toBeInTheDocument();
     });

@@ -150,13 +150,14 @@ const CatalogoProductos = () => {
     };
 
     const getStockDisponible = (prod) => {
+        if (typeof prod?.available === 'boolean') {
+            return prod.available ? 1 : 0;
+        }
         const stockDisponible = Number(prod?.stock_disponible);
         if (Number.isFinite(stockDisponible)) {
             return stockDisponible;
         }
-        const stockReal = Number(prod?.stock_real || 0);
-        const stockComprometido = Number(prod?.stock_comprometido || 0);
-        return Math.max(0, stockReal - stockComprometido);
+        return 0;
     };
 
     const getProductosCombo = (combo) => {
@@ -432,7 +433,7 @@ const CatalogoProductos = () => {
                                         <div className="mb-4">
                                             {getStockDisponible(producto) > 0 ? (
                                                 <span className="text-xs font-bold px-2 py-1 rounded-full" style={{ backgroundColor: '#E8F5E8', color: '#2E7D2E' }}>
-                                                    En Stock ({getStockDisponible(producto)})
+                                                    En Stock
                                                 </span>
                                             ) : (
                                                 <span className="text-xs font-bold px-2 py-1 rounded-full" style={{ backgroundColor: '#FFE8E8', color: '#C73E3E' }}>
@@ -599,9 +600,6 @@ const CatalogoProductos = () => {
                                                     <span className="text-xs font-bold px-2 py-1 rounded-full" style={{ backgroundColor: '#E8F5E8', color: '#2E7D2E' }}>
                                                         En Stock
                                                     </span>
-                                                    <p className="text-xs mt-2" style={{ color: '#8B8682' }}>
-                                                        {stockDisponibleSeleccionado} unidades disponibles
-                                                    </p>
                                                 </>
                                             ) : (
                                                 <span className="text-xs font-bold px-2 py-1 rounded-full" style={{ backgroundColor: '#FFE8E8', color: '#C73E3E' }}>
@@ -634,17 +632,16 @@ const CatalogoProductos = () => {
                                                 <input
                                                     type="number"
                                                     min="1"
-                                                    max={stockDisponibleSeleccionado}
                                                     value={cantidadSeleccionada}
                                                     onChange={(e) => {
                                                         const valor = parseInt(e.target.value) || 1;
-                                                        setCantidadSeleccionada(Math.min(Math.max(valor, 1), stockDisponibleSeleccionado));
+                                                        setCantidadSeleccionada(Math.max(valor, 1));
                                                     }}
                                                     className="w-16 px-2 py-2 border text-center rounded-lg outline-none text-sm"
                                                     style={{ borderColor: '#E8DCC4' }}
                                                 />
                                                 <button
-                                                    onClick={() => setCantidadSeleccionada(Math.min(stockDisponibleSeleccionado, cantidadSeleccionada + 1))}
+                                                    onClick={() => setCantidadSeleccionada(cantidadSeleccionada + 1)}
                                                     className="px-3 py-2 border rounded-lg font-bold transition text-sm"
                                                     style={{ borderColor: '#E8DCC4', color: '#817773' }}
                                                     onMouseEnter={(e) => e.target.style.backgroundColor = '#F5F5EB'}

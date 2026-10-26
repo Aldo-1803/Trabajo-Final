@@ -192,6 +192,22 @@ describe('SessionProvider', () => {
         expect(currentSession.hasProfile('otro')).toBe(false);
     });
 
+    test('hasActiveProfile requiere existencia y actividad del perfil', async () => {
+        mockAuthenticatedSession({
+            ...validSession,
+            profiles: {
+                ...validSession.profiles,
+                personal: { ...validSession.profiles.personal, active: false }
+            }
+        });
+
+        renderProvider();
+
+        await waitFor(() => expect(currentSession.authenticated).toBe(true));
+        expect(currentSession.hasActiveProfile('personal')).toBe(false);
+        expect(currentSession.hasActiveProfile('cliente')).toBe(true);
+    });
+
     test('refreshSession reemplaza el contexto en memoria', async () => {
         const updatedSession = {
             ...validSession,

@@ -39,6 +39,8 @@ class BusinessPermission:
     MANAGE_CONTENT = 'gestion.manage_content'
     MANAGE_PERSONAL = 'gestion.manage_personal'
     MANAGE_SKILLS = 'gestion.manage_skills'
+    REVIEW_TECHNICAL_BOOKING = 'gestion.review_technical_booking'
+    MANAGE_TECHNICAL_RISK_POLICY = 'gestion.manage_technical_risk_policy'
     VIEW_REPORTS = 'gestion.view_reports'
     VIEW_FINANCIAL_REPORTS = 'gestion.view_financial_reports'
     VIEW_AUDIT = 'gestion.view_audit'
@@ -71,6 +73,8 @@ class BusinessPermission:
         MANAGE_CONTENT,
         MANAGE_PERSONAL,
         MANAGE_SKILLS,
+        REVIEW_TECHNICAL_BOOKING,
+        MANAGE_TECHNICAL_RISK_POLICY,
         VIEW_REPORTS,
         VIEW_FINANCIAL_REPORTS,
         VIEW_AUDIT,
@@ -87,17 +91,21 @@ EMPLOYEE_BASE_PERMISSIONS = (
     BusinessPermission.REGISTER_ARRIVAL,
     BusinessPermission.REPROGRAM_ANY_TURNO,
     BusinessPermission.CANCEL_ANY_TURNO,
-    BusinessPermission.CONFIRM_DEPOSIT,
     BusinessPermission.REGISTER_PAYMENT,
     BusinessPermission.VIEW_STOCK,
 )
 
-PROFESSIONAL_BASE_PERMISSIONS = EMPLOYEE_BASE_PERMISSIONS + (
+PROFESSIONAL_BASE_PERMISSIONS = tuple(
+    permission
+    for permission in EMPLOYEE_BASE_PERMISSIONS
+    if permission != BusinessPermission.REGISTER_PAYMENT
+) + (
     BusinessPermission.CREATE_DIAGNOSIS,
     BusinessPermission.MANAGE_TECHNICAL_RECORD,
     BusinessPermission.MANAGE_FORMULAS,
     BusinessPermission.ASSIGN_ROUTINES,
     BusinessPermission.FINALIZE_SERVICE,
+    BusinessPermission.REVIEW_TECHNICAL_BOOKING,
 )
 
 ROLE_BASE_PERMISSIONS = {

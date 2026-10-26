@@ -1,4 +1,4 @@
-from rest_framework import viewsets, status, serializers
+from rest_framework import mixins, viewsets, status, serializers
 from rest_framework.decorators import api_view, permission_classes, action
 from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 from rest_framework.parsers import FormParser, MultiPartParser
@@ -13,9 +13,10 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
+from rest_framework.pagination import PageNumberPagination
 from datetime import datetime, date, timedelta, time
 from django.db import transaction
-from django.db.models import Q, F
+from django.db.models import Q, F, Sum
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.core.files.storage import default_storage
@@ -27,7 +28,8 @@ from uuid import uuid4
 import mercadopago
 
 from django.conf import settings
-from django.http import Http404
+from django.http import FileResponse, Http404
+from django.core.exceptions import ValidationError as DjangoValidationError
 
 # Configurar logger global
 logger = logging.getLogger(__name__)
@@ -38,6 +40,9 @@ from .models import (
     RutinaCliente, HorarioLaboral, BloqueoAgenda, Personal, Habilidad, PersonalHabilidad, TipoEquipamiento, FichaTecnica, DiagnosticoCapilar, RequisitoServicio,
     CategoriaProducto, Promocion, ConfiguracionRetoque, DiasSemana, Carrito, CarritoItem, ContenidoEducativo, MeGusta, ContenidoGuardado,
     OrdenPendiente, OrdenCompra, OrdenItem, Pago, ConfiguracionDiagnostico,
+    FamiliaProcesoTecnico, PerfilTecnicoServicio, PoliticaRiesgoTecnico,
+    ReglaIntervaloTecnico, ReglaDiagnosticoTecnico, ReglaFrecuenciaTecnica,
+    PaymentIntent, SlotHold, SolicitudTecnicaReserva, MovimientoStock,
     #PasoRutinaCliente
     #PasoRutina
 )
@@ -56,16 +61,36 @@ from .serializers import (
     UsuarioAdminReadSerializer, AgendaCuidadosSerializer,
     HorarioLaboralSerializer, BloqueoAgendaSerializer, PersonalSerializer,
     HabilidadSerializer, PersonalHabilidadSerializer,
+    FamiliaProcesoTecnicoSerializer, PerfilTecnicoServicioSerializer,
+    PoliticaRiesgoTecnicoSerializer, ReglaIntervaloTecnicoSerializer,
+    ReglaDiagnosticoTecnicoSerializer, ReglaFrecuenciaTecnicaSerializer,
     PersonalHabilidadAssignCommandSerializer,
     PersonalAccessCreateCommandSerializer,
     PersonalBusinessRoleChangeCommandSerializer,
     PersonalStatusChangeCommandSerializer,
     PersonalUserLinkCommandSerializer,
-    PagoSerializer,
+    PagoSerializer, LegacyOrderPaymentCommandSerializer,
+    ManualPaymentReconcileCommandSerializer,
+    ManualPaymentRegisterCommandSerializer,
     TipoEquipamientoSerializer, FichaTecnicaSerializer, RequisitoServicioSerializer, DiagnosticoCapilarSerializer,
     CategoriaProductoSerializer, PromocionSerializer, ConfiguracionSerializer, ConfiguracionRetoqueSummarySerializer,
     CarritoSerializer, CarritoItemSerializer, ContenidoEducativoSerializer, MeGustaSerializer, ContenidoGuardadoSerializer,
     OrdenPendienteSerializer, OrdenCompraSerializer, OrdenItemSerializer, ConfiguracionDiagnosticoSerializer,
+    TechnicalBookingRequestCreateSerializer,
+    TechnicalBookingRequestPublicSerializer,
+    TechnicalBookingRequestReevaluateSerializer,
+    TechnicalBookingRequestReviewSerializer,
+    TechnicalBookingReviewCommandSerializer,
+    SlotHoldCreateCommandSerializer,
+    SlotHoldPublicSerializer,
+    SlotHoldReleaseCommandSerializer,
+    PaymentIntentCancelCommandSerializer,
+    PaymentIntentCreateCommandSerializer,
+    PaymentIntentPublicSerializer,
+    StockAdjustCommandSerializer,
+    StockCorrectionCommandSerializer,
+    StockMovementSerializer,
+    StockReceiveCommandSerializer,
     #PasoRutinaSerializer,
 )
 from .permissions import (
@@ -78,11 +103,69 @@ from .permissions import (
     CanReprogramAnyTurno,
     CanViewGlobalAgenda,
     CanManageSkills,
+    CanManageTechnicalRiskPolicy,
+    CanReviewTechnicalBooking,
+    CanViewFinancialReports,
+    CanManageStock,
+    CanViewStock,
+)
+from .inventory_services import (
+    StockConflict,
+    StockError,
+    StockInvalid,
+    StockNotFound,
+    StockPermissionDenied,
+    adjust_stock,
+    correct_stock_movement,
+    receive_stock,
+)
+from .technical_booking_request_services import (
+    TechnicalBookingRequestError,
+    TechnicalBookingRequestNotFound,
+    TechnicalBookingRequestPermissionDenied,
+    TechnicalBookingRequestTransitionError,
+    accept_technical_warning,
+    create_technical_booking_request,
+    eligible_review_requests,
+    reevaluate_technical_booking_request,
+    review_technical_booking_request,
+)
+from .technical_risk_policy_services import (
+    TechnicalRiskPolicyInvalid,
+    TechnicalRiskPolicyNotFound,
+    TechnicalRiskPolicyPermissionDenied,
+    TechnicalRiskPolicyStateError,
+    publish_technical_risk_policy,
 )
 from .turno_creation_services import (
     TurnoAvailabilityService,
     TurnoCreationError,
     TurnoCreationService,
+)
+from .slot_hold_clock import database_now
+from .slot_hold_services import (
+    SlotHoldConflict,
+    SlotHoldError,
+    SlotHoldNotFound,
+    create_slot_hold,
+    release_slot_hold,
+)
+from .payment_intent_services import (
+    PaymentIntentConflict,
+    PaymentIntentError,
+    PaymentIntentNotFound,
+    cancel_payment_intent,
+    create_payment_intent,
+)
+from .manual_payment_services import (
+    ManualPaymentConflict,
+    ManualPaymentError,
+    ManualPaymentNotFound,
+    ManualPaymentPermissionDenied,
+    actor_can_read_payment,
+    financial_snapshot,
+    reconcile_manual_payment,
+    register_manual_payment,
 )
 from .turno_arrival_services import (
     InvalidTurnoArrivalTransition,
@@ -548,6 +631,142 @@ class HabilidadViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = HabilidadSerializer
     permission_classes = [IsAuthenticated, CanManageSkills]
     pagination_class = None
+
+
+class TechnicalRiskAdminViewSetMixin:
+    permission_classes = [IsAuthenticated, CanManageTechnicalRiskPolicy]
+    pagination_class = None
+
+
+class FamiliaProcesoTecnicoViewSet(
+    TechnicalRiskAdminViewSetMixin,
+    viewsets.ModelViewSet,
+):
+    queryset = FamiliaProcesoTecnico.objects.all().order_by('nombre')
+    serializer_class = FamiliaProcesoTecnicoSerializer
+
+
+class PerfilTecnicoServicioViewSet(
+    TechnicalRiskAdminViewSetMixin,
+    viewsets.ModelViewSet,
+):
+    queryset = PerfilTecnicoServicio.objects.select_related(
+        'servicio', 'familia'
+    ).order_by('servicio__nombre')
+    serializer_class = PerfilTecnicoServicioSerializer
+
+
+class PoliticaRiesgoTecnicoViewSet(
+    TechnicalRiskAdminViewSetMixin,
+    viewsets.ModelViewSet,
+):
+    queryset = PoliticaRiesgoTecnico.objects.select_related(
+        'publicada_por'
+    ).all()
+    serializer_class = PoliticaRiesgoTecnicoSerializer
+
+    def update(self, request, *args, **kwargs):
+        policy = self.get_object()
+        if policy.estado != PoliticaRiesgoTecnico.Estado.BORRADOR:
+            raise MethodNotAllowed(
+                request.method,
+                detail='Una política publicada o retirada es inmutable.',
+            )
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        policy = self.get_object()
+        if policy.estado != PoliticaRiesgoTecnico.Estado.BORRADOR:
+            raise MethodNotAllowed(
+                request.method,
+                detail='Una política publicada o retirada no puede eliminarse.',
+            )
+        return super().destroy(request, *args, **kwargs)
+
+    @action(detail=True, methods=['post'])
+    def publicar(self, request, pk=None):
+        try:
+            policy = publish_technical_risk_policy(
+                actor=request.user,
+                policy_id=pk,
+            )
+        except TechnicalRiskPolicyPermissionDenied:
+            raise PermissionDenied(
+                'No tiene permisos para publicar políticas de riesgo técnico.'
+            )
+        except TechnicalRiskPolicyNotFound:
+            raise Http404
+        except TechnicalRiskPolicyStateError as exc:
+            return Response(
+                {'error': {'code': 'INVALID_POLICY_STATE', 'detail': str(exc)}},
+                status=status.HTTP_409_CONFLICT,
+            )
+        except TechnicalRiskPolicyInvalid as exc:
+            return Response(
+                {
+                    'error': {
+                        'code': 'INVALID_TECHNICAL_RISK_POLICY',
+                        'detail': str(exc),
+                        'errors': exc.errors,
+                    }
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(self.get_serializer(policy).data)
+
+
+class TechnicalRiskRuleViewSetMixin(TechnicalRiskAdminViewSetMixin):
+    def update(self, request, *args, **kwargs):
+        rule = self.get_object()
+        if rule.politica.estado != PoliticaRiesgoTecnico.Estado.BORRADOR:
+            raise MethodNotAllowed(
+                request.method,
+                detail='Las reglas de una política publicada son inmutables.',
+            )
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        rule = self.get_object()
+        if rule.politica.estado != PoliticaRiesgoTecnico.Estado.BORRADOR:
+            raise MethodNotAllowed(
+                request.method,
+                detail='Las reglas de una política publicada son inmutables.',
+            )
+        try:
+            return super().destroy(request, *args, **kwargs)
+        except DjangoValidationError as exc:
+            raise ValidationError(exc.messages)
+
+
+class ReglaIntervaloTecnicoViewSet(
+    TechnicalRiskRuleViewSetMixin,
+    viewsets.ModelViewSet,
+):
+    queryset = ReglaIntervaloTecnico.objects.select_related(
+        'politica', 'servicio_origen', 'familia_origen',
+        'servicio_destino', 'familia_destino',
+    ).all()
+    serializer_class = ReglaIntervaloTecnicoSerializer
+
+
+class ReglaDiagnosticoTecnicoViewSet(
+    TechnicalRiskRuleViewSetMixin,
+    viewsets.ModelViewSet,
+):
+    queryset = ReglaDiagnosticoTecnico.objects.select_related(
+        'politica', 'servicio_destino', 'familia_destino'
+    ).all()
+    serializer_class = ReglaDiagnosticoTecnicoSerializer
+
+
+class ReglaFrecuenciaTecnicaViewSet(
+    TechnicalRiskRuleViewSetMixin,
+    viewsets.ModelViewSet,
+):
+    queryset = ReglaFrecuenciaTecnica.objects.select_related(
+        'politica', 'servicio', 'familia'
+    ).all()
+    serializer_class = ReglaFrecuenciaTecnicaSerializer
 
 
 class PersonalViewSet(viewsets.ModelViewSet):
@@ -1886,23 +2105,15 @@ class TurnoViewSet(viewsets.ModelViewSet):
 
         Permite al profesional registrar un pago asociado a un turno.
         """
-        if not request.user.is_staff:
-            raise PermissionDenied("No tienes permisos para registrar pagos.")
-
-        turno = self.get_object()
-        serializer = PagoSerializer(data=request.data, context={'request': request})
-
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-        pago = serializer.save(turno=turno)
-
         return Response(
             {
-                'status': 'Pago registrado',
-                'pago': PagoSerializer(pago, context={'request': request}).data
+                'code': 'LEGACY_TURNO_PAYMENT_DISABLED',
+                'detail': (
+                    'Los nuevos Pagos de booking deben registrarse sobre un '
+                    'PaymentIntent.'
+                ),
             },
-            status=status.HTTP_201_CREATED
+            status=status.HTTP_409_CONFLICT,
         )
     
     @action(detail=True, methods=['post'])
@@ -2194,6 +2405,7 @@ class TurnoViewSet(viewsets.ModelViewSet):
                     servicios_ids=[servicio.id],
                     excluir_turno_id=excluir_turno_id,
                     servicios=slot_services,
+                    cliente=getattr(request.user, 'cliente', None),
                 )
                 
                 if slots:
@@ -2229,6 +2441,7 @@ class TurnoViewSet(viewsets.ModelViewSet):
         servicios_ids=None,
         excluir_turno_id=None,
         servicios=None,
+        cliente=None,
     ):
         servicio = (
             servicios[0]
@@ -2249,6 +2462,7 @@ class TurnoViewSet(viewsets.ModelViewSet):
             excluir_turno_id=excluir_turno_id,
             duracion_minutos=duracion_minutos,
             servicios=servicios,
+            cliente=cliente,
         )
     
     def _buscar_proxima_fecha(self, servicio_id, fecha_desde):
@@ -2429,7 +2643,10 @@ class TurnoViewSet(viewsets.ModelViewSet):
                 grosor_cabello=cliente.grosor_cabello,
                 porosidad_cabello=cliente.porosidad_cabello,
                 cuero_cabelludo=cliente.cuero_cabelludo,
-                estado_general=cliente.estado_general
+                estado_general=cliente.estado_general,
+                procedencia=(
+                    DiagnosticoCapilar.Procedencia.POST_SERVICIO_AUTOMATICO
+                ),
             )
             
             # Ejecutar el motor diagnóstico automáticamente
@@ -3539,7 +3756,7 @@ class ProductoViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = ProductoFilter
     search_fields = ['nombre']
-    ordering_fields = ['nombre', 'precio', 'stock_real']
+    ordering_fields = ['nombre', 'precio']
 
     def get_queryset(self):
         """Optimiza queries con prefetch_related para imágenes"""
@@ -3548,12 +3765,17 @@ class ProductoViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         """
         Permisos dinámicos:
-        - list/retrieve: AllowAny (clientes pueden ver productos)
+        - list/retrieve: AllowAny (sin cantidades internas salvo view_stock)
         - create/update/destroy: IsAdminUser (solo admins gestionan)
-        - stock_bajo/sugeridos_por_cliente: AllowAny (endpoints públicos)
+        - stock_bajo/movimientos: view_stock
+        - receive/adjust: manage_stock
         """
-        if self.action in ['list', 'retrieve', 'stock_bajo', 'sugeridos_por_cliente']:
+        if self.action in ['list', 'retrieve', 'sugeridos_por_cliente']:
             permission_classes = [AllowAny]
+        elif self.action in ['stock_bajo', 'stock_movements']:
+            permission_classes = [IsAuthenticated, CanViewStock]
+        elif self.action in ['receive_stock', 'adjust_stock']:
+            permission_classes = [IsAuthenticated, CanManageStock]
         else:
             permission_classes = [IsAdminUser]
         return [permission() for permission in permission_classes]
@@ -3601,17 +3823,66 @@ class ProductoViewSet(viewsets.ModelViewSet):
         Útil para el panel de Yanina para saber qué reabastecer.
         GET /api/gestion/productos/stock_bajo/
         """
-        # Filtrar: stock_real - stock_comprometido <= stock_minimo
-        from django.db.models import Q
-        productos = Producto.objects.filter(
-            Q(stock_real__lte=F('stock_minimo')),
-            activo=True
+        productos = Producto.objects.annotate(
+            _stock_disponible=F('stock_real') - F('stock_comprometido')
+        ).filter(
+            _stock_disponible__lte=F('stock_minimo'),
+            activo=True,
         )
         serializer = self.get_serializer(productos, many=True)
         return Response({
             "total_productos_bajo_stock": productos.count(),
             "productos": serializer.data
         })
+
+    @action(detail=True, methods=['post'], url_path='stock/receive')
+    def receive_stock(self, request, pk=None):
+        serializer = StockReceiveCommandSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            movement = receive_stock(
+                product_id=self.get_object().pk,
+                actor=request.user,
+                **serializer.validated_data,
+            )
+        except StockError as exc:
+            return _stock_error_response(exc)
+        return Response(
+            StockMovementSerializer(movement).data,
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=True, methods=['post'], url_path='stock/adjust')
+    def adjust_stock(self, request, pk=None):
+        serializer = StockAdjustCommandSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            movement = adjust_stock(
+                product_id=self.get_object().pk,
+                actor=request.user,
+                **serializer.validated_data,
+            )
+        except StockError as exc:
+            return _stock_error_response(exc)
+        return Response(
+            StockMovementSerializer(movement).data,
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=True, methods=['get'], url_path='stock-movements')
+    def stock_movements(self, request, pk=None):
+        product = self.get_object()
+        queryset = MovimientoStock.objects.filter(
+            producto=product
+        ).select_related('actor', 'reverses_movement')
+        movement_type = request.query_params.get('tipo')
+        if movement_type:
+            queryset = queryset.filter(tipo=movement_type)
+        paginator = PageNumberPagination()
+        paginator.page_size = 20
+        page = paginator.paginate_queryset(queryset, request, view=self)
+        serializer = StockMovementSerializer(page, many=True)
+        return paginator.get_paginated_response(serializer.data)
 
     # --- 2. ENDPOINT: RECOMENDACIONES INTELIGENTES (SMART SELLING) ---
     @action(detail=False, methods=['get'], url_path='sugeridos-cliente')
@@ -3659,7 +3930,7 @@ class ProductoViewSet(viewsets.ModelViewSet):
             # Buscamos productos que coincidan y tengan stock
             sugeridos = Producto.objects.filter(
                 Q(compatibilidad=tag_busqueda) | Q(compatibilidad='TODO'),
-                stock_real__gt=0,
+                stock_real__gt=F('stock_comprometido'),
                 activo=True
             ).order_by('nombre')[:5]  # Limitamos a los mejores 5
 
@@ -3676,6 +3947,112 @@ class ProductoViewSet(viewsets.ModelViewSet):
                 "error": "No tienes diagnósticos previos. Realiza un diagnóstico para recibir recomendaciones personalizadas.",
                 "productos": []
             }, status=status.HTTP_404_NOT_FOUND)
+
+
+def _stock_error_response(exc):
+    if isinstance(exc, StockPermissionDenied):
+        response_status = status.HTTP_403_FORBIDDEN
+    elif isinstance(exc, StockNotFound):
+        response_status = status.HTTP_404_NOT_FOUND
+    elif isinstance(exc, StockConflict):
+        response_status = status.HTTP_409_CONFLICT
+    elif isinstance(exc, StockInvalid):
+        response_status = status.HTTP_400_BAD_REQUEST
+    else:
+        response_status = status.HTTP_400_BAD_REQUEST
+    return Response(
+        {'error': {'code': exc.code, 'detail': exc.detail}},
+        status=response_status,
+    )
+
+
+class StockMovementCommandViewSet(
+    mixins.ListModelMixin,
+    viewsets.GenericViewSet,
+):
+    """Superficie semántica: no expone CRUD genérico del ledger."""
+
+    queryset = MovimientoStock.objects.select_related(
+        'producto',
+        'actor',
+        'reverses_movement',
+    ).all()
+    serializer_class = StockMovementSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_permissions(self):
+        permission_classes = (
+            [IsAuthenticated, CanViewStock]
+            if self.action == 'list'
+            else [IsAuthenticated, CanManageStock]
+        )
+        return [permission() for permission in permission_classes]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        params = self.request.query_params
+
+        for parameter, field in (
+            ('producto', 'producto_id'),
+            ('actor', 'actor_id'),
+        ):
+            value = params.get(parameter)
+            if value in (None, ''):
+                continue
+            try:
+                value = int(value)
+            except (TypeError, ValueError):
+                raise ValidationError({parameter: 'Debe ser un ID entero.'})
+            queryset = queryset.filter(**{field: value})
+
+        movement_type = params.get('tipo')
+        if movement_type:
+            if movement_type not in MovimientoStock.Type.values:
+                raise ValidationError({'tipo': 'Tipo de movimiento inválido.'})
+            queryset = queryset.filter(tipo=movement_type)
+
+        for parameter, field in (
+            ('reference_type', 'reference_type'),
+            ('reference_id', 'reference_id'),
+        ):
+            value = params.get(parameter)
+            if value not in (None, ''):
+                queryset = queryset.filter(**{field: value})
+
+        for parameter, lookup in (
+            ('fecha_desde', 'created_at__gte'),
+            ('fecha_hasta', 'created_at__lte'),
+        ):
+            value = params.get(parameter)
+            if not value:
+                continue
+            parsed = parse_datetime(value)
+            if parsed is None:
+                raise ValidationError({
+                    parameter: 'Debe ser una fecha-hora ISO 8601 válida.',
+                })
+            if timezone.is_naive(parsed):
+                parsed = timezone.make_aware(parsed)
+            queryset = queryset.filter(**{lookup: parsed})
+
+        return queryset
+
+    @action(detail=True, methods=['post'], url_path='correct')
+    def correct(self, request, pk=None):
+        serializer = StockCorrectionCommandSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            movement = correct_stock_movement(
+                movement_id=pk,
+                actor=request.user,
+                **serializer.validated_data,
+            )
+        except StockError as exc:
+            return _stock_error_response(exc)
+        return Response(
+            StockMovementSerializer(movement).data,
+            status=status.HTTP_200_OK,
+        )
 
 # ----------------------------------------------------
 # D. CRUD TIPO EQUIPAMIENTO
@@ -4257,7 +4634,10 @@ class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
         automáticamente después de guardar el diagnóstico.
         """
         # 1. Guarda el diagnóstico en la base de datos
-        diagnostico = serializer.save(profesional=self.request.user)
+        diagnostico = serializer.save(
+            profesional=self.request.user,
+            procedencia=DiagnosticoCapilar.Procedencia.PROFESIONAL,
+        )
         
         # 2. Dispara el motor de análisis (dos niveles)
         self._ejecutar_motor_diagnostico(diagnostico)
@@ -6135,23 +6515,12 @@ class OrdenPendienteViewSet(viewsets.ModelViewSet):
 
         Permite al profesional registrar un pago asociado a la orden.
         """
-        if not request.user.is_staff:
-            raise PermissionDenied("No tienes permisos para registrar pagos.")
-
-        orden = self.get_object()
-        serializer = PagoSerializer(data=request.data, context={'request': request})
-
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-        pago = serializer.save(orden=orden)
-
         return Response(
             {
-                'status': 'Pago registrado',
-                'pago': PagoSerializer(pago, context={'request': request}).data
+                'code': 'LEGACY_PENDING_ORDER_PAYMENT_DISABLED',
+                'detail': 'OrdenPendiente no es un contexto financiero válido.',
             },
-            status=status.HTTP_201_CREATED
+            status=status.HTTP_409_CONFLICT,
         )
 
     @action(detail=True, methods=['post'])
@@ -6243,16 +6612,38 @@ class OrdenCompraViewSet(viewsets.ModelViewSet):
 
         Permite al profesional registrar un pago asociado a la orden.
         """
-        if not request.user.is_staff:
+        if not request.user.has_perm(BusinessPermission.REGISTER_PAYMENT):
             raise PermissionDenied("No tienes permisos para registrar pagos.")
 
-        orden = self.get_object()
-        serializer = PagoSerializer(data=request.data, context={'request': request})
-
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-        pago = serializer.save(orden=orden)
+        try:
+            orden = OrdenCompra.objects.get(pk=pk)
+        except OrdenCompra.DoesNotExist:
+            raise Http404
+        command = LegacyOrderPaymentCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        now = database_now()
+        values = command.validated_data
+        pago = Pago.objects.create(
+            orden=orden,
+            turno=None,
+            payment_intent=None,
+            monto=values['monto'],
+            currency='ARS',
+            metodo_pago=values['metodo_pago'],
+            purpose=(
+                Pago.Purpose.CONFIRMATION
+                if values['es_sena']
+                else Pago.Purpose.BALANCE
+            ),
+            status=Pago.Status.RECONCILED,
+            fecha_pago=values['fecha_pago'],
+            recorded_at=now,
+            recorded_by=request.user,
+            reconciled_at=now,
+            reconciled_by=request.user,
+            comprobante_foto=values.get('comprobante_foto'),
+            es_sena=values['es_sena'],
+        )
 
         return Response(
             {
@@ -6382,26 +6773,40 @@ class OrdenCompraViewSet(viewsets.ModelViewSet):
             )
 
 
-class PagoViewSet(viewsets.ReadOnlyModelViewSet):
+class PagoViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
     """
-    ViewSet para listar pagos (Caja).
-    Solo admins/staff pueden acceder.
+    ViewSet para Pagos e ingresos registrados; no representa caja física.
+    Reporte global por permiso y acciones semánticas; no expone CRUD.
     """
     queryset = Pago.objects.all().select_related(
         'orden__cliente__usuario',
-        'turno__cliente__usuario'
+        'turno__cliente__usuario',
+        'payment_intent__cliente__usuario',
+        'payment_intent__slot_hold',
+        'recorded_by',
+        'reconciled_by',
     )
     serializer_class = PagoSerializer
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsAuthenticated]
+    lookup_field = 'public_id'
+    lookup_value_regex = '[0-9a-fA-F-]{36}'
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['metodo_pago', 'es_sena']
     search_fields = [
         'orden__codigo',
         'orden__cliente__usuario__email',
-        'turno__cliente__usuario__email'
+        'turno__cliente__usuario__email',
+        'payment_intent__cliente__usuario__email',
     ]
-    ordering_fields = ['fecha_pago', 'monto']
-    ordering = ['-fecha_pago']
+    filterset_fields = ['metodo_pago', 'es_sena', 'status', 'currency']
+    ordering_fields = ['fecha_pago', 'monto', 'recorded_at']
+    ordering = ['-recorded_at']
+
+    def get_permissions(self):
+        if self.action == 'list':
+            classes = [IsAuthenticated, CanViewFinancialReports]
+        else:
+            classes = [IsAuthenticated]
+        return [permission() for permission in classes]
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -6419,6 +6824,75 @@ class PagoViewSet(viewsets.ReadOnlyModelViewSet):
                 pass
 
         return queryset
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        summary_rows = list(
+            queryset.values('currency', 'status')
+            .annotate(total=Sum('monto'))
+            .order_by('currency', 'status')
+        )
+        by_method = list(
+            queryset.filter(status=Pago.Status.RECONCILED)
+            .values('currency', 'metodo_pago')
+            .annotate(total=Sum('monto'))
+            .order_by('currency', 'metodo_pago')
+        )
+        page = self.paginate_queryset(queryset)
+        serializer = self.get_serializer(
+            page if page is not None else queryset,
+            many=True,
+        )
+        summary = {
+            'by_status': summary_rows,
+            'reconciled_by_method': by_method,
+            'physical_cash_balance': None,
+        }
+        if page is not None:
+            response = self.get_paginated_response(serializer.data)
+            response.data['summary'] = summary
+            return response
+        return Response({'results': serializer.data, 'summary': summary})
+
+    @action(detail=True, methods=['post'], url_path='reconcile')
+    def reconcile(self, request, public_id=None):
+        command = ManualPaymentReconcileCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        try:
+            result = reconcile_manual_payment(
+                payment_public_id=public_id,
+                actor=request.user,
+                **command.validated_data,
+            )
+        except ManualPaymentError as exc:
+            return PaymentIntentViewSet._manual_payment_error_response(exc)
+        if result.code:
+            return Response(
+                {'code': result.code, 'detail': result.detail},
+                status=status.HTTP_409_CONFLICT,
+            )
+        data = self.get_serializer(result.payment).data
+        data['changed'] = result.changed
+        data['financial'] = PaymentIntentViewSet._financial_data(
+            result.financial
+        )
+        return Response(data)
+
+    @action(detail=True, methods=['get'], url_path='receipt')
+    def receipt(self, request, public_id=None):
+        try:
+            payment = self.get_queryset().get(public_id=public_id)
+        except Pago.DoesNotExist:
+            raise Http404
+        if not actor_can_read_payment(request.user, payment):
+            raise Http404
+        if not payment.comprobante_foto:
+            raise Http404
+        return FileResponse(
+            payment.comprobante_foto.open('rb'),
+            as_attachment=True,
+            filename=os.path.basename(payment.comprobante_foto.name),
+        )
 # ============================================
 # VIEWSET PARA IMÁGENES DE PRODUCTOS
 # ============================================
@@ -6466,4 +6940,472 @@ class ImagenProductoViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_200_OK
             )
         return super().create(request, *args, **kwargs)
+
+
+class SolicitudTecnicaReservaViewSet(viewsets.GenericViewSet):
+    """API previa al Turno; sólo gestiona intención y evaluación técnica."""
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = TechnicalBookingRequestPublicSerializer
+    pagination_class = None
+
+    def get_permissions(self):
+        if self.action in {'cola', 'revisar'}:
+            return [IsAuthenticated(), CanReviewTechnicalBooking()]
+        return [IsAuthenticated()]
+
+    def _client_queryset(self):
+        try:
+            cliente = self.request.user.cliente
+        except Cliente.DoesNotExist:
+            return SolicitudTecnicaReserva.objects.none()
+        return (
+            SolicitudTecnicaReserva.objects.filter(cliente=cliente)
+            .select_related(
+                'evaluacion_vigente',
+                'personal_preferido',
+                'cliente__usuario',
+            )
+            .prefetch_related(
+                'servicios_solicitados__servicio',
+                'decisiones_revision',
+            )
+        )
+
+    def get_queryset(self):
+        return self._client_queryset()
+
+    @staticmethod
+    def _domain_error_response(exc):
+        if isinstance(exc, TechnicalBookingRequestNotFound):
+            code = status.HTTP_404_NOT_FOUND
+        elif isinstance(exc, TechnicalBookingRequestPermissionDenied):
+            code = status.HTTP_403_FORBIDDEN
+        elif isinstance(exc, TechnicalBookingRequestTransitionError):
+            code = status.HTTP_409_CONFLICT
+        else:
+            code = status.HTTP_400_BAD_REQUEST
+        return Response({'detail': str(exc)}, status=code)
+
+    def list(self, request):
+        serializer = self.get_serializer(
+            self._client_queryset(),
+            many=True,
+        )
+        return Response(serializer.data)
+
+    def retrieve(self, request, pk=None):
+        solicitud = self.get_object()
+        return Response(self.get_serializer(solicitud).data)
+
+    @staticmethod
+    def _slot_hold_error_response(exc):
+        if isinstance(exc, SlotHoldNotFound):
+            response_status = status.HTTP_404_NOT_FOUND
+        elif isinstance(exc, SlotHoldConflict):
+            response_status = status.HTTP_409_CONFLICT
+        else:
+            response_status = status.HTTP_400_BAD_REQUEST
+        return Response(
+            {
+                'code': exc.code,
+                'detail': exc.detail,
+                'field': exc.field,
+            },
+            status=response_status,
+        )
+
+    @action(detail=True, methods=['post'], url_path='hold')
+    def hold(self, request, pk=None):
+        solicitud = self.get_object()
+        idempotency_key = request.headers.get('Idempotency-Key', '').strip()
+        if not idempotency_key:
+            return Response(
+                {
+                    'code': 'IDEMPOTENCY_KEY_REQUIRED',
+                    'detail': 'Debe informar el header Idempotency-Key.',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        command = SlotHoldCreateCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        try:
+            result = create_slot_hold(
+                solicitud_id=solicitud.pk,
+                personal_id=command.validated_data['personal_id'],
+                starts_at=command.validated_data['starts_at'],
+                idempotency_key=idempotency_key,
+                actor=request.user,
+            )
+        except SlotHoldError as exc:
+            return self._slot_hold_error_response(exc)
+        response_status = (
+            status.HTTP_201_CREATED if result.created else status.HTTP_200_OK
+        )
+        return Response(
+            SlotHoldPublicSerializer(
+                result.hold,
+                context={'database_now': database_now()},
+            ).data,
+            status=response_status,
+        )
+
+    @action(detail=False, methods=['post'], url_path='reservar')
+    def reservar(self, request):
+        try:
+            cliente = request.user.cliente
+        except Cliente.DoesNotExist:
+            raise PermissionDenied(
+                'Se requiere un perfil de Cliente activo.'
+            )
+        command = TechnicalBookingRequestCreateSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        try:
+            solicitud = create_technical_booking_request(
+                cliente=cliente,
+                actor=request.user,
+                **command.validated_data,
+            )
+        except TechnicalBookingRequestError as exc:
+            return self._domain_error_response(exc)
+        solicitud = self._client_queryset().get(pk=solicitud.pk)
+        return Response(
+            self.get_serializer(solicitud).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='aceptar-advertencia',
+    )
+    def aceptar_advertencia(self, request, pk=None):
+        # get_object aplica ownership antes del lock semántico del servicio.
+        solicitud = self.get_object()
+        try:
+            accept_technical_warning(
+                solicitud_id=solicitud.pk,
+                actor=request.user,
+            )
+        except TechnicalBookingRequestError as exc:
+            return self._domain_error_response(exc)
+        solicitud = self._client_queryset().get(pk=solicitud.pk)
+        return Response(self.get_serializer(solicitud).data)
+
+    @action(detail=True, methods=['post'], url_path='reevaluar')
+    def reevaluar(self, request, pk=None):
+        solicitud = self.get_object()
+        command = TechnicalBookingRequestReevaluateSerializer(
+            data=request.data
+        )
+        command.is_valid(raise_exception=True)
+        try:
+            reevaluate_technical_booking_request(
+                solicitud_id=solicitud.pk,
+                actor=request.user,
+                **command.validated_data,
+            )
+        except TechnicalBookingRequestError as exc:
+            return self._domain_error_response(exc)
+        solicitud = self._client_queryset().get(pk=solicitud.pk)
+        return Response(self.get_serializer(solicitud).data)
+
+    @action(detail=False, methods=['get'], url_path='cola')
+    def cola(self, request):
+        try:
+            solicitudes = eligible_review_requests(request.user)
+        except TechnicalBookingRequestError as exc:
+            return self._domain_error_response(exc)
+        return Response(
+            TechnicalBookingRequestReviewSerializer(
+                solicitudes,
+                many=True,
+                context={'request': request},
+            ).data
+        )
+
+    @action(detail=True, methods=['post'], url_path='revisar')
+    def revisar(self, request, pk=None):
+        command = TechnicalBookingReviewCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        try:
+            review_technical_booking_request(
+                solicitud_id=pk,
+                actor=request.user,
+                action=command.validated_data.pop('accion'),
+                **command.validated_data,
+            )
+        except TechnicalBookingRequestError as exc:
+            return self._domain_error_response(exc)
+        solicitud = (
+            SolicitudTecnicaReserva.objects.select_related(
+                'cliente__usuario',
+                'evaluacion_vigente',
+            )
+            .prefetch_related('servicios_solicitados__servicio')
+            .get(pk=pk)
+        )
+        return Response(
+            TechnicalBookingRequestReviewSerializer(
+                solicitud,
+                context={'request': request},
+            ).data
+        )
+
+
+class SlotHoldViewSet(viewsets.GenericViewSet):
+    """Lectura y liberación semántica; no expone PATCH ni escritura genérica."""
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = SlotHoldPublicSerializer
+    lookup_field = 'public_id'
+    lookup_value_regex = '[0-9a-fA-F-]{36}'
+
+    def get_queryset(self):
+        try:
+            cliente = self.request.user.cliente
+        except Cliente.DoesNotExist:
+            return SlotHold.objects.none()
+        return SlotHold.objects.filter(cliente=cliente).select_related('personal')
+
+    def _serialize(self, hold):
+        return self.get_serializer(
+            hold,
+            context={
+                **self.get_serializer_context(),
+                'database_now': database_now(),
+            },
+        ).data
+
+    def retrieve(self, request, *args, **kwargs):
+        # GET calcula estado efectivo, pero nunca materializa una transición.
+        return Response(self._serialize(self.get_object()))
+
+    @action(detail=True, methods=['post'], url_path='release')
+    def release(self, request, public_id=None):
+        hold = self.get_object()
+        command = SlotHoldReleaseCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        try:
+            result = release_slot_hold(
+                public_id=hold.public_id,
+                actor=request.user,
+            )
+        except SlotHoldNotFound:
+            raise Http404
+        except SlotHoldConflict as exc:
+            return SolicitudTecnicaReservaViewSet._slot_hold_error_response(exc)
+        data = self._serialize(result.hold)
+        data['changed'] = result.changed
+        data['expiration_materialized'] = result.expiration_materialized
+        return Response(data, status=status.HTTP_200_OK)
+
+
+class PaymentIntentViewSet(viewsets.GenericViewSet):
+    """Creación, lectura propia y cancelación; no expone CRUD de estado."""
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = PaymentIntentPublicSerializer
+    lookup_field = 'public_id'
+    lookup_value_regex = '[0-9a-fA-F-]{36}'
+
+    def get_queryset(self):
+        try:
+            cliente = self.request.user.cliente
+        except Cliente.DoesNotExist:
+            return PaymentIntent.objects.none()
+        return (
+            PaymentIntent.objects.filter(cliente=cliente)
+            .select_related('slot_hold', 'policy')
+            .prefetch_related('lines')
+        )
+
+    def _serialize(self, intent):
+        return self.get_serializer(
+            intent,
+            context={
+                **self.get_serializer_context(),
+                'database_now': database_now(),
+            },
+        ).data
+
+    @staticmethod
+    def _error_response(exc):
+        if isinstance(exc, PaymentIntentNotFound):
+            response_status = status.HTTP_404_NOT_FOUND
+        elif isinstance(exc, PaymentIntentConflict):
+            response_status = status.HTTP_409_CONFLICT
+        else:
+            response_status = status.HTTP_400_BAD_REQUEST
+        return Response(
+            {
+                'code': exc.code,
+                'detail': exc.detail,
+                'field': exc.field,
+            },
+            status=response_status,
+        )
+
+    def create(self, request):
+        idempotency_key = request.headers.get('Idempotency-Key', '').strip()
+        if not idempotency_key:
+            return Response(
+                {
+                    'code': 'IDEMPOTENCY_KEY_REQUIRED',
+                    'detail': 'Debe informar el header Idempotency-Key.',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        command = PaymentIntentCreateCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        try:
+            hold = SlotHold.objects.get(
+                public_id=command.validated_data['slot_hold_public_id'],
+                cliente__usuario=request.user,
+            )
+        except SlotHold.DoesNotExist:
+            raise Http404
+        try:
+            result = create_payment_intent(
+                hold=hold,
+                mode=command.validated_data['mode'],
+                idempotency_key=idempotency_key,
+                actor=request.user,
+            )
+        except PaymentIntentError as exc:
+            return self._error_response(exc)
+        if not result.succeeded:
+            return Response(
+                {'code': result.code, 'detail': result.detail},
+                status=status.HTTP_409_CONFLICT,
+            )
+        response_status = (
+            status.HTTP_201_CREATED if result.created else status.HTTP_200_OK
+        )
+        return Response(self._serialize(result.intent), status=response_status)
+
+    def retrieve(self, request, *args, **kwargs):
+        return Response(self._serialize(self.get_object()))
+
+    @action(detail=True, methods=['post'], url_path='cancel')
+    def cancel(self, request, public_id=None):
+        intent = self.get_object()
+        command = PaymentIntentCancelCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        try:
+            result = cancel_payment_intent(
+                public_id=intent.public_id,
+                actor=request.user,
+            )
+        except PaymentIntentError as exc:
+            return self._error_response(exc)
+        data = self._serialize(result.intent)
+        data['changed'] = result.changed
+        return Response(data)
+
+    @staticmethod
+    def _manual_payment_error_response(exc):
+        if isinstance(exc, ManualPaymentPermissionDenied):
+            response_status = status.HTTP_403_FORBIDDEN
+        elif isinstance(exc, ManualPaymentNotFound):
+            response_status = status.HTTP_404_NOT_FOUND
+        elif isinstance(exc, ManualPaymentConflict):
+            response_status = status.HTTP_409_CONFLICT
+        else:
+            response_status = status.HTTP_400_BAD_REQUEST
+        return Response(
+            {
+                'code': exc.code,
+                'detail': exc.detail,
+                'field': exc.field,
+            },
+            status=response_status,
+        )
+
+    @staticmethod
+    def _financial_data(snapshot):
+        return {
+            'paid_reconciled': snapshot.paid_reconciled,
+            'confirmation_due': snapshot.confirmation_due,
+            'balance': snapshot.balance,
+            'financial_threshold_reached': (
+                snapshot.financial_threshold_reached
+            ),
+        }
+
+    @action(detail=True, methods=['get', 'post'], url_path='payments')
+    def payments(self, request, public_id=None):
+        if request.method == 'POST':
+            idempotency_key = request.headers.get(
+                'Idempotency-Key',
+                '',
+            ).strip()
+            if not idempotency_key:
+                return Response(
+                    {
+                        'code': 'IDEMPOTENCY_KEY_REQUIRED',
+                        'detail': 'Debe informar el header Idempotency-Key.',
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            command = ManualPaymentRegisterCommandSerializer(data=request.data)
+            command.is_valid(raise_exception=True)
+            try:
+                result = register_manual_payment(
+                    intent_public_id=public_id,
+                    idempotency_key=idempotency_key,
+                    actor=request.user,
+                    **command.validated_data,
+                )
+            except ManualPaymentError as exc:
+                return self._manual_payment_error_response(exc)
+            if not result.succeeded:
+                return Response(
+                    {'code': result.code, 'detail': result.detail},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            data = PagoSerializer(
+                result.payment,
+                context=self.get_serializer_context(),
+            ).data
+            data['financial'] = self._financial_data(result.financial)
+            return Response(
+                data,
+                status=(
+                    status.HTTP_201_CREATED
+                    if result.created
+                    else status.HTTP_200_OK
+                ),
+            )
+
+        try:
+            intent = (
+                PaymentIntent.objects.select_related(
+                    'cliente__usuario',
+                    'slot_hold',
+                )
+                .prefetch_related('payments')
+                .get(public_id=public_id)
+            )
+        except PaymentIntent.DoesNotExist:
+            raise Http404
+        can_read = bool(
+            intent.cliente.usuario_id == request.user.pk
+            or request.user.has_perm(BusinessPermission.REGISTER_PAYMENT)
+            or request.user.has_perm(BusinessPermission.CONFIRM_DEPOSIT)
+            or request.user.has_perm(
+                BusinessPermission.VIEW_FINANCIAL_REPORTS
+            )
+        )
+        if not can_read:
+            raise Http404
+        snapshot = financial_snapshot(intent)
+        return Response({
+            'results': PagoSerializer(
+                intent.payments.order_by('recorded_at', 'pk'),
+                many=True,
+                context=self.get_serializer_context(),
+            ).data,
+            'financial': self._financial_data(snapshot),
+        })
 

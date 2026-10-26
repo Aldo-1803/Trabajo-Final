@@ -10,9 +10,10 @@ from usuarios.roles import BusinessPermission
 from .models import (
     Auditoria,
     Configuracion,
-    Equipamiento,
     Personal,
     RequisitoServicio,
+    Servicio,
+    TipoEquipamiento,
     Turno,
 )
 from .turno_creation_services import ACTIVE_TURNO_STATES, TurnoAvailabilityService
@@ -118,8 +119,9 @@ def _lock_required_equipment(services):
     )
     if type_ids:
         list(
-            Equipamiento.objects.select_for_update()
-            .filter(tipo_id__in=type_ids)
+            TipoEquipamiento.objects.select_for_update()
+            .filter(pk__in=type_ids)
+            .order_by('pk')
             .values_list('pk', flat=True)
         )
 
@@ -149,6 +151,16 @@ def _reprogram_locked_turno(
             'El Turno no tiene un Servicio válido para reprogramar.',
         )
     services = [detail.servicio for detail in details]
+    primary_service = services[0]
+    # Orden común: Cliente -> Servicios por PK -> Personal -> tipos.
+    locked_services = {
+        service.pk: service
+        for service in Servicio.objects.select_for_update()
+        .filter(pk__in=sorted({service.pk for service in services}))
+        .prefetch_related('requisitos_habilidad__habilidad')
+        .order_by('pk')
+    }
+    services = [locked_services[service.pk] for service in services]
     primary_service = services[0]
 
     target_professional_id = profesional_id or turno.profesional_id
@@ -218,6 +230,7 @@ def _reprogram_locked_turno(
         duracion_minutos=sum(detail.duracion_minutos for detail in details) or 60,
         profesional=professional,
         excluir_turno_id=turno.pk,
+        cliente=turno.cliente,
     )
 
     previous_date = turno.fecha

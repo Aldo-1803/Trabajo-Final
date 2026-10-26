@@ -27,7 +27,8 @@ const Header = () => {
         clearSession,
         hasPermission,
         hasAnyPermission,
-        hasProfile
+        hasProfile,
+        hasActiveProfile
     } = useSession();
 
     useEffect(() => {
@@ -58,7 +59,8 @@ const Header = () => {
         error,
         hasPermission,
         hasAnyPermission,
-        hasProfile
+        hasProfile,
+        hasActiveProfile
     };
 
     const primaryItems = getVisibleNavigationItems(

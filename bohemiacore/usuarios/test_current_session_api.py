@@ -113,7 +113,7 @@ class CurrentSessionApiTests(APITestCase):
             self.expected_permissions(BusinessRole.EMPLEADO),
         )
 
-    def test_professional_returns_employee_and_technical_permissions(self):
+    def test_professional_excludes_payment_registration_and_has_technical_permissions(self):
         user = self.create_user('professional')
         self.create_personal(user, function_role='colorista')
         self.assign_role(user, BusinessRole.PROFESIONAL)
@@ -125,9 +125,15 @@ class CurrentSessionApiTests(APITestCase):
             response.data['permissions'],
             self.expected_permissions(BusinessRole.PROFESIONAL),
         )
-        self.assertTrue(
+        professional_permissions = set(response.data['permissions'])
+        employee_non_financial = (
             set(ROLE_BASE_PERMISSIONS[BusinessRole.EMPLEADO])
-            < set(response.data['permissions'])
+            - {BusinessPermission.REGISTER_PAYMENT}
+        )
+        self.assertTrue(employee_non_financial < professional_permissions)
+        self.assertNotIn(
+            BusinessPermission.REGISTER_PAYMENT,
+            professional_permissions,
         )
 
     def test_administrator_returns_complete_business_catalog(self):

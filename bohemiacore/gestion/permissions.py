@@ -47,6 +47,30 @@ class CanManageSkills(BasePermission):
         return request.user.has_perm(BusinessPermission.MANAGE_SKILLS)
 
 
+class CanManageTechnicalRiskPolicy(BasePermission):
+    message = 'No tiene permisos para gestionar políticas de riesgo técnico.'
+
+    def has_permission(self, request, view):
+        return request.user.has_perm(
+            BusinessPermission.MANAGE_TECHNICAL_RISK_POLICY
+        )
+
+
+class CanReviewTechnicalBooking(BasePermission):
+    message = (
+        'Se requiere permiso de revisión técnica, Personal activo y la '
+        'habilidad DIAGNOSTICO activa.'
+    )
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            getattr(user, 'is_active', False)
+            and user.has_perm(BusinessPermission.REVIEW_TECHNICAL_BOOKING)
+            and user_has_active_skill(user, DIAGNOSIS_SKILL_CODE)
+        )
+
+
 class CanCreateDiagnosisWithSkill(BasePermission):
     message = (
         'Se requiere permiso para crear diagnósticos y la habilidad '
@@ -80,3 +104,26 @@ class CanFinalizeService(BasePermission):
 
     def has_permission(self, request, view):
         return request.user.has_perm(BusinessPermission.FINALIZE_SERVICE)
+
+
+class CanViewFinancialReports(BasePermission):
+    message = 'No tiene permisos para consultar reportes financieros.'
+
+    def has_permission(self, request, view):
+        return request.user.has_perm(
+            BusinessPermission.VIEW_FINANCIAL_REPORTS
+        )
+
+
+class CanViewStock(BasePermission):
+    message = 'No tiene permisos para consultar stock interno.'
+
+    def has_permission(self, request, view):
+        return request.user.has_perm(BusinessPermission.VIEW_STOCK)
+
+
+class CanManageStock(BasePermission):
+    message = 'No tiene permisos para gestionar stock.'
+
+    def has_permission(self, request, view):
+        return request.user.has_perm(BusinessPermission.MANAGE_STOCK)

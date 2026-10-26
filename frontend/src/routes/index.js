@@ -18,6 +18,7 @@ import Operaciones from '../pages/session/Operaciones';
 import CuentaSinAcceso from '../pages/session/CuentaSinAcceso';
 import ErrorAcceso from '../pages/session/ErrorAcceso';
 import AccesoDenegado from '../pages/session/AccesoDenegado';
+import RevisionTecnica from '../pages/session/RevisionTecnica';
 
 // Imports - Cliente Pages
 import Perfil from '../pages/cliente/Perfil';
@@ -38,6 +39,7 @@ import ContenidoRecomendado from '../pages/cliente/ContenidoRecomendado';
 import ContenidoPublico from '../pages/cliente/ContenidoPublico';
 import ContenidoGuardado from '../pages/cliente/ContenidoGuardado';
 import DetalleContenido from '../pages/cliente/DetalleContenido';
+import SolicitudesTecnicas from '../pages/cliente/SolicitudesTecnicas';
 
 // Imports - Admin Pages
 import DashboardAdmin from '../pages/admin/DashboardAdmin';
@@ -85,6 +87,7 @@ export const AppRoutes = () => {
 
                 {/* Session landing routes */}
                 <Route path={SESSION_ROUTES.OPERACIONES} element={<ProtectedRoute requiredAnyPermission={['gestion.view_global_agenda', 'usuarios.create_walkin_client', 'gestion.create_turno_for_client']}><Operaciones /></ProtectedRoute>} />
+                <Route path={SESSION_ROUTES.REVISION_TECNICA} element={<ProtectedRoute requiredPermission="gestion.review_technical_booking" requiredActiveProfile="personal"><RevisionTecnica /></ProtectedRoute>} />
                 <Route path={SESSION_ROUTES.CUENTA_SIN_ACCESO} element={<CuentaSinAcceso />} />
                 <Route path={SESSION_ROUTES.ERROR_ACCESO} element={<ErrorAcceso />} />
                 <Route path={SESSION_ROUTES.ACCESO_DENEGADO} element={<AccesoDenegado />} />
@@ -93,6 +96,7 @@ export const AppRoutes = () => {
                 <Route path={CLIENTE_ROUTES.PERFIL} element={<ProtectedRoute requiredProfile="cliente"><Perfil /></ProtectedRoute>} />
                 <Route path={CLIENTE_ROUTES.EDITAR_PERFIL} element={<ProtectedRoute requiredProfile="cliente"><EditarPerfil /></ProtectedRoute>} />
                 <Route path={CLIENTE_ROUTES.RESERVAR} element={<ProtectedRoute requiredProfile="cliente"><ReservaCliente /></ProtectedRoute>} />
+                <Route path={CLIENTE_ROUTES.SOLICITUDES_TECNICAS} element={<ProtectedRoute requiredProfile="cliente"><SolicitudesTecnicas /></ProtectedRoute>} />
                 <Route path={CLIENTE_ROUTES.MIS_TURNOS} element={<ProtectedRoute requiredProfile="cliente"><MisTurnos /></ProtectedRoute>} />
                 <Route path={CLIENTE_ROUTES.MIS_PEDIDOS} element={<ProtectedRoute requiredProfile="cliente"><MisPedidos /></ProtectedRoute>} />
                 <Route path={CLIENTE_ROUTES.MI_AGENDA} element={<ProtectedRoute requiredProfile="cliente"><MiAgenda /></ProtectedRoute>} />

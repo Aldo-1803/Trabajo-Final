@@ -454,7 +454,8 @@ class RegistroSerializer(StrictInputFieldsMixin, serializers.ModelSerializer):
                 grosor_cabello=cliente.grosor_cabello,
                 porosidad_cabello=cliente.porosidad_cabello,
                 cuero_cabelludo=cliente.cuero_cabelludo,
-                estado_general=cliente.estado_general
+                estado_general=cliente.estado_general,
+                procedencia=DiagnosticoCapilar.Procedencia.AUTORREPORTE,
             )
             
             # Ejecutar el motor diagnóstico automáticamente

@@ -6,6 +6,7 @@ from .models import (
     Notificacion, Configuracion, Personal, HorarioLaboral, BloqueoAgenda, DiasSemana, Equipamiento,
     TipoEquipamiento, RequisitoServicio, FichaTecnica, DiagnosticoCapilar,
     ContenidoEducativo, MeGusta, ContenidoGuardado, Auditoria, Producto, ImagenProducto,
+    MovimientoStock,
     OrdenPendiente
     #PasoRutinaCliente, #PasoRutina,
 )
@@ -284,7 +285,11 @@ class ConfiguracionAdmin(admin.ModelAdmin):
     list_display = ('__str__', 'monto_sena', 'max_dias_anticipacion', 'whatsapp_numero')
     fieldsets = (
         ('Reglas Generales', {
-            'fields': ('intervalo_turnos', 'max_dias_anticipacion')
+            'fields': (
+                'intervalo_turnos',
+                'max_dias_anticipacion',
+                'slot_hold_ttl_minutes',
+            )
         }),
         ('Política de Señas y Pagos', {
             'fields': ('monto_sena', 'tiempo_limite_pago_sena'),
@@ -811,7 +816,12 @@ class ProductoAdmin(admin.ModelAdmin):
     list_filter = ('activo', 'categoria', 'marca')
     search_fields = ('sku', 'nombre', 'marca', 'descripcion')
     inlines = [ImagenProductoInline]
-    readonly_fields = ('stock_disponible', 'stock_comprometido')
+    readonly_fields = (
+        'stock_real',
+        'stock_comprometido',
+        'stock_disponible',
+        'stock_minimo',
+    )
     
     fieldsets = (
         ('Información General', {
@@ -837,6 +847,41 @@ class ProductoAdmin(admin.ModelAdmin):
     def stock_disponible(self, obj):
         return obj.stock_disponible
     stock_disponible.short_description = "Stock Disponible"
+
+
+@admin.register(MovimientoStock)
+class MovimientoStockAdmin(admin.ModelAdmin):
+    list_display = (
+        'id',
+        'producto',
+        'tipo',
+        'delta',
+        'stock_before',
+        'stock_after',
+        'actor_kind',
+        'created_at',
+    )
+    list_filter = ('tipo', 'actor_kind', 'created_at')
+    search_fields = (
+        'producto__sku',
+        'producto__nombre',
+        'reason_code',
+        'reference_type',
+        'reference_id',
+    )
+    ordering = ('-created_at', '-pk')
+
+    def get_readonly_fields(self, request, obj=None):
+        return tuple(field.name for field in self.model._meta.fields)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(ImagenProducto)

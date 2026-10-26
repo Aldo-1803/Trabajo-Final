@@ -4,20 +4,27 @@ from .models import (
     EstadoGeneral, Equipamiento, Producto, ImagenProducto, ReglaDiagnostico,
     Notificacion, Rutina, AgendaCuidados, RutinaCliente, Servicio,
     CategoriaServicio, Turno, DetalleTurno, HorarioLaboral, BloqueoAgenda, Personal,
-    Habilidad, PersonalHabilidad,
+    Habilidad, PersonalHabilidad, FamiliaProcesoTecnico,
+    PerfilTecnicoServicio, PoliticaRiesgoTecnico,
+    ReglaIntervaloTecnico, ReglaDiagnosticoTecnico,
+    ReglaFrecuenciaTecnica,
     TipoEquipamiento, FichaTecnica, DiagnosticoCapilar, RequisitoServicio,
     CategoriaProducto, Promocion, Configuracion, ConfiguracionRetoque,
     Carrito, CarritoItem, ContenidoEducativo, MeGusta, ContenidoGuardado,
     OrdenPendiente, OrdenCompra, OrdenItem, Pago, ConfiguracionDiagnostico,
+    DecisionRevisionTecnica, PAYMENT_CURRENCY_CHOICES, Pago,
+    PaymentIntent, PaymentIntentLine, MovimientoStock,
+    SlotHold, SolicitudTecnicaReserva,
     #PasoRutina, #PasoRutinaCliente,
 )
 
 from usuarios.models import Usuario, Cliente
-from usuarios.roles import BusinessRole
+from usuarios.roles import BusinessPermission, BusinessRole
 import os
 from django.core.exceptions import ValidationError 
 from datetime import datetime
 from django.db import transaction
+from django.utils import timezone
 
 # 1. EL SERIALIZER BASE (El "Molde")
 # Define los campos que TODOS los catálogos compartirán
@@ -575,6 +582,165 @@ class PersonalHabilidadSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class FamiliaProcesoTecnicoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FamiliaProcesoTecnico
+        fields = ['id', 'code', 'nombre', 'descripcion', 'activa']
+        read_only_fields = ['id']
+
+
+class PerfilTecnicoServicioSerializer(serializers.ModelSerializer):
+    familia_code = serializers.CharField(source='familia.code', read_only=True)
+
+    class Meta:
+        model = PerfilTecnicoServicio
+        fields = [
+            'id', 'servicio', 'familia', 'familia_code',
+            'estado_clasificacion', 'nivel_riesgo', 'activa',
+        ]
+        read_only_fields = ['id', 'familia_code']
+
+    def validate(self, attrs):
+        state = attrs.get(
+            'estado_clasificacion',
+            getattr(self.instance, 'estado_clasificacion', None),
+        )
+        risk = attrs.get(
+            'nivel_riesgo',
+            getattr(self.instance, 'nivel_riesgo', None),
+        )
+        if (
+            state == PerfilTecnicoServicio.EstadoClasificacion.CLASIFICADO
+            and risk == PerfilTecnicoServicio.NivelRiesgo.NO_DEFINIDO
+        ):
+            raise serializers.ValidationError({
+                'nivel_riesgo': 'Un Servicio clasificado requiere nivel de riesgo.'
+            })
+        return attrs
+
+
+class PoliticaRiesgoTecnicoSerializer(serializers.ModelSerializer):
+    publicada_por_email = serializers.CharField(
+        source='publicada_por.email', read_only=True
+    )
+
+    class Meta:
+        model = PoliticaRiesgoTecnico
+        fields = [
+            'id', 'version', 'estado', 'creada_at', 'publicada_at',
+            'publicada_por', 'publicada_por_email',
+        ]
+        read_only_fields = [
+            'id', 'estado', 'creada_at', 'publicada_at',
+            'publicada_por', 'publicada_por_email',
+        ]
+
+    def validate_version(self, value):
+        if self.instance is not None and self.instance.version != value:
+            raise serializers.ValidationError(
+                'La versión de una política no puede modificarse.'
+            )
+        return value
+
+
+class TechnicalRiskRuleSerializerMixin:
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        policy = attrs.get('politica') or getattr(self.instance, 'politica', None)
+        if (
+            policy is None
+            or policy.estado != PoliticaRiesgoTecnico.Estado.BORRADOR
+        ):
+            raise serializers.ValidationError({
+                'politica': 'Sólo se pueden administrar reglas de un borrador.'
+            })
+        if (
+            self.instance is not None
+            and 'politica' in attrs
+            and attrs['politica'].pk != self.instance.politica_id
+        ):
+            raise serializers.ValidationError({
+                'politica': 'Una regla no puede moverse a otra política.'
+            })
+        self.validate_selectors(attrs)
+        return attrs
+
+    @staticmethod
+    def _exactly_one(first, second):
+        return (first is None) != (second is None)
+
+
+class ReglaIntervaloTecnicoSerializer(
+    TechnicalRiskRuleSerializerMixin,
+    serializers.ModelSerializer,
+):
+    class Meta:
+        model = ReglaIntervaloTecnico
+        fields = '__all__'
+
+    def validate_selectors(self, attrs):
+        instance = self.instance
+        origin_service = attrs.get(
+            'servicio_origen', getattr(instance, 'servicio_origen', None)
+        )
+        origin_family = attrs.get(
+            'familia_origen', getattr(instance, 'familia_origen', None)
+        )
+        target_service = attrs.get(
+            'servicio_destino', getattr(instance, 'servicio_destino', None)
+        )
+        target_family = attrs.get(
+            'familia_destino', getattr(instance, 'familia_destino', None)
+        )
+        errors = {}
+        if not self._exactly_one(origin_service, origin_family):
+            errors['origen'] = 'Debe seleccionar exactamente un origen.'
+        if not self._exactly_one(target_service, target_family):
+            errors['destino'] = 'Debe seleccionar exactamente un destino.'
+        if errors:
+            raise serializers.ValidationError(errors)
+
+
+class ReglaDiagnosticoTecnicoSerializer(
+    TechnicalRiskRuleSerializerMixin,
+    serializers.ModelSerializer,
+):
+    class Meta:
+        model = ReglaDiagnosticoTecnico
+        fields = '__all__'
+
+    def validate_selectors(self, attrs):
+        instance = self.instance
+        service = attrs.get(
+            'servicio_destino', getattr(instance, 'servicio_destino', None)
+        )
+        family = attrs.get(
+            'familia_destino', getattr(instance, 'familia_destino', None)
+        )
+        if not self._exactly_one(service, family):
+            raise serializers.ValidationError({
+                'destino': 'Debe seleccionar exactamente un destino.'
+            })
+
+
+class ReglaFrecuenciaTecnicaSerializer(
+    TechnicalRiskRuleSerializerMixin,
+    serializers.ModelSerializer,
+):
+    class Meta:
+        model = ReglaFrecuenciaTecnica
+        fields = '__all__'
+
+    def validate_selectors(self, attrs):
+        instance = self.instance
+        service = attrs.get('servicio', getattr(instance, 'servicio', None))
+        family = attrs.get('familia', getattr(instance, 'familia', None))
+        if not self._exactly_one(service, family):
+            raise serializers.ValidationError({
+                'selector': 'Debe seleccionar exactamente un Servicio o familia.'
+            })
+
+
 class PersonalHabilidadAssignCommandSerializer(serializers.Serializer):
     habilidad_id = serializers.IntegerField(min_value=1)
 
@@ -817,17 +983,41 @@ class ProductoSerializer(serializers.ModelSerializer):
     # Stock disponible (propiedad calculada)
     stock_disponible = serializers.SerializerMethodField()
     necesita_reposicion = serializers.SerializerMethodField()
+    available = serializers.SerializerMethodField()
 
     class Meta:
         model = Producto
         fields = [
             'id', 'sku', 'nombre', 'marca', 'categoria', 'categoria_nombre',
             'descripcion', 'precio', 'stock_real', 'stock_comprometido', 'stock_minimo',
-            'stock_disponible', 'necesita_reposicion',
+            'stock_disponible', 'necesita_reposicion', 'available',
             'imagen', 'imagen_url', 'imagenes', 'estado_publicacion', 'compatibilidad',
             'material_principal', 'proposito_uso', 'activo'
         ]
-        read_only_fields = ['id', 'categoria_nombre', 'imagen_url', 'imagenes', 'stock_comprometido', 'stock_disponible', 'necesita_reposicion']
+        read_only_fields = [
+            'id', 'categoria_nombre', 'imagen_url', 'imagenes', 'stock_real',
+            'stock_comprometido', 'stock_minimo', 'stock_disponible',
+            'necesita_reposicion', 'available',
+        ]
+
+    def to_representation(self, instance):
+        representation = super().to_representation(instance)
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        can_view_stock = bool(
+            user is not None
+            and user.has_perm(BusinessPermission.VIEW_STOCK)
+        )
+        if not can_view_stock:
+            for field in (
+                'stock_real',
+                'stock_comprometido',
+                'stock_minimo',
+                'stock_disponible',
+                'necesita_reposicion',
+            ):
+                representation.pop(field, None)
+        return representation
     
     def get_stock_disponible(self, obj):
         """Retorna el stock disponible calculado"""
@@ -836,6 +1026,10 @@ class ProductoSerializer(serializers.ModelSerializer):
     def get_necesita_reposicion(self, obj):
         """Indica si necesita reposición"""
         return obj.necesita_reposicion()
+
+    def get_available(self, obj):
+        """Disponibilidad comercial mínima, sin publicar cantidades internas."""
+        return obj.stock_disponible > 0
     
     def get_imagen_url(self, obj):
         """Retorna la URL de la primera imagen o la imagen principal"""
@@ -1055,7 +1249,7 @@ class DiagnosticoCapilarSerializer(serializers.ModelSerializer):
             'rutina_asignada', 'rutina_asignada_nombre', 'rutina_asignada_id',
             'servicio_urgente', 'servicio_urgente_nombre', 'servicio_urgente_id',
             'turno_sugerido', 'turno_sugerido_id',
-            'fecha_diagnostico'
+            'fecha_diagnostico', 'procedencia'
         ]
         read_only_fields = [
             'id', 'fecha_diagnostico', 'cliente_email', 'profesional_nombre',
@@ -1067,7 +1261,7 @@ class DiagnosticoCapilarSerializer(serializers.ModelSerializer):
             'rutina_sugerida', 'rutina_asignada',
             'servicio_urgente', 'servicio_urgente_nombre', 'servicio_urgente_id',
             'rutina_asignada_id',
-            'turno_sugerido', 'turno_sugerido_id'
+            'turno_sugerido', 'turno_sugerido_id', 'procedencia'
         ]
 
     def validate(self, attrs):
@@ -1084,6 +1278,686 @@ class ConfiguracionDiagnosticoSerializer(serializers.ModelSerializer):
     class Meta:
         model = ConfiguracionDiagnostico
         fields = '__all__'
+
+
+# ============================================================
+# SOLICITUD TÉCNICA DE RESERVA (BH-057 B)
+# ============================================================
+
+
+class TechnicalBookingRequestCreateSerializer(serializers.Serializer):
+    servicio_ids = serializers.PrimaryKeyRelatedField(
+        source='servicios',
+        queryset=Servicio.objects.filter(activo=True),
+        many=True,
+        allow_empty=False,
+    )
+    fecha_preferida = serializers.DateField()
+    hora_preferida = serializers.TimeField()
+    personal_preferido_id = serializers.PrimaryKeyRelatedField(
+        source='personal_preferido',
+        queryset=Personal.objects.filter(activo=True),
+        required=False,
+        allow_null=True,
+    )
+
+    def validate_fecha_preferida(self, value):
+        if value < timezone.localdate():
+            raise serializers.ValidationError(
+                'La fecha preferida no puede estar en el pasado.'
+            )
+        return value
+
+    def validate_servicio_ids(self, value):
+        if len({service.pk for service in value}) != len(value):
+            raise serializers.ValidationError(
+                'No se permiten Servicios repetidos.'
+            )
+        return value
+
+    def validate(self, attrs):
+        if 'cliente_id' in self.initial_data or 'cliente' in self.initial_data:
+            raise serializers.ValidationError({
+                'cliente_id': 'El Cliente se deriva de la sesión autenticada.'
+            })
+        return attrs
+
+
+class SlotHoldCreateCommandSerializer(serializers.Serializer):
+    personal_id = serializers.IntegerField(min_value=1)
+    starts_at = serializers.DateTimeField()
+
+    def validate(self, attrs):
+        unexpected = set(self.initial_data) - {'personal_id', 'starts_at'}
+        if unexpected:
+            raise serializers.ValidationError({
+                'campos_no_permitidos': sorted(unexpected),
+            })
+        return attrs
+
+
+class SlotHoldReleaseCommandSerializer(serializers.Serializer):
+    def validate(self, attrs):
+        if self.initial_data:
+            raise serializers.ValidationError({
+                'campos_no_permitidos': sorted(self.initial_data),
+            })
+        return attrs
+
+
+class SlotHoldPublicSerializer(serializers.ModelSerializer):
+    effective_state = serializers.SerializerMethodField()
+    countdown = serializers.SerializerMethodField()
+    personal = serializers.SerializerMethodField()
+    persisted_state = serializers.CharField(source='state', read_only=True)
+
+    class Meta:
+        model = SlotHold
+        fields = (
+            'public_id',
+            'starts_at',
+            'ends_at',
+            'expires_at',
+            'persisted_state',
+            'effective_state',
+            'countdown',
+            'personal',
+        )
+        read_only_fields = fields
+
+    def _now(self):
+        return self.context['database_now']
+
+    def get_effective_state(self, obj):
+        if obj.state == SlotHold.State.ACTIVE and obj.expires_at <= self._now():
+            return SlotHold.State.EXPIRED
+        return obj.state
+
+    def get_countdown(self, obj):
+        now = self._now()
+        effective_state = self.get_effective_state(obj)
+        remaining = (
+            max(0, int((obj.expires_at - now).total_seconds()))
+            if effective_state == SlotHold.State.ACTIVE
+            else 0
+        )
+        return {
+            'server_now': now.isoformat(),
+            'seconds_remaining': remaining,
+            'authoritative': False,
+        }
+
+    @staticmethod
+    def get_personal(obj):
+        return {
+            'id': obj.personal_id,
+            'nombre': obj.personal.nombre,
+            'apellido': obj.personal.apellido,
+        }
+
+
+class PaymentIntentCreateCommandSerializer(serializers.Serializer):
+    slot_hold_public_id = serializers.UUIDField()
+    mode = serializers.ChoiceField(choices=PaymentIntent.Mode.choices)
+
+    def validate(self, attrs):
+        unexpected = set(self.initial_data) - {'slot_hold_public_id', 'mode'}
+        if unexpected:
+            raise serializers.ValidationError({
+                'campos_no_permitidos': sorted(unexpected),
+            })
+        return attrs
+
+
+class PaymentIntentCancelCommandSerializer(serializers.Serializer):
+    def validate(self, attrs):
+        if self.initial_data:
+            raise serializers.ValidationError({
+                'campos_no_permitidos': sorted(self.initial_data),
+            })
+        return attrs
+
+
+class PaymentIntentLinePublicSerializer(serializers.ModelSerializer):
+    servicio_id = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = PaymentIntentLine
+        fields = (
+            'servicio_id',
+            'orden',
+            'nombre_snapshot',
+            'cantidad',
+            'precio_unitario_snapshot',
+            'descuento',
+            'subtotal',
+            'moneda',
+        )
+        read_only_fields = fields
+
+
+class PaymentIntentPublicSerializer(serializers.ModelSerializer):
+    lines = PaymentIntentLinePublicSerializer(many=True, read_only=True)
+    slot_hold_public_id = serializers.UUIDField(
+        source='slot_hold.public_id',
+        read_only=True,
+    )
+    policy_version = serializers.SerializerMethodField()
+    effective_status = serializers.SerializerMethodField()
+    countdown = serializers.SerializerMethodField()
+    paid_reconciled = serializers.SerializerMethodField()
+    confirmation_due = serializers.SerializerMethodField()
+    balance = serializers.SerializerMethodField()
+    financial_threshold_reached = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PaymentIntent
+        fields = (
+            'public_id',
+            'slot_hold_public_id',
+            'policy_version',
+            'policy_snapshot',
+            'mode',
+            'total_amount_snapshot',
+            'required_amount',
+            'currency',
+            'status',
+            'effective_status',
+            'expires_at',
+            'created_at',
+            'pending_at',
+            'approved_at',
+            'terminal_at',
+            'terminal_reason',
+            'countdown',
+            'paid_reconciled',
+            'confirmation_due',
+            'balance',
+            'financial_threshold_reached',
+            'lines',
+        )
+        read_only_fields = fields
+
+    def _now(self):
+        return self.context['database_now']
+
+    @staticmethod
+    def get_policy_version(obj):
+        return obj.policy_snapshot.get('version')
+
+    def get_effective_status(self, obj):
+        if obj.status in PaymentIntent.ACTIVE_STATUSES:
+            now = self._now()
+            if (
+                obj.expires_at <= now
+                or obj.slot_hold.state != SlotHold.State.ACTIVE
+                or obj.slot_hold.expires_at <= now
+            ):
+                return PaymentIntent.Status.EXPIRED
+        return obj.status
+
+    def get_countdown(self, obj):
+        now = self._now()
+        remaining = (
+            max(0, int((obj.expires_at - now).total_seconds()))
+            if self.get_effective_status(obj) in PaymentIntent.ACTIVE_STATUSES
+            else 0
+        )
+        return {
+            'server_now': now.isoformat(),
+            'seconds_remaining': remaining,
+            'authoritative': False,
+        }
+
+    @staticmethod
+    def _financial(obj):
+        if not hasattr(obj, '_payment_financial_snapshot'):
+            from .manual_payment_services import financial_snapshot
+
+            obj._payment_financial_snapshot = financial_snapshot(obj)
+        return obj._payment_financial_snapshot
+
+    def get_paid_reconciled(self, obj):
+        return self._financial(obj).paid_reconciled
+
+    def get_confirmation_due(self, obj):
+        return self._financial(obj).confirmation_due
+
+    def get_balance(self, obj):
+        return self._financial(obj).balance
+
+    def get_financial_threshold_reached(self, obj):
+        return self._financial(obj).financial_threshold_reached
+
+
+class TechnicalBookingRequestReevaluateSerializer(serializers.Serializer):
+    servicio_ids = serializers.PrimaryKeyRelatedField(
+        source='servicios',
+        queryset=Servicio.objects.filter(activo=True),
+        many=True,
+        allow_empty=False,
+        required=False,
+    )
+    fecha_preferida = serializers.DateField(required=False)
+    hora_preferida = serializers.TimeField(required=False)
+    personal_preferido_id = serializers.PrimaryKeyRelatedField(
+        source='personal_preferido',
+        queryset=Personal.objects.filter(activo=True),
+        required=False,
+        allow_null=True,
+    )
+    informacion_tecnica_actualizada = serializers.BooleanField(
+        required=False,
+        default=False,
+    )
+
+    def validate_fecha_preferida(self, value):
+        if value < timezone.localdate():
+            raise serializers.ValidationError(
+                'La fecha preferida no puede estar en el pasado.'
+            )
+        return value
+
+    def validate_servicio_ids(self, value):
+        if len({service.pk for service in value}) != len(value):
+            raise serializers.ValidationError(
+                'No se permiten Servicios repetidos.'
+            )
+        return value
+
+    def validate(self, attrs):
+        changed_fields = {
+            'servicios',
+            'fecha_preferida',
+            'hora_preferida',
+            'personal_preferido',
+        }
+        if (
+            not any(key in attrs for key in changed_fields)
+            and not attrs.get('informacion_tecnica_actualizada', False)
+        ):
+            raise serializers.ValidationError(
+                'Debe informar un cambio que requiera reevaluación.'
+            )
+        return attrs
+
+
+class TechnicalBookingReviewCommandSerializer(serializers.Serializer):
+    accion = serializers.ChoiceField(
+        choices=DecisionRevisionTecnica.Accion.choices
+    )
+    motivo = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=2000,
+    )
+    mensaje_cliente = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=2000,
+    )
+    datos_faltantes = serializers.ListField(
+        child=serializers.ChoiceField(choices=(
+            'DIAGNOSTICO_ACTUALIZADO',
+            'INFORMACION_ADICIONAL',
+        )),
+        required=False,
+        allow_empty=True,
+    )
+    fecha_recomendada = serializers.DateField(required=False)
+
+
+class TechnicalBookingRequestPublicSerializer(serializers.ModelSerializer):
+    outcome_publico = serializers.SerializerMethodField()
+    servicios = serializers.SerializerMethodField()
+    personal_preferido = serializers.SerializerMethodField()
+    advertencias = serializers.SerializerMethodField()
+    fecha_minima = serializers.SerializerMethodField()
+    faltantes = serializers.SerializerMethodField()
+    alternativas = serializers.SerializerMethodField()
+    sla = serializers.SerializerMethodField()
+    mensaje_cliente = serializers.SerializerMethodField()
+    aviso_reserva = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SolicitudTecnicaReserva
+        fields = (
+            'id',
+            'estado',
+            'outcome_publico',
+            'servicios',
+            'fecha_preferida',
+            'hora_preferida',
+            'personal_preferido',
+            'intento',
+            'advertencias',
+            'fecha_minima',
+            'faltantes',
+            'alternativas',
+            'sla',
+            'mensaje_cliente',
+            'aviso_reserva',
+            'created_at',
+            'updated_at',
+        )
+
+    @staticmethod
+    def _result(obj):
+        evaluation = obj.evaluacion_vigente
+        return evaluation.result_snapshot if evaluation else {}
+
+    def get_outcome_publico(self, obj):
+        evaluation = obj.evaluacion_vigente
+        return evaluation.outcome if evaluation else None
+
+    def get_servicios(self, obj):
+        return [
+            {
+                'id': item.servicio_id,
+                'nombre': item.nombre_snapshot,
+            }
+            for item in obj.servicios_solicitados.all()
+        ]
+
+    def get_personal_preferido(self, obj):
+        if obj.personal_preferido is None:
+            return None
+        return {
+            'id': obj.personal_preferido_id,
+            'nombre': obj.personal_preferido.nombre,
+            'apellido': obj.personal_preferido.apellido,
+        }
+
+    def get_advertencias(self, obj):
+        if obj.estado != SolicitudTecnicaReserva.Estado.ADVERTENCIA_PENDIENTE:
+            return []
+        return self._result(obj).get('mensajes_cliente', [])
+
+    def get_fecha_minima(self, obj):
+        return self._result(obj).get('fecha_minima_recomendada')
+
+    def get_faltantes(self, obj):
+        decision = obj.decisiones_revision.filter(
+            accion=DecisionRevisionTecnica.Accion.SOLICITAR_INFORMACION,
+            evaluacion=obj.evaluacion_vigente,
+        ).first()
+        if decision and obj.estado == SolicitudTecnicaReserva.Estado.INFORMACION_REQUERIDA:
+            return decision.datos_faltantes
+        evaluation = obj.evaluacion_vigente
+        if evaluation is None:
+            return []
+        # El DTO público conserva sólo el code seguro, nunca IDs ni evidencia
+        # histórica interna asociada al faltante.
+        return [
+            {'code': item.get('code')}
+            for item in evaluation.input_snapshot.get('datos_faltantes', [])
+            if isinstance(item, dict) and item.get('code')
+        ]
+
+    def get_alternativas(self, obj):
+        if not obj.fecha_recomendada:
+            return []
+        return [{'fecha': obj.fecha_recomendada.isoformat()}]
+
+    def get_sla(self, obj):
+        # No existe una política de SLA configurable en este incremento.
+        return None
+
+    def get_mensaje_cliente(self, obj):
+        decision = obj.decisiones_revision.filter(
+            evaluacion=obj.evaluacion_vigente,
+        ).exclude(mensaje_cliente='').first()
+        if decision is not None:
+            return decision.mensaje_cliente
+        messages = self._result(obj).get('mensajes_cliente', [])
+        return messages[0] if messages else ''
+
+    def get_aviso_reserva(self, obj):
+        return 'Esta solicitud técnica aún no reserva un Turno.'
+
+
+class StockMovementSerializer(serializers.ModelSerializer):
+    actor_email = serializers.EmailField(source='actor.email', read_only=True)
+
+    class Meta:
+        model = MovimientoStock
+        fields = [
+            'id', 'producto', 'delta', 'tipo', 'reason_code', 'nota',
+            'actor_kind', 'actor', 'actor_email', 'created_at',
+            'reference_type', 'reference_id', 'idempotency_key',
+            'stock_before', 'stock_after', 'reverses_movement',
+        ]
+        read_only_fields = fields
+
+
+class StockCommandSerializer(StrictInputFieldsMixin, serializers.Serializer):
+    reason_code = serializers.CharField(
+        min_length=1,
+        max_length=50,
+        allow_blank=False,
+        trim_whitespace=True,
+    )
+    idempotency_key = serializers.CharField(
+        min_length=1,
+        max_length=128,
+        allow_blank=False,
+        trim_whitespace=True,
+    )
+    note = serializers.CharField(
+        max_length=500,
+        allow_blank=True,
+        required=False,
+        default='',
+        trim_whitespace=True,
+    )
+
+
+class StockReceiveCommandSerializer(StockCommandSerializer):
+    quantity = serializers.IntegerField(min_value=1)
+
+
+class StockAdjustCommandSerializer(StockCommandSerializer):
+    delta = serializers.IntegerField()
+
+    def validate_delta(self, value):
+        if value == 0:
+            raise serializers.ValidationError('El delta debe ser distinto de cero.')
+        return value
+
+
+class StockCorrectionCommandSerializer(StockCommandSerializer):
+    pass
+
+
+class TechnicalBookingRequestReviewSerializer(serializers.ModelSerializer):
+    cliente = serializers.SerializerMethodField()
+    servicios = serializers.SerializerMethodField()
+    outcome = serializers.SerializerMethodField()
+    rule_codes = serializers.SerializerMethodField()
+    datos_faltantes = serializers.SerializerMethodField()
+    diagnostico = serializers.SerializerMethodField()
+    antecedentes = serializers.SerializerMethodField()
+    intervalos = serializers.SerializerMethodField()
+    fecha_minima = serializers.SerializerMethodField()
+    mensajes_profesionales = serializers.SerializerMethodField()
+    aviso_reserva = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SolicitudTecnicaReserva
+        fields = (
+            'id',
+            'estado',
+            'cliente',
+            'servicios',
+            'fecha_preferida',
+            'hora_preferida',
+            'outcome',
+            'rule_codes',
+            'datos_faltantes',
+            'diagnostico',
+            'antecedentes',
+            'intervalos',
+            'fecha_minima',
+            'fecha_recomendada',
+            'mensajes_profesionales',
+            'aviso_reserva',
+            'created_at',
+        )
+
+    @staticmethod
+    def _snapshots(obj):
+        evaluation = obj.evaluacion_vigente
+        if evaluation is None:
+            return {}, {}
+        return evaluation.input_snapshot, evaluation.result_snapshot
+
+    def get_cliente(self, obj):
+        user = obj.cliente.usuario
+        return {
+            'id': obj.cliente_id,
+            'nombre': user.get_full_name(),
+            'email': user.email,
+        }
+
+    def get_servicios(self, obj):
+        return [
+            {'id': item.servicio_id, 'nombre': item.nombre_snapshot}
+            for item in obj.servicios_solicitados.all()
+        ]
+
+    def get_outcome(self, obj):
+        return obj.evaluacion_vigente.outcome if obj.evaluacion_vigente else None
+
+    def get_rule_codes(self, obj):
+        _, result = self._snapshots(obj)
+        return result.get('rule_codes', [])
+
+    def get_datos_faltantes(self, obj):
+        input_snapshot, _ = self._snapshots(obj)
+        allowed_fields = {
+            'code', 'service_id', 'turno_id', 'fecha', 'hora', 'estado',
+            'detalle_count',
+        }
+        return [
+            {
+                key: value for key, value in item.items()
+                if key in allowed_fields
+            }
+            for item in input_snapshot.get('datos_faltantes', [])
+            if isinstance(item, dict) and item.get('code')
+        ]
+
+    def get_diagnostico(self, obj):
+        input_snapshot, _ = self._snapshots(obj)
+        diagnosis = input_snapshot.get('diagnostico_usado')
+        if not isinstance(diagnosis, dict):
+            return None
+        date_value = diagnosis.get('fecha')
+        age = None
+        if date_value:
+            try:
+                diagnosis_date = datetime.fromisoformat(date_value).date()
+                age = (obj.fecha_preferida - diagnosis_date).days
+            except (TypeError, ValueError):
+                age = None
+        return {
+            'id': diagnosis.get('id'),
+            'fecha': date_value,
+            'antiguedad_dias': age,
+            'procedencia': diagnosis.get('procedencia'),
+            'completo': bool(diagnosis.get('completo')),
+        }
+
+    def get_antecedentes(self, obj):
+        input_snapshot, _ = self._snapshots(obj)
+        history = [
+            item for item in input_snapshot.get('historial_considerado', [])
+            if isinstance(item, dict)
+        ]
+        service_ids = {
+            item.get('servicio_id') for item in history
+            if item.get('servicio_id') is not None
+        }
+        service_names = dict(
+            Servicio.objects.filter(pk__in=service_ids).values_list('pk', 'nombre')
+        )
+        allowed_fields = {
+            'turno_id', 'detalle_id', 'servicio_id', 'fecha', 'hora',
+            'familia_code', 'estado_clasificacion', 'code', 'estado',
+            'detalle_count',
+        }
+        return [
+            {
+                **{
+                    key: value for key, value in item.items()
+                    if key in allowed_fields
+                },
+                **(
+                    {'servicio_nombre': service_names.get(item['servicio_id'])}
+                    if item.get('servicio_id') is not None
+                    else {}
+                ),
+            }
+            for item in history
+        ]
+
+    def get_intervalos(self, obj):
+        _, result = self._snapshots(obj)
+        intervals = []
+        service_ids = set()
+        for trigger in result.get('reglas_disparadas', []):
+            if not isinstance(trigger, dict) or trigger.get('kind') not in {
+                'INTERVAL', 'REQUESTED_SERVICE_INTERACTION',
+            }:
+                continue
+            parameters = trigger.get('parameters') or {}
+            evidence = trigger.get('evidence') or {}
+            origin_id = (
+                evidence.get('servicio_previo_id')
+                or evidence.get('servicio_origen_solicitado_id')
+                or parameters.get('servicio_origen_id')
+            )
+            target_id = (
+                evidence.get('servicio_solicitado_id')
+                or evidence.get('servicio_destino_solicitado_id')
+                or parameters.get('servicio_destino_id')
+            )
+            service_ids.update(value for value in (origin_id, target_id) if value)
+            intervals.append({
+                'code': trigger.get('code'),
+                'tipo': trigger.get('kind'),
+                'servicio_origen_id': origin_id,
+                'servicio_destino_id': target_id,
+                'dias_minimos': parameters.get('dias_minimos'),
+                'dias_transcurridos': evidence.get('dias_transcurridos'),
+                'dias_entre_servicios': evidence.get('dias_entre_servicios'),
+                'fecha_servicio_previo': evidence.get('fecha_servicio_previo'),
+                'fecha_minima_recomendada': evidence.get(
+                    'fecha_minima_recomendada'
+                ),
+            })
+        service_names = dict(
+            Servicio.objects.filter(pk__in=service_ids).values_list('pk', 'nombre')
+        )
+        for interval in intervals:
+            interval['servicio_origen_nombre'] = service_names.get(
+                interval['servicio_origen_id']
+            )
+            interval['servicio_destino_nombre'] = service_names.get(
+                interval['servicio_destino_id']
+            )
+        return intervals
+
+    def get_fecha_minima(self, obj):
+        _, result = self._snapshots(obj)
+        return result.get('fecha_minima_recomendada')
+
+    def get_mensajes_profesionales(self, obj):
+        _, result = self._snapshots(obj)
+        return result.get('mensajes_profesional', [])
+
+    def get_aviso_reserva(self, obj):
+        return 'Esta solicitud técnica aún no reserva un Turno.'
 
 
 class PromocionSerializer(serializers.ModelSerializer):
@@ -1141,6 +2015,7 @@ class ConfiguracionSerializer(serializers.ModelSerializer):
             'id',
             'intervalo_turnos',
             'max_dias_anticipacion',
+            'slot_hold_ttl_minutes',
             'monto_sena',
             'tiempo_limite_pago_sena',
             'max_reprogramaciones',
@@ -1386,19 +2261,148 @@ class OrdenItemSerializer(serializers.ModelSerializer):
         return float(obj.subtotal)
 
 
+class ManualPaymentRegisterCommandSerializer(serializers.Serializer):
+    amount = serializers.DecimalField(max_digits=12, decimal_places=2)
+    currency = serializers.ChoiceField(choices=PAYMENT_CURRENCY_CHOICES)
+    method = serializers.ChoiceField(choices=Pago.Method.choices)
+    purpose = serializers.ChoiceField(choices=Pago.Purpose.choices)
+    occurred_at = serializers.DateTimeField()
+    manual_reference = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=80,
+        default='',
+    )
+    receipt = serializers.FileField(
+        required=False,
+        allow_null=True,
+        default=None,
+    )
+    late_evidence = serializers.BooleanField(required=False, default=False)
+
+    def validate(self, attrs):
+        allowed = {
+            'amount',
+            'currency',
+            'method',
+            'purpose',
+            'occurred_at',
+            'manual_reference',
+            'receipt',
+            'late_evidence',
+        }
+        unexpected = set(self.initial_data) - allowed
+        if unexpected:
+            raise serializers.ValidationError({
+                'campos_no_permitidos': sorted(unexpected),
+            })
+        return attrs
+
+
+class ManualPaymentReconcileCommandSerializer(serializers.Serializer):
+    decision = serializers.ChoiceField(choices=('ACCEPT', 'REJECT'))
+    reason = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=100,
+        default='',
+    )
+
+    def validate(self, attrs):
+        unexpected = set(self.initial_data) - {'decision', 'reason'}
+        if unexpected:
+            raise serializers.ValidationError({
+                'campos_no_permitidos': sorted(unexpected),
+            })
+        return attrs
+
+
+class LegacyOrderPaymentCommandSerializer(serializers.Serializer):
+    monto = serializers.DecimalField(max_digits=12, decimal_places=2)
+    metodo_pago = serializers.ChoiceField(
+        choices=('EFECTIVO', 'TRANSFERENCIA', 'MERCADO_PAGO')
+    )
+    fecha_pago = serializers.DateTimeField(required=False, default=timezone.now)
+    comprobante_foto = serializers.FileField(required=False, allow_null=True)
+    es_sena = serializers.BooleanField(required=False, default=False)
+
+    def validate(self, attrs):
+        unexpected = set(self.initial_data) - {
+            'monto',
+            'metodo_pago',
+            'fecha_pago',
+            'comprobante_foto',
+            'es_sena',
+        }
+        if unexpected:
+            raise serializers.ValidationError({
+                'campos_no_permitidos': sorted(unexpected),
+            })
+        if (
+            attrs['metodo_pago'] == 'TRANSFERENCIA'
+            and not attrs.get('comprobante_foto')
+        ):
+            raise serializers.ValidationError({
+                'comprobante_foto': (
+                    'Se requiere comprobante para pagos por transferencia.'
+                ),
+            })
+        return attrs
+
+
 class PagoSerializer(serializers.ModelSerializer):
+    amount = serializers.DecimalField(
+        source='monto',
+        max_digits=12,
+        decimal_places=2,
+        read_only=True,
+    )
+    method = serializers.CharField(source='metodo_pago', read_only=True)
+    occurred_at = serializers.DateTimeField(source='fecha_pago', read_only=True)
+    payment_intent_public_id = serializers.UUIDField(
+        source='payment_intent.public_id',
+        read_only=True,
+        allow_null=True,
+    )
+    recorded_by = serializers.EmailField(
+        source='recorded_by.email',
+        read_only=True,
+        allow_null=True,
+    )
+    reconciled_by = serializers.EmailField(
+        source='reconciled_by.email',
+        read_only=True,
+        allow_null=True,
+    )
     orden_codigo = serializers.ReadOnlyField(source='orden.codigo')
     turno_fecha = serializers.SerializerMethodField()
     cliente_nombre = serializers.SerializerMethodField()
     cliente_email = serializers.SerializerMethodField()
     tipo_origen = serializers.SerializerMethodField()
+    receipt_download = serializers.SerializerMethodField()
+    comprobante_foto = serializers.SerializerMethodField()
 
     class Meta:
         model = Pago
         fields = [
             'id',
+            'public_id',
+            'payment_intent_public_id',
             'orden',
             'turno',
+            'amount',
+            'currency',
+            'method',
+            'purpose',
+            'status',
+            'occurred_at',
+            'recorded_at',
+            'recorded_by',
+            'reconciled_at',
+            'reconciled_by',
+            'manual_reference',
+            'terminal_reason',
+            'receipt_download',
             'monto',
             'metodo_pago',
             'fecha_pago',
@@ -1410,18 +2414,7 @@ class PagoSerializer(serializers.ModelSerializer):
             'cliente_email',
             'tipo_origen'
         ]
-        read_only_fields = ['id', 'orden', 'turno']
-
-    def validate(self, attrs):
-        metodo = attrs.get('metodo_pago')
-        comprobante = attrs.get('comprobante_foto')
-
-        if metodo == 'TRANSFERENCIA' and not comprobante:
-            raise serializers.ValidationError({
-                'comprobante_foto': 'Se requiere comprobante para pagos por transferencia.'
-            })
-
-        return attrs
+        read_only_fields = fields
 
     def get_turno_fecha(self, obj):
         if obj.turno:
@@ -1433,6 +2426,8 @@ class PagoSerializer(serializers.ModelSerializer):
             return obj.orden.cliente.usuario.get_full_name()
         if obj.turno and obj.turno.cliente and obj.turno.cliente.usuario:
             return obj.turno.cliente.usuario.get_full_name()
+        if obj.payment_intent_id:
+            return obj.payment_intent.cliente.usuario.get_full_name()
         return None
 
     def get_cliente_email(self, obj):
@@ -1440,14 +2435,27 @@ class PagoSerializer(serializers.ModelSerializer):
             return obj.orden.cliente.usuario.email
         if obj.turno and obj.turno.cliente and obj.turno.cliente.usuario:
             return obj.turno.cliente.usuario.email
+        if obj.payment_intent_id:
+            return obj.payment_intent.cliente.usuario.email
         return None
 
     def get_tipo_origen(self, obj):
         if obj.orden_id:
             return 'ORDEN'
+        if obj.payment_intent_id:
+            return 'PAYMENT_INTENT'
         if obj.turno_id:
             return 'TURNO'
         return None
+
+    @staticmethod
+    def get_receipt_download(obj):
+        if not obj.comprobante_foto:
+            return None
+        return f'/api/gestion/payments/{obj.public_id}/receipt/'
+
+    def get_comprobante_foto(self, obj):
+        return self.get_receipt_download(obj)
 
 
 class OrdenCompraSerializer(serializers.ModelSerializer):

@@ -9,6 +9,7 @@ export const AUTH_ROUTES = {
 // Rutas seguras de estado y experiencia inicial
 export const SESSION_ROUTES = {
   OPERACIONES: '/operaciones',
+  REVISION_TECNICA: '/revision-tecnica',
   CUENTA_SIN_ACCESO: '/cuenta-sin-acceso',
   ERROR_ACCESO: '/error-acceso',
   ACCESO_DENEGADO: '/acceso-denegado',
@@ -19,6 +20,7 @@ export const CLIENTE_ROUTES = {
   PERFIL: '/perfil',
   EDITAR_PERFIL: '/editar-perfil',
   RESERVAR: '/reservar',
+  SOLICITUDES_TECNICAS: '/solicitudes-tecnicas',
   MIS_TURNOS: '/mis-turnos',
   MIS_PEDIDOS: '/mis-pedidos',
   MI_AGENDA: '/mi-agenda',

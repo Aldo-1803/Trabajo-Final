@@ -34,9 +34,6 @@ const GestionProductos = () => {
         material_principal: '',
         proposito_uso: '',
         precio: '',
-        stock_real: '',
-        stock_comprometido: '',
-        stock_minimo: '',
         imagen: null,
         imagen_url: '', // Solo para lectura (URL completa del servidor)
         estado_publicacion: 'PUBLICADO',
@@ -84,9 +81,7 @@ const GestionProductos = () => {
         if (Number.isFinite(stockDisponible)) {
             return stockDisponible;
         }
-        const stockReal = Number(prod?.stock_real || 0);
-        const stockComprometido = Number(prod?.stock_comprometido || 0);
-        return Math.max(0, stockReal - stockComprometido);
+        return prod?.available === true ? 1 : 0;
     };
 
     // --- CARGA INICIAL ---
@@ -390,9 +385,6 @@ const GestionProductos = () => {
                 material_principal: '',
                 proposito_uso: '',
                 precio: '',
-                stock_real: '',
-                stock_comprometido: '',
-                stock_minimo: '',
                 imagen: null,
                 imagen_url: '',
                 estado_publicacion: 'PUBLICADO',
@@ -425,11 +417,6 @@ const GestionProductos = () => {
             return;
         }
 
-        if (!form.stock_real && form.stock_real !== 0) {
-            notify.error("El stock real es requerido.");
-            return;
-        }
-
         if (!form.categoria || form.categoria === '') {
             notify.error("Por favor selecciona una categoría.");
             return;
@@ -445,8 +432,6 @@ const GestionProductos = () => {
         }
 
         const precioNum = parseFloat(form.precio);
-        const stockRealNum = parseInt(form.stock_real);
-        const stockMinimoNum = parseInt(form.stock_minimo) || 5;
 
         // Preparar FormData para enviar archivo principal
         const imagenPrincipal = form.imagen instanceof File
@@ -464,8 +449,6 @@ const GestionProductos = () => {
         formData.append('material_principal', form.material_principal || '');
         formData.append('proposito_uso', form.proposito_uso || '');
         formData.append('precio', precioNum);
-        formData.append('stock_real', stockRealNum);
-        formData.append('stock_minimo', stockMinimoNum);
         formData.append('estado_publicacion', form.estado_publicacion || 'PUBLICADO');
         formData.append('compatibilidad', form.compatibilidad || 'TODO');
         formData.append('activo', form.activo === true || form.activo === 'true');
@@ -1104,7 +1087,7 @@ const GestionProductos = () => {
                                 </div>
                             </div>
 
-                            {/* Fila 3: Precio y Stock */}
+                            {/* Precio editable; inventario es sólo lectura y cambia por commands */}
                             <div className="grid grid-cols-3 gap-4">
                                 <div>
                                     <label className="block text-sm font-medium mb-1" style={{ color: '#817773' }}>Precio ($) *</label>
@@ -1121,29 +1104,16 @@ const GestionProductos = () => {
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium mb-1" style={{ color: '#817773' }}>Stock Real *</label>
-                                    <input 
-                                        type="number" 
-                                        name="stock_real" 
-                                        required
-                                        placeholder="0"
-                                        className="mt-1 block w-full border rounded-md shadow-sm p-2 focus:ring-2 outline-none"
-                                        style={{ borderColor: '#D5D1CC', '--tw-ring-color': '#AB9A91' }}
-                                        value={form.stock_real}
-                                        onChange={handleChange}
-                                    />
+                                    <label className="block text-sm font-medium mb-1" style={{ color: '#817773' }}>Stock Real</label>
+                                    <div className="mt-1 block w-full border rounded-md p-2 bg-gray-50" style={{ borderColor: '#D5D1CC', color: '#817773' }}>
+                                        {form.stock_real ?? 'Sólo con permiso de stock'}
+                                    </div>
                                 </div>
                                 <div>
                                     <label className="block text-sm font-medium mb-1" style={{ color: '#817773' }}>Stock Mínimo</label>
-                                    <input 
-                                        type="number" 
-                                        name="stock_minimo"
-                                        placeholder="5"
-                                        className="mt-1 block w-full border rounded-md shadow-sm p-2 focus:ring-2 outline-none"
-                                        style={{ borderColor: '#D5D1CC', '--tw-ring-color': '#AB9A91' }}
-                                        value={form.stock_minimo}
-                                        onChange={handleChange}
-                                    />
+                                    <div className="mt-1 block w-full border rounded-md p-2 bg-gray-50" style={{ borderColor: '#D5D1CC', color: '#817773' }}>
+                                        {form.stock_minimo ?? 'Sólo con permiso de stock'}
+                                    </div>
                                 </div>
                             </div>
 

@@ -8,6 +8,7 @@ import { AUTH_ROUTES, SESSION_ROUTES } from './routes';
 const ProtectedRoute = ({
     children,
     requiredProfile,
+    requiredActiveProfile,
     requiredPermission,
     requiredAnyPermission,
     allowedRoles
@@ -19,7 +20,8 @@ const ProtectedRoute = ({
         hasPermission,
         hasAnyPermission,
         hasRole,
-        hasProfile
+        hasProfile,
+        hasActiveProfile
     } = useSession();
 
     if (loading || status === SESSION_STATUS.LOADING) {
@@ -47,6 +49,10 @@ const ProtectedRoute = ({
     }
 
     if (requiredProfile && !hasProfile(requiredProfile)) {
+        return <Navigate to={SESSION_ROUTES.ACCESO_DENEGADO} replace />;
+    }
+
+    if (requiredActiveProfile && !hasActiveProfile(requiredActiveProfile)) {
         return <Navigate to={SESSION_ROUTES.ACCESO_DENEGADO} replace />;
     }
 
