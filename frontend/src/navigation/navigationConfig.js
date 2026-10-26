@@ -21,8 +21,18 @@ export const navigationItems = [
         anyPermissions: [
             'gestion.view_global_agenda',
             'usuarios.create_walkin_client',
-            'gestion.create_turno_for_client'
+            'gestion.create_turno_for_client',
+            'gestion.register_arrival',
+            'gestion.reprogram_any_turno',
+            'gestion.cancel_any_turno'
         ]
+    },
+    {
+        id: 'work-agenda',
+        label: 'Mi agenda laboral',
+        path: SESSION_ROUTES.MI_AGENDA_LABORAL,
+        placement: NAVIGATION_PLACEMENT.PRIMARY,
+        requiredActiveProfile: 'personal'
     },
     {
         id: 'technical-review',
@@ -115,8 +125,10 @@ export const navigationItems = [
         label: 'Personal',
         path: ADMIN_ROUTES.PERSONAL,
         placement: NAVIGATION_PLACEMENT.PRIMARY,
-        allowedRoles: ['ADMINISTRADOR'],
-        requiredPermission: 'gestion.manage_personal'
+        anyPermissions: [
+            'gestion.manage_personal',
+            'gestion.manage_skills'
+        ]
     },
     {
         id: 'clients-management',

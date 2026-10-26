@@ -15,6 +15,7 @@ import Registro from '../pages/auth/Registro';
 import RecuperarContrasena from '../pages/auth/RecuperarContrasena';
 import ResetearClave from '../pages/auth/ResetearClave';
 import Operaciones from '../pages/session/Operaciones';
+import MiAgendaLaboral from '../pages/session/MiAgendaLaboral';
 import CuentaSinAcceso from '../pages/session/CuentaSinAcceso';
 import ErrorAcceso from '../pages/session/ErrorAcceso';
 import AccesoDenegado from '../pages/session/AccesoDenegado';
@@ -87,7 +88,8 @@ export const AppRoutes = () => {
                 <Route path={AUTH_ROUTES.RESETEAR_CLAVE} element={<ResetearClave />} />
 
                 {/* Session landing routes */}
-                <Route path={SESSION_ROUTES.OPERACIONES} element={<ProtectedRoute requiredAnyPermission={['gestion.view_global_agenda', 'usuarios.create_walkin_client', 'gestion.create_turno_for_client']}><Operaciones /></ProtectedRoute>} />
+                <Route path={SESSION_ROUTES.OPERACIONES} element={<ProtectedRoute requiredAnyPermission={['gestion.view_global_agenda', 'usuarios.create_walkin_client', 'gestion.create_turno_for_client', 'gestion.register_arrival', 'gestion.reprogram_any_turno', 'gestion.cancel_any_turno']}><Operaciones /></ProtectedRoute>} />
+                <Route path={SESSION_ROUTES.MI_AGENDA_LABORAL} element={<ProtectedRoute requiredActiveProfile="personal"><MiAgendaLaboral /></ProtectedRoute>} />
                 <Route path={SESSION_ROUTES.REVISION_TECNICA} element={<ProtectedRoute requiredPermission="gestion.review_technical_booking" requiredActiveProfile="personal"><RevisionTecnica /></ProtectedRoute>} />
                 <Route path={SESSION_ROUTES.CUENTA_SIN_ACCESO} element={<CuentaSinAcceso />} />
                 <Route path={SESSION_ROUTES.ERROR_ACCESO} element={<ErrorAcceso />} />
@@ -127,7 +129,7 @@ export const AppRoutes = () => {
                 <Route path={ADMIN_ROUTES.USUARIOS} element={<ProtectedRoute requiredPermission="usuarios.manage_users"><GestionUsuarios /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.CLIENTES} element={<ProtectedRoute requiredPermission="usuarios.view_clients"><GestionClientes /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.NUEVO_CLIENTE} element={<ProtectedRoute requiredPermission="usuarios.create_walkin_client"><NuevoCliente /></ProtectedRoute>} />
-                <Route path={ADMIN_ROUTES.PERSONAL} element={<ProtectedRoute requiredPermission="gestion.manage_personal"><GestionPersonal /></ProtectedRoute>} />
+                <Route path={ADMIN_ROUTES.PERSONAL} element={<ProtectedRoute requiredAnyPermission={['gestion.manage_personal', 'gestion.manage_skills']}><GestionPersonal /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.EQUIPAMIENTO} element={<ProtectedRoute><GestionEquipamiento /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.AGENDA} element={<ProtectedRoute requiredPermission="gestion.view_global_agenda"><AgendaAdmin /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.CONFIGURACION} element={<ProtectedRoute requiredPermission="gestion.manage_configuration"><ConfiguracionAdmin /></ProtectedRoute>} />

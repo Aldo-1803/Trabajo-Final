@@ -33,13 +33,14 @@ const sessionContext = ({
     permissions = [],
     clientProfile = false,
     personalProfile = false,
+    personalActive = false,
     loading = false,
     status = 'authenticated',
     user = {}
 } = {}) => {
     const profiles = {
         cliente: { exists: clientProfile },
-        personal: { exists: personalProfile }
+        personal: { exists: personalProfile, active: personalActive }
     };
 
     return {
@@ -67,7 +68,10 @@ const sessionContext = ({
         hasAnyPermission: (required) => (
             required.some((permission) => permissions.includes(permission))
         ),
-        hasProfile: (profile) => profiles[profile]?.exists === true
+        hasProfile: (profile) => profiles[profile]?.exists === true,
+        hasActiveProfile: (profile) => (
+            profiles[profile]?.exists === true && profiles[profile]?.active === true
+        )
     };
 };
 
@@ -198,6 +202,26 @@ describe('Header basado en SessionContext', () => {
         expect(screen.getByRole('link', { name: 'Operaciones' })).toBeInTheDocument();
         expect(screen.getByRole('link', { name: 'Mis Turnos' })).toBeInTheDocument();
         expect(screen.getByTitle('Carrito de compras')).toBeInTheDocument();
+    });
+
+    test('Personal activo ve Mi agenda laboral sin necesitar agenda global', () => {
+        renderHeader({
+            businessRole: 'EMPLEADO',
+            personalProfile: true,
+            personalActive: true
+        });
+
+        expect(screen.getByRole('link', { name: 'Mi agenda laboral' }))
+            .toHaveAttribute('href', '/mi-agenda-laboral');
+    });
+
+    test('Operaciones se muestra con una acción de Turno aislada', () => {
+        renderHeader({
+            businessRole: 'ADMINISTRADOR',
+            permissions: ['gestion.cancel_any_turno']
+        });
+
+        expect(screen.getByRole('link', { name: 'Operaciones' })).toBeInTheDocument();
     });
 
     test('la etiqueta muestra el BusinessRole real', () => {

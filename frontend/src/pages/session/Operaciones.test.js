@@ -22,7 +22,8 @@ jest.mock('react-router-dom', () => ({
 const sessionContext = ({
     businessRole = 'EMPLEADO',
     permissions = [],
-    isStaff = false
+    isStaff = false,
+    personalActive = false
 } = {}) => ({
     user: {
         first_name: 'Ana',
@@ -32,7 +33,8 @@ const sessionContext = ({
     businessRole,
     permissions,
     loading: false,
-    hasPermission: (permission) => permissions.includes(permission)
+    hasPermission: (permission) => permissions.includes(permission),
+    hasActiveProfile: (profile) => profile === 'personal' && personalActive
 });
 
 
@@ -123,7 +125,7 @@ describe('Operaciones por permisos efectivos', () => {
         expect(screen.queryByText('Turnos de hoy')).not.toBeInTheDocument();
         expect(screen.queryByRole('link', { name: 'Nuevo turno' }))
             .not.toBeInTheDocument();
-        expect(screen.getByText('No hay operaciones habilitadas para esta cuenta.'))
+        expect(screen.getByText('No hay Turnos disponibles para operar con los permisos actuales.'))
             .toBeInTheDocument();
         expect(axios.get).not.toHaveBeenCalled();
     });
@@ -164,6 +166,57 @@ describe('Operaciones por permisos efectivos', () => {
         expect(screen.queryByRole('button', { name: 'Registrar llegada' }))
             .not.toBeInTheDocument();
         expect(axios.get).not.toHaveBeenCalled();
+    });
+
+    test('Personal activo con llegada aislada usa agenda propia sin consultar la global', async () => {
+        axios.get.mockResolvedValue({
+            data: [{
+                ...confirmedTurno,
+                fecha: new Date().toISOString().slice(0, 10)
+            }]
+        });
+        renderOperations({
+            permissions: ['gestion.register_arrival'],
+            personalActive: true
+        });
+
+        expect(await screen.findByRole('heading', { name: 'Mis Turnos de hoy' }))
+            .toBeInTheDocument();
+        expect(axios.get).toHaveBeenCalledWith(
+            'http://127.0.0.1:8000/api/gestion/turnos/mi-agenda-laboral/',
+            { headers: { Authorization: 'Bearer test-token' } }
+        );
+        expect(await screen.findByRole('button', { name: 'Registrar llegada' }))
+            .toBeInTheDocument();
+        expect(screen.queryByRole('link', { name: 'Ver agenda' })).not.toBeInTheDocument();
+    });
+
+    test('acción aislada sin Personal activo no consulta agenda global', () => {
+        renderOperations({
+            businessRole: 'ADMINISTRADOR',
+            permissions: ['gestion.cancel_any_turno']
+        });
+
+        expect(screen.getByText('No hay Turnos disponibles para operar con los permisos actuales.'))
+            .toBeInTheDocument();
+        expect(axios.get).not.toHaveBeenCalled();
+    });
+
+    test.each([
+        ['gestion.reprogram_any_turno', 'Reprogramar', 'Cancelar'],
+        ['gestion.cancel_any_turno', 'Cancelar', 'Reprogramar']
+    ])('Personal activo con %s ve sólo %s en agenda propia', async (permission, visible, hidden) => {
+        axios.get.mockResolvedValue({
+            data: [{
+                ...confirmedTurno,
+                fecha: new Date().toISOString().slice(0, 10)
+            }]
+        });
+        renderOperations({ permissions: [permission], personalActive: true });
+
+        expect(await screen.findByRole('button', { name: visible })).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: hidden })).not.toBeInTheDocument();
+        expect(screen.queryByRole('link', { name: 'Ver agenda' })).not.toBeInTheDocument();
     });
 
     test.each(['solicitado', 'esperando_sena', 'en_proceso', 'realizado', 'cancelado', 'ausente'])(

@@ -19,7 +19,7 @@ const localDate = () => {
 
 
 const Operaciones = () => {
-    const { user, loading, hasPermission } = useSession();
+    const { user, loading, hasPermission, hasActiveProfile } = useSession();
     const [turnosHoy, setTurnosHoy] = useState([]);
     const [loadingTurnos, setLoadingTurnos] = useState(false);
     const [errorTurnos, setErrorTurnos] = useState('');
@@ -33,19 +33,29 @@ const Operaciones = () => {
     const canCancelTurno = hasPermission('gestion.cancel_any_turno');
     const canCreateWalkinClient = hasPermission('usuarios.create_walkin_client');
     const canCreateTurno = hasPermission('gestion.create_turno_for_client');
+    const hasActivePersonal = hasActiveProfile?.('personal') === true;
+    const canReadOwnAgenda = !canViewAgenda && hasActivePersonal;
 
     const cargarTurnosHoy = useCallback(async () => {
-        if (!canViewAgenda) return;
+        if (!canViewAgenda && !canReadOwnAgenda) return;
 
         setLoadingTurnos(true);
         setErrorTurnos('');
         try {
             const token = localStorage.getItem('access_token');
-            const response = await axios.get(TURNOS_URL, {
-                params: { fecha: localDate() },
+            const response = await axios.get(
+                canViewAgenda ? TURNOS_URL : `${TURNOS_URL}mi-agenda-laboral/`,
+                {
+                ...(canViewAgenda ? { params: { fecha: localDate() } } : {}),
                 headers: { Authorization: `Bearer ${token}` }
-            });
-            setTurnosHoy(Array.isArray(response.data) ? response.data : []);
+                }
+            );
+            const turnos = Array.isArray(response.data) ? response.data : [];
+            setTurnosHoy(
+                canViewAgenda
+                    ? turnos
+                    : turnos.filter((turno) => turno.fecha === localDate())
+            );
         } catch (requestError) {
             console.error('Error cargando turnos de hoy', requestError);
             setTurnosHoy([]);
@@ -53,7 +63,7 @@ const Operaciones = () => {
         } finally {
             setLoadingTurnos(false);
         }
-    }, [canViewAgenda]);
+    }, [canViewAgenda, canReadOwnAgenda]);
 
     useEffect(() => {
         cargarTurnosHoy();
@@ -105,25 +115,27 @@ const Operaciones = () => {
                 </h1>
                 <p className="text-stone-500 mb-8">Panel operativo</p>
 
-                {!canViewAgenda && !canCreateWalkinClient && !canCreateTurno && (
+                {!canViewAgenda && !canReadOwnAgenda && !canCreateWalkinClient && !canCreateTurno && (
                     <div className="rounded-xl bg-white p-6 shadow text-stone-600">
-                        No hay operaciones habilitadas para esta cuenta.
+                        No hay Turnos disponibles para operar con los permisos actuales.
                     </div>
                 )}
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    {canViewAgenda && (
+                    {(canViewAgenda || canReadOwnAgenda) && (
                         <section className="lg:col-span-2 rounded-xl bg-white p-6 shadow" aria-labelledby="turnos-hoy-title">
                             <div className="flex items-center justify-between gap-4 mb-5">
                                 <h2 id="turnos-hoy-title" className="text-2xl font-bold text-stone-700">
-                                    Turnos de hoy
+                                    {canViewAgenda ? 'Turnos de hoy' : 'Mis Turnos de hoy'}
                                 </h2>
-                                <Link
-                                    to="/admin/turnos"
-                                    className="font-semibold text-rose-700 hover:underline"
-                                >
-                                    Ver agenda
-                                </Link>
+                                {canViewAgenda && (
+                                    <Link
+                                        to="/admin/turnos"
+                                        className="font-semibold text-rose-700 hover:underline"
+                                    >
+                                        Ver agenda
+                                    </Link>
+                                )}
                             </div>
 
                             {loadingTurnos ? (
