@@ -6,10 +6,12 @@ from .models import (
     Notificacion, Configuracion, Personal, HorarioLaboral, BloqueoAgenda, DiasSemana, Equipamiento,
     TipoEquipamiento, RequisitoServicio, FichaTecnica, DiagnosticoCapilar,
     ContenidoEducativo, MeGusta, ContenidoGuardado, Auditoria, Producto, ImagenProducto,
+    CategoriaProducto, Promocion,
     CompromisoStock, MovimientoStock,
     OrdenPendiente
     #PasoRutinaCliente, #PasoRutina,
 )
+from usuarios.roles import BusinessPermission
 
 # ----------------------------------------------------
 # 1. CLASE ADMIN PERSONALIZADA (Para Mantenibilidad)
@@ -806,43 +808,99 @@ class ImagenProductoInline(admin.TabularInline):
     fields = ('imagen', 'orden', 'fecha_creacion')
     readonly_fields = ('fecha_creacion',)
 
+    def has_view_or_change_permission(self, request, obj=None):
+        return request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+
+    def has_add_permission(self, request, obj=None):
+        return request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+
+    def has_delete_permission(self, request, obj=None):
+        return request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+
 
 @admin.register(Producto)
 class ProductoAdmin(admin.ModelAdmin):
     """
     Panel de administración para productos
     """
-    list_display = ('sku', 'nombre', 'marca', 'categoria', 'precio', 'stock_real', 'stock_disponible', 'activo')
+    list_display = ('sku', 'nombre', 'marca', 'categoria', 'precio', 'activo')
     list_filter = ('activo', 'categoria', 'marca')
     search_fields = ('sku', 'nombre', 'marca', 'descripcion')
     inlines = [ImagenProductoInline]
-    readonly_fields = (
-        'stock_real',
-        'stock_comprometido',
-        'stock_disponible',
-        'stock_minimo',
+    inventory_fields = (
+        'stock_real', 'stock_comprometido', 'stock_disponible', 'stock_minimo'
     )
-    
-    fieldsets = (
-        ('Información General', {
-            'fields': ('sku', 'nombre', 'marca', 'categoria', 'descripcion')
-        }),
-        ('Precios y Stock', {
-            'fields': ('precio', 'stock_real', 'stock_comprometido', 'stock_disponible', 'stock_minimo'),
-            'description': 'Stock Real: Lo que hay físicamente. Stock Comprometido: Lo que está pedido por WhatsApp. Stock Disponible: Calculado automáticamente (Real - Comprometido).'
-        }),
-        ('Imágenes', {
-            'fields': ('imagen',),
-            'description': 'Imagen principal (para compatibilidad). Usa el panel de imágenes abajo para múltiples imágenes.'
-        }),
-        ('Detalles Técnicos', {
-            'fields': ('compatibilidad',),
-            'classes': ('collapse',)
-        }),
-        ('Publicación', {
-            'fields': ('estado_publicacion', 'activo')
-        }),
+    metadata_fields = (
+        'sku', 'nombre', 'marca', 'categoria', 'descripcion', 'imagen',
+        'compatibilidad', 'estado_publicacion', 'activo',
     )
+
+    def get_list_display(self, request):
+        fields = list(super().get_list_display(request))
+        if request.user.has_perm(BusinessPermission.VIEW_STOCK):
+            fields[5:5] = ['stock_real', 'stock_disponible']
+        return tuple(fields)
+
+    def get_readonly_fields(self, request, obj=None):
+        fields = list(self.inventory_fields)
+        if not request.user.has_perm(BusinessPermission.MANAGE_PRICES):
+            fields.append('precio')
+        if not request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS):
+            fields.extend(self.metadata_fields)
+        return tuple(fields)
+
+    def get_fieldsets(self, request, obj=None):
+        price_stock_fields = ['precio']
+        if request.user.has_perm(BusinessPermission.VIEW_STOCK):
+            price_stock_fields.extend(self.inventory_fields)
+        return (
+            ('Información General', {
+                'fields': ('sku', 'nombre', 'marca', 'categoria', 'descripcion')
+            }),
+            ('Precio e inventario', {
+                'fields': tuple(price_stock_fields),
+                'description': (
+                    'El inventario es de sólo lectura y cambia únicamente '
+                    'mediante los commands semánticos de stock.'
+                ),
+            }),
+            ('Imágenes', {'fields': ('imagen',)}),
+            ('Detalles Técnicos', {
+                'fields': ('compatibilidad',),
+                'classes': ('collapse',),
+            }),
+            ('Publicación', {'fields': ('estado_publicacion', 'activo')}),
+        )
+
+    def get_inline_instances(self, request, obj=None):
+        if not request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS):
+            return []
+        return super().get_inline_instances(request, obj)
+
+    def has_module_permission(self, request):
+        return any(request.user.has_perm(permission) for permission in (
+            BusinessPermission.MANAGE_PRODUCTS,
+            BusinessPermission.MANAGE_PRICES,
+            BusinessPermission.VIEW_STOCK,
+        ))
+
+    def has_view_permission(self, request, obj=None):
+        return self.has_module_permission(request)
+
+    def has_add_permission(self, request):
+        return bool(
+            request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+            and request.user.has_perm(BusinessPermission.MANAGE_PRICES)
+        )
+
+    def has_change_permission(self, request, obj=None):
+        return bool(
+            request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+            or request.user.has_perm(BusinessPermission.MANAGE_PRICES)
+        )
+
+    def has_delete_permission(self, request, obj=None):
+        return request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
     
     def stock_disponible(self, obj):
         return obj.stock_disponible
@@ -927,6 +985,68 @@ class ImagenProductoAdmin(admin.ModelAdmin):
     list_filter = ('producto',)
     search_fields = ('producto__nombre', 'producto__sku')
     ordering = ('producto', 'orden')
+
+    def has_module_permission(self, request):
+        return request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+
+    def has_view_permission(self, request, obj=None):
+        return self.has_module_permission(request)
+
+    def has_add_permission(self, request):
+        return self.has_module_permission(request)
+
+    def has_change_permission(self, request, obj=None):
+        return self.has_module_permission(request)
+
+    def has_delete_permission(self, request, obj=None):
+        return self.has_module_permission(request)
+
+
+@admin.register(CategoriaProducto)
+class CategoriaProductoAdmin(admin.ModelAdmin):
+    list_display = ('nombre', 'activo')
+    search_fields = ('nombre',)
+    list_filter = ('activo',)
+
+    def has_module_permission(self, request):
+        return request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+
+    def has_view_permission(self, request, obj=None):
+        return self.has_module_permission(request)
+
+    def has_add_permission(self, request):
+        return self.has_module_permission(request)
+
+    def has_change_permission(self, request, obj=None):
+        return self.has_module_permission(request)
+
+    def has_delete_permission(self, request, obj=None):
+        return self.has_module_permission(request)
+
+
+@admin.register(Promocion)
+class PromocionAdmin(admin.ModelAdmin):
+    list_display = (
+        'nombre', 'tipo', 'descuento_porcentaje', 'fecha_inicio', 'fecha_fin',
+        'is_active',
+    )
+    list_filter = ('tipo', 'is_active', 'estado_sugerencia')
+    search_fields = ('nombre', 'descripcion')
+
+    def has_module_permission(self, request):
+        return request.user.has_perm(BusinessPermission.MANAGE_PROMOTIONS)
+
+    def has_view_permission(self, request, obj=None):
+        return self.has_module_permission(request)
+
+    def has_add_permission(self, request):
+        return self.has_module_permission(request)
+
+    def has_change_permission(self, request, obj=None):
+        return self.has_module_permission(request)
+
+    def has_delete_permission(self, request, obj=None):
+        return self.has_module_permission(request)
 
 
 @admin.register(OrdenPendiente)

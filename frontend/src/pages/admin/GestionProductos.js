@@ -2,8 +2,16 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { confirmarAccion, notify } from '../../utils/notificaciones';
+import { useSession } from '../../context/SessionContext';
 
 const GestionProductos = () => {
+    const { hasPermission } = useSession();
+    const canViewStock = hasPermission('gestion.view_stock');
+    const canManageStock = hasPermission('gestion.manage_stock');
+    const canManageProducts = hasPermission('gestion.manage_products');
+    const canManagePrices = hasPermission('gestion.manage_prices');
+    const canManagePromotions = hasPermission('gestion.manage_promotions');
+    const canEditProduct = canManageProducts || canManagePrices;
     // --- ESTADOS ---
     const [productos, setProductos] = useState([]);
     const [categorias, setCategorias] = useState([]);
@@ -14,6 +22,22 @@ const GestionProductos = () => {
     const [productosStockBajo, setProductosStockBajo] = useState([]);
     const [combosSugeridos, setCombosSugeridos] = useState([]);
     const [loadingCombos, setLoadingCombos] = useState(false);
+    const [inventarioProducto, setInventarioProducto] = useState(null);
+    const [movimientos, setMovimientos] = useState([]);
+    const [loadingMovimientos, setLoadingMovimientos] = useState(false);
+    const [stockCommand, setStockCommand] = useState({
+        quantity: '',
+        delta: '',
+        movementId: '',
+        reason_code: 'MANUAL_D3',
+        note: ''
+    });
+    const [categoriaForm, setCategoriaForm] = useState({
+        id: null,
+        nombre: '',
+        descripcion: '',
+        activo: true
+    });
     const [comboEdiciones, setComboEdiciones] = useState({});
     const [comboForm, setComboForm] = useState({
         nombre: '',
@@ -88,9 +112,23 @@ const GestionProductos = () => {
     useEffect(() => {
         cargarProductos();
         cargarCategorias();
-        cargarProductosStockBajo();
-        cargarCombosSugeridos();
-    }, []);
+        if (canViewStock) cargarProductosStockBajo();
+        if (canManagePromotions) cargarCombosSugeridos();
+        // Las funciones de carga sólo dependen del snapshot actual de capacidades.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [canViewStock, canManagePromotions]);
+
+    const domainError = (error, fallback) => {
+        if (error?.response?.status === 403) {
+            return 'No tienes permiso para realizar esta operación.';
+        }
+        const payload = error?.response?.data;
+        return payload?.error?.detail || payload?.error || payload?.detail || fallback;
+    };
+
+    const newIdempotencyKey = (operation) => (
+        `frontend:${operation}:${Date.now()}:${Math.random().toString(16).slice(2)}`
+    );
 
     const cargarProductos = async () => {
         setLoading(true);
@@ -121,6 +159,7 @@ const GestionProductos = () => {
     };
 
     const cargarProductosStockBajo = async () => {
+        if (!canViewStock) return;
         try {
             const token = localStorage.getItem('access_token');
             const res = await axios.get('http://127.0.0.1:8000/api/gestion/productos/stock_bajo/', {
@@ -133,6 +172,7 @@ const GestionProductos = () => {
     };
 
     const cargarCombosSugeridos = async () => {
+        if (!canManagePromotions) return;
         try {
             setLoadingCombos(true);
             const token = localStorage.getItem('access_token');
@@ -355,6 +395,10 @@ const GestionProductos = () => {
     };
 
     const abrirModal = (producto = null) => {
+        if (!canEditProduct || (!producto && !(canManageProducts && canManagePrices))) {
+            notify.error('No tienes permisos suficientes para esta operación.');
+            return;
+        }
         if (producto) {
             setModoEdicion(true);
             setForm(producto);
@@ -407,17 +451,17 @@ const GestionProductos = () => {
         const headers = { 'Authorization': `Bearer ${token}` };
 
         // Validaciones
-        if (!form.nombre || !form.nombre.trim()) {
+        if (canManageProducts && (!form.nombre || !form.nombre.trim())) {
             notify.error("El nombre del producto es requerido.");
             return;
         }
 
-        if (!form.precio || parseFloat(form.precio) <= 0) {
+        if (canManagePrices && (!form.precio || parseFloat(form.precio) <= 0)) {
             notify.error("El precio debe ser mayor a 0.");
             return;
         }
 
-        if (!form.categoria || form.categoria === '') {
+        if (canManageProducts && (!form.categoria || form.categoria === '')) {
             notify.error("Por favor selecciona una categoría.");
             return;
         }
@@ -425,8 +469,8 @@ const GestionProductos = () => {
         // La imagen es opcional
 
         // Convertir tipos de datos
-        const categoriaId = parseInt(form.categoria);
-        if (isNaN(categoriaId)) {
+        const categoriaId = canManageProducts ? parseInt(form.categoria) : null;
+        if (canManageProducts && isNaN(categoriaId)) {
             notify.error("Categoría inválida.");
             return;
         }
@@ -439,22 +483,24 @@ const GestionProductos = () => {
             : (imagenesSubidas.length > 0 ? imagenesSubidas[0].archivo : null);
 
         const formData = new FormData();
-        if (form.sku && form.sku.trim()) {
-            formData.append('sku', form.sku.trim());
+        if (canManageProducts) {
+            if (form.sku && form.sku.trim()) {
+                formData.append('sku', form.sku.trim());
+            }
+            formData.append('nombre', form.nombre.trim());
+            formData.append('marca', form.marca?.trim() || '');
+            formData.append('categoria', categoriaId);
+            formData.append('descripcion', form.descripcion || '');
+            formData.append('material_principal', form.material_principal || '');
+            formData.append('proposito_uso', form.proposito_uso || '');
+            formData.append('estado_publicacion', form.estado_publicacion || 'PUBLICADO');
+            formData.append('compatibilidad', form.compatibilidad || 'TODO');
+            formData.append('activo', form.activo === true || form.activo === 'true');
         }
-        formData.append('nombre', form.nombre.trim());
-        formData.append('marca', form.marca.trim());
-        formData.append('categoria', categoriaId);
-        formData.append('descripcion', form.descripcion);
-        formData.append('material_principal', form.material_principal || '');
-        formData.append('proposito_uso', form.proposito_uso || '');
-        formData.append('precio', precioNum);
-        formData.append('estado_publicacion', form.estado_publicacion || 'PUBLICADO');
-        formData.append('compatibilidad', form.compatibilidad || 'TODO');
-        formData.append('activo', form.activo === true || form.activo === 'true');
+        if (canManagePrices) formData.append('precio', precioNum);
         
         // Agregar imagen principal si hay una nueva
-        if (imagenPrincipal) {
+        if (canManageProducts && imagenPrincipal) {
             formData.append('imagen', imagenPrincipal);
         }
 
@@ -463,7 +509,7 @@ const GestionProductos = () => {
             let mensaje = "";
             
             if (modoEdicion) {
-                await axios.put(`http://127.0.0.1:8000/api/gestion/productos/${form.id}/`, formData, { headers });
+                await axios.patch(`http://127.0.0.1:8000/api/gestion/productos/${form.id}/`, formData, { headers });
                 mensaje = "Producto actualizado correctamente.";
             } else {
                 const response = await axios.post('http://127.0.0.1:8000/api/gestion/productos/', formData, { headers });
@@ -476,7 +522,7 @@ const GestionProductos = () => {
                 .filter(img => !img.esExistente)
                 .filter(img => img.archivo && img.archivo !== imagenPrincipal);
             
-            if (imagenesNuevas.length > 0) {
+            if (canManageProducts && imagenesNuevas.length > 0) {
                 for (let i = 0; i < imagenesNuevas.length; i++) {
                     const imagenData = new FormData();
                     imagenData.append('imagen', imagenesNuevas[i].archivo);
@@ -499,7 +545,7 @@ const GestionProductos = () => {
             // Pequeño delay para asegurar que el servidor completó la operación
             setTimeout(() => {
                 cargarProductos();
-                cargarProductosStockBajo();
+                if (canViewStock) cargarProductosStockBajo();
             }, 500);
         } catch (error) {
             console.error('Error completo:', error);
@@ -521,7 +567,131 @@ const GestionProductos = () => {
                 }
             }
             
-            notify.error(msg);
+            notify.error(domainError(error, msg));
+        }
+    };
+
+    const cargarMovimientos = async (productoId) => {
+        if (!canViewStock) {
+            setMovimientos([]);
+            return;
+        }
+        setLoadingMovimientos(true);
+        try {
+            const token = localStorage.getItem('access_token');
+            const response = await axios.get(
+                `http://127.0.0.1:8000/api/gestion/productos/${productoId}/stock-movements/`,
+                { headers: { 'Authorization': `Bearer ${token}` } }
+            );
+            setMovimientos(response.data?.results || []);
+        } catch (error) {
+            notify.error(domainError(error, 'No se pudieron consultar los movimientos.'));
+        } finally {
+            setLoadingMovimientos(false);
+        }
+    };
+
+    const abrirInventario = (producto) => {
+        setInventarioProducto(producto);
+        setStockCommand({
+            quantity: '', delta: '', movementId: '',
+            reason_code: 'MANUAL_D3', note: ''
+        });
+        cargarMovimientos(producto.id);
+    };
+
+    const refrescarInventario = async () => {
+        await cargarProductos();
+        const token = localStorage.getItem('access_token');
+        const detail = await axios.get(
+            `http://127.0.0.1:8000/api/gestion/productos/${inventarioProducto.id}/`,
+            { headers: { 'Authorization': `Bearer ${token}` } }
+        );
+        setInventarioProducto(detail.data);
+        if (canViewStock) {
+            await cargarProductosStockBajo();
+            await cargarMovimientos(inventarioProducto.id);
+        }
+    };
+
+    const guardarCategoria = async (event) => {
+        event.preventDefault();
+        const token = localStorage.getItem('access_token');
+        const config = { headers: { 'Authorization': `Bearer ${token}` } };
+        try {
+            if (categoriaForm.id) {
+                await axios.patch(
+                    `http://127.0.0.1:8000/api/gestion/categorias-productos/${categoriaForm.id}/`,
+                    categoriaForm,
+                    config
+                );
+            } else {
+                await axios.post(
+                    'http://127.0.0.1:8000/api/gestion/categorias-productos/',
+                    categoriaForm,
+                    config
+                );
+            }
+            notify.success('Categoría guardada correctamente.');
+            setCategoriaForm({ id: null, nombre: '', descripcion: '', activo: true });
+            await cargarCategorias();
+        } catch (error) {
+            notify.error(domainError(error, 'No se pudo guardar la categoría.'));
+        }
+    };
+
+    const eliminarCategoria = async (categoria) => {
+        const result = await confirmarAccion({
+            title: '¿Eliminar categoría?',
+            text: categoria.nombre,
+            confirmButtonText: 'Sí, eliminar'
+        });
+        if (!result.isConfirmed) return;
+        try {
+            const token = localStorage.getItem('access_token');
+            await axios.delete(
+                `http://127.0.0.1:8000/api/gestion/categorias-productos/${categoria.id}/`,
+                { headers: { 'Authorization': `Bearer ${token}` } }
+            );
+            await cargarCategorias();
+            notify.success('Categoría eliminada.');
+        } catch (error) {
+            notify.error(domainError(error, 'No se pudo eliminar la categoría.'));
+        }
+    };
+
+    const ejecutarStock = async (operation) => {
+        const token = localStorage.getItem('access_token');
+        const headers = { 'Authorization': `Bearer ${token}` };
+        const common = {
+            reason_code: stockCommand.reason_code.trim(),
+            note: stockCommand.note.trim(),
+            idempotency_key: newIdempotencyKey(operation)
+        };
+        try {
+            if (operation === 'receive') {
+                await axios.post(
+                    `http://127.0.0.1:8000/api/gestion/productos/${inventarioProducto.id}/stock/receive/`,
+                    { ...common, quantity: Number(stockCommand.quantity) },
+                    { headers }
+                );
+            } else if (operation === 'adjust') {
+                await axios.post(
+                    `http://127.0.0.1:8000/api/gestion/productos/${inventarioProducto.id}/stock/adjust/`,
+                    { ...common, delta: Number(stockCommand.delta) },
+                    { headers }
+                );
+            } else {
+                await axios.post(
+                    `http://127.0.0.1:8000/api/gestion/stock-movements/${stockCommand.movementId}/correct/`,
+                    common,
+                    { headers }
+                );
+            }
+            notify.success('Operación de inventario aplicada correctamente.');
+            await refrescarInventario();
+        } catch (error) {
+            notify.error(domainError(error, 'No se pudo aplicar la operación de inventario.'));
         }
     };
 
@@ -584,9 +754,9 @@ const GestionProductos = () => {
                             <th className="px-6 py-3 text-left text-xs font-bold uppercase" style={{ color: '#817773' }}>Producto</th>
                             <th className="px-6 py-3 text-left text-xs font-bold uppercase" style={{ color: '#817773' }}>Categoría</th>
                             <th className="px-6 py-3 text-left text-xs font-bold uppercase" style={{ color: '#817773' }}>Precio</th>
-                            <th className="px-6 py-3 text-left text-xs font-bold uppercase" style={{ color: '#817773' }}>Stock</th>
+                            {canViewStock && <th className="px-6 py-3 text-left text-xs font-bold uppercase" style={{ color: '#817773' }}>Inventario</th>}
                             <th className="px-6 py-3 text-left text-xs font-bold uppercase" style={{ color: '#817773' }}>Compatibilidad</th>
-                            {!esAlerta && <th className="px-6 py-3 text-right text-xs font-bold uppercase" style={{ color: '#817773' }}>Acciones</th>}
+                            {!esAlerta && (canEditProduct || canViewStock || canManageStock) && <th className="px-6 py-3 text-right text-xs font-bold uppercase" style={{ color: '#817773' }}>Acciones</th>}
                         </tr>
                     </thead>
                     <tbody style={{ borderColor: '#D5D1CC' }} className="divide-y">
@@ -613,60 +783,26 @@ const GestionProductos = () => {
                                         ${parseFloat(prod.precio).toLocaleString()}
                                     </span>
                                 </td>
-                                <td className="px-6 py-4 whitespace-nowrap">
-                                    {stockDisponible > stockMinimo ? (
-                                        <span className="px-2 py-1 text-xs font-bold rounded-full" style={{ backgroundColor: '#E8F5E8', color: '#2E7D2E' }}>
-                                            {stockDisponible} u.
-                                        </span>
-                                    ) : stockDisponible > 0 ? (
-                                        <span className="px-2 py-1 text-xs font-bold rounded-full animate-pulse" style={{ backgroundColor: '#F5F1E8', color: '#8B7500' }}>
-                                            {stockDisponible} u.
-                                        </span>
-                                    ) : (
-                                        <span className="px-2 py-1 text-xs font-bold rounded-full" style={{ backgroundColor: '#FFE8E8', color: '#C73E3E' }}>
-                                            Sin Stock
-                                        </span>
-                                    )}
-                                </td>
+                                {canViewStock && (
+                                    <td className="px-6 py-4 whitespace-nowrap text-xs" style={{ color: '#5A5451' }}>
+                                        <div>Real: <strong>{prod.stock_real}</strong></div>
+                                        <div>Comprometido: <strong>{prod.stock_comprometido}</strong></div>
+                                        <div style={{ color: stockDisponible <= stockMinimo ? '#C73E3E' : '#2E7D2E' }}>
+                                            Disponible: <strong>{stockDisponible}</strong>
+                                        </div>
+                                    </td>
+                                )}
                                 <td className="px-6 py-4 whitespace-nowrap">
                                     <span className="text-xs" style={{ color: '#8B8682' }}>
                                         {opcionesCompatibilidad.find(o => o.value === prod.compatibilidad)?.label || prod.compatibilidad}
                                     </span>
                                 </td>
-                                {!esAlerta && (
+                                {!esAlerta && (canEditProduct || canViewStock || canManageStock) && (
                                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                        <button 
-                                            onClick={() => abrirModal(prod)}
-                                            className="font-bold transition mr-4"
-                                            style={{ color: '#AB9A91' }}
-                                            onMouseEnter={(e) => e.target.style.color = '#817773'}
-                                            onMouseLeave={(e) => e.target.style.color = '#AB9A91'}
-                                        >
-                                            Editar
-                                        </button>
-                                        <button 
-                                            onClick={() => desactivarProducto(prod.id, prod.nombre)}
-                                            className="font-bold transition mr-4"
-                                            style={{ color: '#8B7500' }}
-                                            onMouseEnter={(e) => e.target.style.color = '#5A4F00'}
-                                            onMouseLeave={(e) => e.target.style.color = '#8B7500'}
-                                        >
-                                            Desactivar
-                                        </button>
-                                        <button 
-                                            onClick={() => eliminarProducto(prod.id, prod.nombre)}
-                                            disabled={stockDisponible > 0}
-                                            className="font-bold transition disabled:opacity-50"
-                                            style={{ color: '#C73E3E' }}
-                                            onMouseEnter={(e) => {
-                                                if (stockDisponible === 0) e.target.style.color = '#8B3E3E';
-                                            }}
-                                            onMouseLeave={(e) => {
-                                                if (stockDisponible === 0) e.target.style.color = '#C73E3E';
-                                            }}
-                                        >
-                                            Eliminar
-                                        </button>
+                                        {(canViewStock || canManageStock) && <button onClick={() => abrirInventario(prod)} className="font-bold transition mr-4" style={{ color: '#3E5B8E' }}>Inventario</button>}
+                                        {canEditProduct && <button onClick={() => abrirModal(prod)} className="font-bold transition mr-4" style={{ color: '#AB9A91' }}>{canManageProducts ? 'Editar' : 'Editar precio'}</button>}
+                                        {canManageProducts && <button onClick={() => desactivarProducto(prod.id, prod.nombre)} className="font-bold transition mr-4" style={{ color: '#8B7500' }}>Desactivar</button>}
+                                        {canManageProducts && <button onClick={() => eliminarProducto(prod.id, prod.nombre)} disabled={canViewStock && stockDisponible > 0} className="font-bold transition disabled:opacity-50" style={{ color: '#C73E3E' }}>Eliminar</button>}
                                     </td>
                                 )}
                             </tr>
@@ -699,7 +835,7 @@ const GestionProductos = () => {
                             >
                                 Volver
                             </button>
-                            <button 
+                            {canManageProducts && canManagePrices && <button
                                 onClick={() => abrirModal()}
                                 className="text-white px-4 py-2 rounded-lg font-bold shadow-md transition"
                                 style={{ backgroundColor: '#817773' }}
@@ -707,7 +843,7 @@ const GestionProductos = () => {
                                 onMouseLeave={(e) => e.target.style.backgroundColor = '#817773'}
                             >
                                 + Nuevo Producto
-                            </button>
+                            </button>}
                         </div>
                     </div>
                 </div>
@@ -741,7 +877,18 @@ const GestionProductos = () => {
                         >
                             Catálogo Completo ({productos.length})
                         </button>
-                        <button 
+                        {canManageProducts && <button
+                            onClick={() => setTabActiva('categorias')}
+                            className="px-6 py-4 font-semibold whitespace-nowrap transition-all duration-200 border-b-2"
+                            style={{
+                                color: tabActiva === 'categorias' ? '#fff' : '#8B8682',
+                                backgroundColor: tabActiva === 'categorias' ? '#817773' : 'transparent',
+                                borderColor: tabActiva === 'categorias' ? '#817773' : 'transparent'
+                            }}
+                        >
+                            Categorías
+                        </button>}
+                        {canViewStock && <button
                             onClick={() => setTabActiva('alertas')}
                             className="px-6 py-4 font-semibold whitespace-nowrap transition-all duration-200 border-b-2"
                             style={{ 
@@ -763,8 +910,8 @@ const GestionProductos = () => {
                             }}
                         >
                             Stock Bajo ({productosStockBajo.length})
-                        </button>
-                        <button 
+                        </button>}
+                        {canManagePromotions && <button
                             onClick={() => setTabActiva('combos')}
                             className="px-6 py-4 font-semibold whitespace-nowrap transition-all duration-200 border-b-2"
                             style={{ 
@@ -786,7 +933,7 @@ const GestionProductos = () => {
                             }}
                         >
                             Combos
-                        </button>
+                        </button>}
                     </div>
                 </div>
 
@@ -797,7 +944,34 @@ const GestionProductos = () => {
                     ) : (
                         <>
                             {tabActiva === 'catalogo' && <TablaProductos datos={productos} />}
-                            {tabActiva === 'alertas' && (
+                            {canManageProducts && tabActiva === 'categorias' && (
+                                <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <form onSubmit={guardarCategoria} className="space-y-3">
+                                        <h2 className="text-xl font-bold" style={{ color: '#817773' }}>
+                                            {categoriaForm.id ? 'Editar categoría' : 'Nueva categoría'}
+                                        </h2>
+                                        <input aria-label="Nombre de categoría" required value={categoriaForm.nombre} onChange={(e) => setCategoriaForm({...categoriaForm, nombre: e.target.value})} className="w-full border rounded p-2" placeholder="Nombre" />
+                                        <textarea aria-label="Descripción de categoría" value={categoriaForm.descripcion || ''} onChange={(e) => setCategoriaForm({...categoriaForm, descripcion: e.target.value})} className="w-full border rounded p-2" placeholder="Descripción" />
+                                        <label className="flex gap-2"><input type="checkbox" checked={categoriaForm.activo} onChange={(e) => setCategoriaForm({...categoriaForm, activo: e.target.checked})} />Activa</label>
+                                        <div className="flex gap-2">
+                                            <button type="submit" className="px-4 py-2 rounded text-white" style={{ backgroundColor: '#817773' }}>Guardar categoría</button>
+                                            {categoriaForm.id && <button type="button" onClick={() => setCategoriaForm({id: null, nombre: '', descripcion: '', activo: true})}>Cancelar</button>}
+                                        </div>
+                                    </form>
+                                    <div className="space-y-2">
+                                        {categorias.map((categoria) => (
+                                            <div key={categoria.id} className="border rounded p-3 flex justify-between items-center">
+                                                <div><strong>{categoria.nombre}</strong><div className="text-xs">{categoria.descripcion}</div></div>
+                                                <div className="flex gap-3">
+                                                    <button onClick={() => setCategoriaForm({...categoria})} className="font-bold" style={{ color: '#3E5B8E' }}>Editar</button>
+                                                    <button onClick={() => eliminarCategoria(categoria)} className="font-bold" style={{ color: '#C73E3E' }}>Eliminar</button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            {canViewStock && tabActiva === 'alertas' && (
                                 <div>
                                     {productosStockBajo.length > 0 && (
                                         <div className="m-6 p-4 rounded-lg" style={{ backgroundColor: '#FFE8E8', borderLeft: '4px solid #C73E3E' }}>
@@ -809,7 +983,7 @@ const GestionProductos = () => {
                                     <TablaProductos datos={productosStockBajo} esAlerta={true} />
                                 </div>
                             )}
-                            {tabActiva === 'combos' && (
+                            {canManagePromotions && tabActiva === 'combos' && (
                                 <div className="p-6 space-y-8">
                                     <div>
                                         <h2 className="text-xl font-bold mb-4" style={{ color: '#817773' }}>Sugerencias Automáticas</h2>
@@ -970,6 +1144,68 @@ const GestionProductos = () => {
                     )}
                 </div>
             </div>
+            {inventarioProducto && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
+                    <div className="rounded-xl shadow-2xl max-w-4xl w-full p-6 my-8" style={{ backgroundColor: 'white', maxHeight: '90vh', overflowY: 'auto' }}>
+                        <div className="flex justify-between items-center mb-4">
+                            <div>
+                                <h2 className="text-xl font-bold" style={{ color: '#817773' }}>Inventario — {inventarioProducto.nombre}</h2>
+                                <p className="text-xs" style={{ color: '#8B8682' }}>Los movimientos físicos y los compromisos son conceptos separados.</p>
+                            </div>
+                            <button onClick={() => setInventarioProducto(null)} aria-label="Cerrar inventario" className="font-bold">✕</button>
+                        </div>
+
+                        {canViewStock && (
+                            <div className="grid grid-cols-3 gap-3 mb-6">
+                                <div className="p-3 rounded" style={{ backgroundColor: '#F5F5EB' }}>Stock real<br/><strong>{inventarioProducto.stock_real}</strong></div>
+                                <div className="p-3 rounded" style={{ backgroundColor: '#F5F1E8' }}>Comprometido<br/><strong>{inventarioProducto.stock_comprometido}</strong></div>
+                                <div className="p-3 rounded" style={{ backgroundColor: '#E8F5E8' }}>Disponible<br/><strong>{inventarioProducto.stock_disponible}</strong></div>
+                            </div>
+                        )}
+
+                        {canManageStock && (
+                            <div className="border rounded-lg p-4 mb-6" style={{ borderColor: '#E8DCC4' }}>
+                                <h3 className="font-bold mb-3" style={{ color: '#817773' }}>Operaciones semánticas D1</h3>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+                                    <input aria-label="Motivo de stock" value={stockCommand.reason_code} onChange={(e) => setStockCommand({...stockCommand, reason_code: e.target.value})} className="border rounded p-2" placeholder="Código de motivo" />
+                                    <input aria-label="Nota de stock" value={stockCommand.note} onChange={(e) => setStockCommand({...stockCommand, note: e.target.value})} className="border rounded p-2" placeholder="Nota opcional" />
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                    <div className="border rounded p-3">
+                                        <label className="block text-sm font-bold mb-2">Recepción</label>
+                                        <input aria-label="Cantidad recibida" type="number" min="1" value={stockCommand.quantity} onChange={(e) => setStockCommand({...stockCommand, quantity: e.target.value})} className="border rounded p-2 w-full mb-2" />
+                                        <button type="button" disabled={!stockCommand.quantity || !stockCommand.reason_code.trim()} onClick={() => ejecutarStock('receive')} className="w-full p-2 rounded text-white disabled:opacity-50" style={{ backgroundColor: '#2E7D2E' }}>Recibir stock</button>
+                                    </div>
+                                    <div className="border rounded p-3">
+                                        <label className="block text-sm font-bold mb-2">Ajuste</label>
+                                        <input aria-label="Delta de ajuste" type="number" value={stockCommand.delta} onChange={(e) => setStockCommand({...stockCommand, delta: e.target.value})} className="border rounded p-2 w-full mb-2" />
+                                        <button type="button" disabled={!stockCommand.delta || Number(stockCommand.delta) === 0 || !stockCommand.reason_code.trim()} onClick={() => ejecutarStock('adjust')} className="w-full p-2 rounded text-white disabled:opacity-50" style={{ backgroundColor: '#8B7500' }}>Ajustar stock</button>
+                                    </div>
+                                    <div className="border rounded p-3">
+                                        <label className="block text-sm font-bold mb-2">Corrección compensatoria</label>
+                                        <input aria-label="ID de movimiento" type="number" min="1" value={stockCommand.movementId} onChange={(e) => setStockCommand({...stockCommand, movementId: e.target.value})} className="border rounded p-2 w-full mb-2" />
+                                        <button type="button" disabled={!stockCommand.movementId || !stockCommand.reason_code.trim()} onClick={() => ejecutarStock('correct')} className="w-full p-2 rounded text-white disabled:opacity-50" style={{ backgroundColor: '#C73E3E' }}>Solicitar corrección</button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {canViewStock && (
+                            <div>
+                                <h3 className="font-bold mb-2" style={{ color: '#817773' }}>Movimientos físicos</h3>
+                                {loadingMovimientos ? <p>Cargando movimientos...</p> : movimientos.length === 0 ? <p>No hay movimientos físicos.</p> : (
+                                    <div className="overflow-x-auto">
+                                        <table className="min-w-full text-sm">
+                                            <thead><tr><th className="text-left p-2">ID</th><th className="text-left p-2">Tipo</th><th className="text-left p-2">Delta</th><th className="text-left p-2">Antes → Después</th><th className="text-left p-2">Fecha</th></tr></thead>
+                                            <tbody>{movimientos.map((movimiento) => <tr key={movimiento.id} className="border-t"><td className="p-2">{movimiento.id}</td><td className="p-2">{movimiento.tipo}</td><td className="p-2">{movimiento.delta}</td><td className="p-2">{movimiento.stock_before} → {movimiento.stock_after}</td><td className="p-2">{new Date(movimiento.created_at).toLocaleString()}</td></tr>)}</tbody>
+                                        </table>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
             {modalAbierto && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
                     <div className="rounded-xl shadow-2xl max-w-3xl w-full p-6 animate-fade-in-up my-8" style={{ backgroundColor: 'white', maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}>
@@ -991,6 +1227,7 @@ const GestionProductos = () => {
                                         value={form.sku}
                                         onChange={handleChange}
                                         readOnly={!modoEdicion}
+                                        disabled={!canManageProducts}
                                     />
                                 </div>
                                 <div>
@@ -998,12 +1235,14 @@ const GestionProductos = () => {
                                     <input 
                                         type="text" 
                                         name="nombre" 
+                                        aria-label="Nombre *"
                                         required
                                         placeholder="Ej: Shampoo Nutritivo"
                                         className="mt-1 block w-full border rounded-md shadow-sm p-2 focus:ring-2 outline-none"
                                         style={{ borderColor: '#D5D1CC', '--tw-ring-color': '#AB9A91' }}
                                         value={form.nombre}
                                         onChange={handleChange}
+                                        disabled={!canManageProducts}
                                     />
                                 </div>
                             </div>
@@ -1020,6 +1259,7 @@ const GestionProductos = () => {
                                         style={{ borderColor: '#D5D1CC', '--tw-ring-color': '#AB9A91' }}
                                         value={form.marca}
                                         onChange={handleChange}
+                                        disabled={!canManageProducts}
                                     />
                                 </div>
                                 <div>
@@ -1030,6 +1270,7 @@ const GestionProductos = () => {
                                         style={{ borderColor: '#D5D1CC', '--tw-ring-color': '#AB9A91' }}
                                         value={form.categoria}
                                         onChange={handleChange}
+                                        disabled={!canManageProducts}
                                     >
                                         <option value="">-- Seleccionar --</option>
                                         {categorias.map(cat => (
@@ -1050,6 +1291,7 @@ const GestionProductos = () => {
                                     style={{ borderColor: '#D5D1CC', '--tw-ring-color': '#AB9A91' }}
                                     value={form.descripcion}
                                     onChange={handleChange}
+                                    disabled={!canManageProducts}
                                 />
                             </div>
 
@@ -1063,6 +1305,7 @@ const GestionProductos = () => {
                                         style={{ borderColor: '#D5D1CC', '--tw-ring-color': '#AB9A91' }}
                                         value={form.material_principal || ''}
                                         onChange={handleChange}
+                                        disabled={!canManageProducts}
                                     >
                                         <option value="">-- Seleccionar --</option>
                                         {opcionesMaterialPrincipal.map(opt => (
@@ -1078,6 +1321,7 @@ const GestionProductos = () => {
                                         style={{ borderColor: '#D5D1CC', '--tw-ring-color': '#AB9A91' }}
                                         value={form.proposito_uso || ''}
                                         onChange={handleChange}
+                                        disabled={!canManageProducts}
                                     >
                                         <option value="">-- Seleccionar --</option>
                                         {opcionesPropositoUso.map(opt => (
@@ -1094,13 +1338,15 @@ const GestionProductos = () => {
                                     <input 
                                         type="number" 
                                         name="precio" 
+                                        aria-label="Precio ($) *"
                                         step="0.01"
-                                        required
+                                        required={canManagePrices}
                                         placeholder="0.00"
                                         className="mt-1 block w-full border rounded-md shadow-sm p-2 focus:ring-2 outline-none"
                                         style={{ borderColor: '#D5D1CC', '--tw-ring-color': '#AB9A91' }}
                                         value={form.precio}
                                         onChange={handleChange}
+                                        disabled={!canManagePrices}
                                     />
                                 </div>
                                 <div>
@@ -1127,6 +1373,7 @@ const GestionProductos = () => {
                                         style={{ borderColor: '#D5D1CC', '--tw-ring-color': '#AB9A91' }}
                                         value={form.compatibilidad}
                                         onChange={handleChange}
+                                        disabled={!canManageProducts}
                                     >
                                         {opcionesCompatibilidad.map(opt => (
                                             <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -1141,6 +1388,7 @@ const GestionProductos = () => {
                                         style={{ borderColor: '#D5D1CC', '--tw-ring-color': '#AB9A91' }}
                                         value={form.estado_publicacion}
                                         onChange={handleChange}
+                                        disabled={!canManageProducts}
                                     >
                                         {opcionesEstadoPublicacion.map(opt => (
                                             <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -1150,7 +1398,7 @@ const GestionProductos = () => {
                             </div>
 
                             {/* Galería de Imágenes - Consolidada */}
-                            <div>
+                            {canManageProducts && <div>
                                 <label className="block text-sm font-medium mb-2" style={{ color: '#817773' }}>Galería de Imágenes</label>
                                 
                                 {/* Input para subir/agregar imágenes */}
@@ -1250,7 +1498,7 @@ const GestionProductos = () => {
                                         <p className="text-xs" style={{ color: '#ABA89E' }}>Haz clic en el área superior para agregar imágenes</p>
                                     </div>
                                 )}
-                            </div>
+                            </div>}
 
                             {/* Checkbox Activo */}
                             <div className="flex items-center">
@@ -1262,6 +1510,7 @@ const GestionProductos = () => {
                                     style={{ accentColor: '#817773' }}
                                     checked={form.activo}
                                     onChange={handleChange}
+                                    disabled={!canManageProducts}
                                 />
                                 <label htmlFor="activo" className="ml-2 text-sm font-medium" style={{ color: '#817773' }}>
                                     Producto activo

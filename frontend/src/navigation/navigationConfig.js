@@ -149,10 +149,12 @@ export const navigationItems = [
         label: 'Productos',
         path: ADMIN_ROUTES.PRODUCTOS,
         placement: NAVIGATION_PLACEMENT.PRIMARY,
-        allowedRoles: ['ADMINISTRADOR'],
         anyPermissions: [
             'gestion.view_stock',
-            'gestion.manage_products'
+            'gestion.manage_stock',
+            'gestion.manage_products',
+            'gestion.manage_prices',
+            'gestion.manage_promotions'
         ]
     },
     {

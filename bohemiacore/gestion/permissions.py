@@ -127,3 +127,46 @@ class CanManageStock(BasePermission):
 
     def has_permission(self, request, view):
         return request.user.has_perm(BusinessPermission.MANAGE_STOCK)
+
+
+class CanManageProducts(BasePermission):
+    message = 'No tiene permisos para administrar productos.'
+
+    def has_permission(self, request, view):
+        return request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+
+
+class CanManagePrices(BasePermission):
+    message = 'No tiene permisos para administrar precios.'
+
+    def has_permission(self, request, view):
+        return request.user.has_perm(BusinessPermission.MANAGE_PRICES)
+
+
+class CanManagePromotions(BasePermission):
+    message = 'No tiene permisos para administrar promociones.'
+
+    def has_permission(self, request, view):
+        return request.user.has_perm(BusinessPermission.MANAGE_PROMOTIONS)
+
+
+class CanManageProductsOrPrices(BasePermission):
+    message = 'No tiene permisos para modificar productos o precios.'
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+            or user.has_perm(BusinessPermission.MANAGE_PRICES)
+        )
+
+
+class CanManageProductsAndPrices(BasePermission):
+    message = 'Crear productos requiere permisos de productos y precios.'
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+            and user.has_perm(BusinessPermission.MANAGE_PRICES)
+        )

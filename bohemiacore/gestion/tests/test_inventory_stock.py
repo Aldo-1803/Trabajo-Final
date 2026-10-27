@@ -380,7 +380,7 @@ class InventoryPermissionAndPrivacyApiTests(InventoryFixtureMixin, TestCase):
 
     def test_generic_product_patch_cannot_write_inventory_fields(self):
         self.staff_without_permission.user_permissions.add(
-            self.permission('change_producto')
+            self.permission('manage_products')
         )
         self.receive(quantity=3)
         response = self.client_for(self.staff_without_permission).patch(
@@ -393,9 +393,9 @@ class InventoryPermissionAndPrivacyApiTests(InventoryFixtureMixin, TestCase):
             },
             format='json',
         )
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 400)
         self.product.refresh_from_db()
-        self.assertEqual(self.product.nombre, 'Nombre actualizado')
+        self.assertNotEqual(self.product.nombre, 'Nombre actualizado')
         self.assertEqual(self.product.stock_real, 3)
         self.assertEqual(self.product.stock_comprometido, 0)
         self.assertEqual(self.product.stock_minimo, 5)

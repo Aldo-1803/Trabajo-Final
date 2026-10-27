@@ -108,6 +108,11 @@ from .permissions import (
     CanViewFinancialReports,
     CanManageStock,
     CanViewStock,
+    CanManageProducts,
+    CanManagePrices,
+    CanManagePromotions,
+    CanManageProductsOrPrices,
+    CanManageProductsAndPrices,
 )
 from .inventory_services import (
     StockConflict,
@@ -1649,25 +1654,27 @@ class ServicioViewSet(viewsets.ModelViewSet):
     """
     ViewSet para gestionar servicios con CRUD completo.
     - Lectura: AllowAny (clientes pueden ver servicios disponibles)
-    - Creación/Actualización/Eliminación: Solo IsAdminUser
+    - Creación/Actualización/Eliminación: manage_prices efectivo
     """
     serializer_class = ServicioSerializer
     pagination_class = None
 
     def get_queryset(self):
-        # Admins ven todos los servicios (activos e inactivos)
-        # Clientes ven solo activos
-        if self.request.user.is_staff:
+        # La gestión de precios usa permiso efectivo; la lectura pública ve activos.
+        if (
+            self.request.user.is_authenticated
+            and self.request.user.has_perm(BusinessPermission.MANAGE_PRICES)
+        ):
             return Servicio.objects.all().order_by('nombre')
         else:
             return Servicio.objects.filter(activo=True).order_by('nombre')
     
     def get_permissions(self):
-        """Permisos dinámicos: lista/retrieve abierto, CRUD solo para admins"""
+        """Lectura pública; toda escritura requiere manage_prices efectivo."""
         if self.action in ['list', 'retrieve']:
             permission_classes = [AllowAny]
         else:
-            permission_classes = [IsAdminUser]
+            permission_classes = [IsAuthenticated, CanManagePrices]
         return [permission() for permission in permission_classes]
     
     def perform_destroy(self, instance):
@@ -3786,13 +3793,27 @@ class ProductoViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """Optimiza queries con prefetch_related para imágenes"""
-        return Producto.objects.filter(activo=True).prefetch_related('imagenes')
+        queryset = Producto.objects.all()
+        user = self.request.user
+        internal_permissions = (
+            BusinessPermission.VIEW_STOCK,
+            BusinessPermission.MANAGE_STOCK,
+            BusinessPermission.MANAGE_PRODUCTS,
+            BusinessPermission.MANAGE_PRICES,
+        )
+        if not (
+            user.is_authenticated
+            and any(user.has_perm(permission) for permission in internal_permissions)
+        ):
+            queryset = queryset.filter(activo=True)
+        return queryset.prefetch_related('imagenes')
 
     def get_permissions(self):
         """
         Permisos dinámicos:
         - list/retrieve: AllowAny (sin cantidades internas salvo view_stock)
-        - create/update/destroy: IsAdminUser (solo admins gestionan)
+        - metadata: manage_products
+        - precio: manage_prices
         - stock_bajo/movimientos: view_stock
         - receive/adjust: manage_stock
         """
@@ -3802,8 +3823,14 @@ class ProductoViewSet(viewsets.ModelViewSet):
             permission_classes = [IsAuthenticated, CanViewStock]
         elif self.action in ['receive_stock', 'adjust_stock']:
             permission_classes = [IsAuthenticated, CanManageStock]
+        elif self.action == 'create':
+            permission_classes = [IsAuthenticated, CanManageProductsAndPrices]
+        elif self.action in ['update', 'partial_update']:
+            permission_classes = [IsAuthenticated, CanManageProductsOrPrices]
+        elif self.action in ['destroy', 'desactivar']:
+            permission_classes = [IsAuthenticated, CanManageProducts]
         else:
-            permission_classes = [IsAdminUser]
+            permission_classes = [IsAuthenticated, CanManageProducts]
         return [permission() for permission in permission_classes]
 
     def perform_update(self, serializer):
@@ -5038,10 +5065,27 @@ class CategoriaProductoViewSet(viewsets.ModelViewSet):
     """
     ViewSet para gestionar categorías de productos.
     """
-    queryset = CategoriaProducto.objects.filter(activo=True)
+    queryset = CategoriaProducto.objects.all()
     serializer_class = CategoriaProductoSerializer
-    permission_classes = [AllowAny]
     pagination_class = None
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+        if not (
+            user.is_authenticated
+            and user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+        ):
+            queryset = queryset.filter(activo=True)
+        return queryset
+
+    def get_permissions(self):
+        permission_classes = (
+            [AllowAny]
+            if self.action in ['list', 'retrieve']
+            else [IsAuthenticated, CanManageProducts]
+        )
+        return [permission() for permission in permission_classes]
 
 
 
@@ -5066,12 +5110,12 @@ class PromocionViewSet(viewsets.ModelViewSet):
         """
         Permisos dinámicos: 
         - list/retrieve: AllowAny (clientes pueden ver promociones activas)
-        - create/update/destroy: IsAdminUser (solo admins)
+        - create/update/destroy y acciones: manage_promotions
         """
         if self.action in ['list', 'retrieve']:
             permission_classes = [AllowAny]
         else:
-            permission_classes = [IsAdminUser]
+            permission_classes = [IsAuthenticated, CanManagePromotions]
         return [permission() for permission in permission_classes]
     
     def get_queryset(self):
@@ -5084,8 +5128,11 @@ class PromocionViewSet(viewsets.ModelViewSet):
         """
         queryset = super().get_queryset()
         
-        # Si no es admin, solo mostrar promociones activas
-        if not self.request.user.is_staff:
+        can_manage = (
+            self.request.user.is_authenticated
+            and self.request.user.has_perm(BusinessPermission.MANAGE_PROMOTIONS)
+        )
+        if not can_manage:
             hoy = timezone.now().date()
             queryset = queryset.filter(
                 is_active=True,
@@ -5120,9 +5167,6 @@ class PromocionViewSet(viewsets.ModelViewSet):
         Lista sugerencias automáticas de combos pendientes.
         GET /api/gestion/promociones/sugerencias/
         """
-        if not request.user.is_staff:
-            return Response({'error': 'No autorizado'}, status=status.HTTP_403_FORBIDDEN)
-
         queryset = Promocion.objects.filter(
             tipo='COMBO',
             es_sugerencia_automatica=True,
@@ -5138,9 +5182,6 @@ class PromocionViewSet(viewsets.ModelViewSet):
         Publica una sugerencia de combo.
         POST /api/gestion/promociones/{id}/publicar/
         """
-        if not request.user.is_staff:
-            return Response({'error': 'No autorizado'}, status=status.HTTP_403_FORBIDDEN)
-
         promocion = self.get_object()
         data = request.data or {}
 
@@ -5164,9 +5205,6 @@ class PromocionViewSet(viewsets.ModelViewSet):
         Rechaza una sugerencia de combo.
         POST /api/gestion/promociones/{id}/rechazar/
         """
-        if not request.user.is_staff:
-            return Response({'error': 'No autorizado'}, status=status.HTTP_403_FORBIDDEN)
-
         promocion = self.get_object()
         promocion.is_active = False
         promocion.estado_sugerencia = 'RECHAZADA'
@@ -6790,12 +6828,12 @@ class ImagenProductoViewSet(viewsets.ModelViewSet):
         """
         Permisos dinámicos:
         - list/retrieve: AllowAny (clientes pueden ver imágenes)
-        - create/update/destroy: IsAdminUser (solo admins gestionan)
+        - create/update/destroy: manage_products
         """
         if self.action in ['list', 'retrieve']:
             permission_classes = [AllowAny]
         else:
-            permission_classes = [IsAdminUser]
+            permission_classes = [IsAuthenticated, CanManageProducts]
         return [permission() for permission in permission_classes]
 
     def perform_create(self, serializer):

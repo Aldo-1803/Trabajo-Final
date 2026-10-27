@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from rest_framework.exceptions import PermissionDenied
 from .models import (
     TipoCabello, GrosorCabello, PorosidadCabello, CueroCabelludo,
     EstadoGeneral, Equipamiento, Producto, ImagenProducto, ReglaDiagnostico,
@@ -973,7 +974,7 @@ class ImagenProductoSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
 
-class ProductoSerializer(serializers.ModelSerializer):
+class ProductoSerializer(StrictInputFieldsMixin, serializers.ModelSerializer):
     # Esto permite ver el nombre de la categoría en lugar de solo el ID
     categoria_nombre = serializers.ReadOnlyField(source='categoria.nombre')
     # Incluir las imágenes del producto
@@ -999,6 +1000,52 @@ class ProductoSerializer(serializers.ModelSerializer):
             'stock_comprometido', 'stock_minimo', 'stock_disponible',
             'necesita_reposicion', 'available',
         ]
+
+    INVENTORY_FIELDS = {
+        'stock_real',
+        'stock_comprometido',
+        'stock_minimo',
+        'stock_disponible',
+        'necesita_reposicion',
+        'available',
+    }
+    PRICE_FIELDS = {'precio'}
+    PRODUCT_METADATA_FIELDS = {
+        'sku',
+        'nombre',
+        'marca',
+        'categoria',
+        'descripcion',
+        'imagen',
+        'estado_publicacion',
+        'compatibilidad',
+        'material_principal',
+        'proposito_uso',
+        'activo',
+    }
+
+    def to_internal_value(self, data):
+        submitted = set(data.keys()) if hasattr(data, 'keys') else set()
+        inventory_fields = submitted & self.INVENTORY_FIELDS
+        if inventory_fields:
+            raise serializers.ValidationError({
+                field: [
+                    'El inventario sólo puede modificarse mediante los commands de stock.'
+                ]
+                for field in sorted(inventory_fields)
+            })
+
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        if submitted & self.PRICE_FIELDS and not (
+            user and user.has_perm(BusinessPermission.MANAGE_PRICES)
+        ):
+            raise PermissionDenied('No tiene permisos para modificar precios.')
+        if submitted & self.PRODUCT_METADATA_FIELDS and not (
+            user and user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+        ):
+            raise PermissionDenied('No tiene permisos para modificar productos.')
+        return super().to_internal_value(data)
 
     def to_representation(self, instance):
         representation = super().to_representation(instance)
