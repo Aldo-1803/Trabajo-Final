@@ -119,6 +119,14 @@ from .inventory_services import (
     correct_stock_movement,
     receive_stock,
 )
+from .order_inventory_services import (
+    OrderInventoryError,
+    apply_order_inventory_effect,
+    apply_pending_order_inventory_effect,
+    create_order_stock_commitments,
+    release_order_stock_commitments,
+    release_pending_order_stock_commitments,
+)
 from .technical_booking_request_services import (
     TechnicalBookingRequestError,
     TechnicalBookingRequestNotFound,
@@ -357,6 +365,7 @@ def _crear_checkout_mercadopago_para_usuario(user):
                 precio_historico=item.producto.precio,
             )
 
+        create_order_stock_commitments(orden.pk)
         url_pago = MercadoPagoService().crear_preferencia(orden)
         carrito.items.all().delete()
 
@@ -396,6 +405,11 @@ class GenerarPagoMercadoPagoView(APIView):
             return Response(
                 {'error': 'El usuario no tiene perfil de cliente.'},
                 status=status.HTTP_403_FORBIDDEN
+            )
+        except OrderInventoryError as e:
+            return Response(
+                {'error': e.detail, 'code': e.code},
+                status=status.HTTP_400_BAD_REQUEST,
             )
         except ValidationError as e:
             mensaje = str(e.detail[0]) if hasattr(e, 'detail') and e.detail else str(e)
@@ -438,9 +452,8 @@ class WebhookMercadoPagoView(APIView):
                 return Response({'status': 'recibido'}, status=status.HTTP_200_OK)
 
             with transaction.atomic():
-                orden = OrdenCompra.objects.select_for_update().get(id=orden_id)
-
                 if estado_pago == 'approved':
+                    orden = OrdenCompra.objects.get(id=orden_id)
                     Pago.objects.get_or_create(
                         transaccion_id=str(payment_id),
                         defaults={
@@ -450,22 +463,19 @@ class WebhookMercadoPagoView(APIView):
                         },
                     )
 
-                    if orden.estado != 'COMPLETADO':
-                        for item in orden.items.select_related('producto'):
-                            producto = item.producto
-                            producto.stock_real = max(0, producto.stock_real - item.cantidad)
-                            producto.save(update_fields=['stock_real'])
-
-                        orden.estado = 'COMPLETADO'
-                        orden.save(update_fields=['estado', 'actualizado_at'])
+                    apply_order_inventory_effect(orden.pk)
 
                 elif estado_pago in ('rejected', 'cancelled'):
-                    orden.estado = 'RECHAZADO'
-                    orden.save(update_fields=['estado', 'actualizado_at'])
+                    release_order_stock_commitments(
+                        int(orden_id),
+                        final_state='RECHAZADO',
+                    )
 
-                elif estado_pago in ('pending', 'in_process') and orden.estado == 'PENDIENTE':
-                    orden.estado = 'ESPERANDO_PAGO'
-                    orden.save(update_fields=['estado', 'actualizado_at'])
+                elif estado_pago in ('pending', 'in_process'):
+                    orden = OrdenCompra.objects.select_for_update().get(id=orden_id)
+                    if orden.estado == 'PENDIENTE':
+                        orden.estado = 'ESPERANDO_PAGO'
+                        orden.save(update_fields=['estado', 'actualizado_at'])
 
             return Response({'status': 'recibido'}, status=status.HTTP_200_OK)
 
@@ -474,6 +484,22 @@ class WebhookMercadoPagoView(APIView):
                 f"Webhook MP: pago {payment_id} aprobado, pero la orden {orden_id} no existe."
             )
             return Response({'status': 'recibido'}, status=status.HTTP_200_OK)
+        except OrderInventoryError as e:
+            if e.code == 'ORDER_NOT_FOUND':
+                logger.warning(
+                    'Webhook MP: la orden %s no existe para liberar stock.',
+                    orden_id,
+                )
+                return Response(
+                    {'status': 'recibido'},
+                    status=status.HTTP_200_OK,
+                )
+            logger.warning(
+                'Webhook MP sin efecto de inventario para orden %s: %s',
+                orden_id,
+                e.code,
+            )
+            return Response(status=status.HTTP_409_CONFLICT)
         except Exception as e:
             logger.error(f"Error en Webhook MP: {str(e)}", exc_info=True)
             return Response(status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -5604,16 +5630,9 @@ class CarritoViewSet(viewsets.ModelViewSet):
                         precio_historico=precio_unitario
                     )
 
-                    # Reservar stock comprometido
-                    producto.stock_comprometido = max(0, producto.stock_comprometido + cantidad)
-                    producto.save()
-
                     total_venta += subtotal
 
-                    logger.info(
-                        f"Stock comprometido: {producto.nombre} | "
-                        f"Cantidad: {cantidad} | Comprometido: {producto.stock_comprometido}"
-                    )
+                create_order_stock_commitments(orden.pk)
 
                 orden.total = total_venta
                 orden.save(update_fields=['total'])
@@ -5656,6 +5675,11 @@ class CarritoViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_200_OK
             )
         
+        except OrderInventoryError as e:
+            return Response(
+                {'error': e.detail, 'code': e.code},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         except ValidationError as e:
             return Response(
                 {'error': str(e.detail[0])},
@@ -5783,34 +5807,33 @@ class CarritoViewSet(viewsets.ModelViewSet):
             from usuarios.models import Cliente
             cliente = Cliente.objects.filter(usuario=self.request.user).first()
             
-            # Validar disponibilidad de stock y comprometer
+            # Crear el contrato legacy y su OrdenCompra canónica en una sola TX.
             from gestion.models import OrdenPendiente, Auditoria
-            
-            for item in items_carrito:
-                producto = item.producto
-                if producto.stock_disponible < item.cantidad:
-                    return Response(
-                        {
-                            'error': f"Stock insuficiente para {producto.nombre}. "
-                                   f"Disponible: {producto.stock_disponible}, Solicitado: {item.cantidad}"
-                        },
-                        status=status.HTTP_400_BAD_REQUEST
+
+            with transaction.atomic():
+                orden = OrdenPendiente.objects.create(
+                    cliente=cliente,
+                    estado='PENDIENTE',
+                    items_json=items_json,
+                    monto_total=total_pedido,
+                )
+                orden_compra = OrdenCompra.objects.create(
+                    codigo=f'OP{orden.pk}',
+                    cliente=cliente,
+                    estado='PENDIENTE',
+                    total=total_pedido,
+                    notas='Compatibilidad canónica de OrdenPendiente legacy.',
+                )
+                for item in items_carrito:
+                    OrdenItem.objects.create(
+                        orden=orden_compra,
+                        producto=item.producto,
+                        cantidad=item.cantidad,
+                        precio_historico=item.producto.precio,
                     )
-            
-            # Crear orden pendiente
-            orden = OrdenPendiente.objects.create(
-                cliente=cliente,
-                estado='PENDIENTE',
-                items_json=items_json,
-                monto_total=total_pedido
-            )
-            
-            # Comprometer el stock para cada item
-            for item in items_carrito:
-                producto = item.producto
-                producto.stock_comprometido += item.cantidad
-                producto.save()
-                logger.info(f"Stock comprometido: {producto.nombre} +{item.cantidad} (Disponible: {producto.stock_disponible})")
+                orden.orden_compra = orden_compra
+                orden.save(update_fields=['orden_compra'])
+                create_order_stock_commitments(orden_compra.pk)
             
             # Registrar en auditoría
             try:
@@ -5849,6 +5872,11 @@ class CarritoViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_201_CREATED
             )
         
+        except OrderInventoryError as e:
+            return Response(
+                {'error': e.detail, 'code': e.code},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         except Exception as e:
             logger.error(f"Error registrando intención de compra: {str(e)}", exc_info=True)
             return Response(
@@ -5883,6 +5911,11 @@ class CarritoViewSet(viewsets.ModelViewSet):
             return Response(
                 {'error': 'El usuario no tiene perfil de cliente.'},
                 status=status.HTTP_403_FORBIDDEN
+            )
+        except OrderInventoryError as e:
+            return Response(
+                {'error': e.detail, 'code': e.code},
+                status=status.HTTP_400_BAD_REQUEST,
             )
         except ValidationError as e:
             mensaje = str(e.detail[0]) if hasattr(e, 'detail') and e.detail else str(e)
@@ -6353,48 +6386,8 @@ class OrdenPendienteViewSet(viewsets.ModelViewSet):
         Descontar del stock_real y limpiar el stock_comprometido.
         """
         try:
-            orden = self.get_object()
-            
-            if orden.estado != 'PENDIENTE':
-                return Response(
-                    {'error': f'Solo se puede confirmar órdenes PENDIENTES. Estado actual: {orden.estado}'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            # Procesar cada item: descontar stock_real y limpiar stock_comprometido
-            for item_data in orden.items_json:
-                try:
-                    producto = Producto.objects.get(id=item_data['producto_id'])
-                    cantidad = item_data['cantidad']
-                    
-                    # Validar que hay suficiente stock comprometido
-                    if producto.stock_comprometido < cantidad:
-                        return Response(
-                            {'error': f'Stock comprometido inconsistente para {producto.nombre}'},
-                            status=status.HTTP_400_BAD_REQUEST
-                        )
-                    
-                    # Descontar del real y limpiar del comprometido
-                    producto.stock_real = max(0, producto.stock_real - cantidad)
-                    producto.stock_comprometido -= cantidad
-                    producto.save()
-                    
-                    logger.info(
-                        f"Stock descontado: {producto.nombre} -({cantidad}) | "
-                        f"Real: {producto.stock_real}, Comprometido: {producto.stock_comprometido}"
-                    )
-                except Producto.DoesNotExist:
-                    logger.warning(f"Producto {item_data['producto_id']} no encontrado en orden {orden.id}")
-                except Exception as e:
-                    logger.error(f"Error procesando producto en orden {orden.id}: {str(e)}")
-            
-            # Marcar orden como completada
-            orden.estado = 'COMPLETADA'
-            orden.fecha_completacion = timezone.now()
-            orden.save()
-            
-            logger.info(f"Orden {orden.id} completada. Stock descontado. Usuario: {request.user.email}")
-            
+            visible_order = self.get_object()
+            orden, _result = apply_pending_order_inventory_effect(visible_order.pk)
             return Response(
                 {
                     'status': 'Pago confirmado',
@@ -6406,6 +6399,11 @@ class OrdenPendienteViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_200_OK
             )
         
+        except OrderInventoryError as e:
+            return Response(
+                {'error': e.detail, 'code': e.code},
+                status=status.HTTP_409_CONFLICT,
+            )
         except Exception as e:
             logger.error(f"Error confirmando pago de orden {pk}: {str(e)}", exc_info=True)
             return Response(
@@ -6422,74 +6420,8 @@ class OrdenPendienteViewSet(viewsets.ModelViewSet):
         Actualiza el estado a COMPLETADA y resta del stock_real y stock_comprometido.
         """
         try:
-            orden = self.get_object()
-            
-            if orden.estado not in ['PENDIENTE', 'CONFIRMADA']:
-                return Response(
-                    {'error': f'Solo se pueden completar órdenes PENDIENTES o CONFIRMADAS. Estado actual: {orden.estado}'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            # Procesar cada item: descontar stock_real y stock_comprometido
-            with transaction.atomic():
-                # Soportar tanto el nuevo formato (items relacionados) como el viejo (items_json)
-                if hasattr(orden, 'items') and orden.items.exists():
-                    # Nuevo formato: usar la relación OrdenPendienteItem
-                    for item in orden.items.all():
-                        if not item.producto:
-                            logger.warning(f"Item {item.id} sin producto en orden {orden.id}")
-                            continue
-                        
-                        producto = item.producto
-                        cantidad = item.cantidad
-                        
-                        # Validar stock
-                        if producto.stock_real < cantidad:
-                            return Response(
-                                {'error': f'Stock insuficiente de {producto.nombre}. Disponible: {producto.stock_real}'},
-                                status=status.HTTP_400_BAD_REQUEST
-                            )
-                        
-                        # Descontar stock
-                        producto.stock_real -= cantidad
-                        producto.stock_comprometido = max(0, producto.stock_comprometido - cantidad)
-                        producto.save()
-                        
-                        logger.info(
-                            f"Stock descontado: {producto.nombre} -({cantidad}) | "
-                            f"Real: {producto.stock_real}, Comprometido: {producto.stock_comprometido}"
-                        )
-                else:
-                    # Viejo formato: usar items_json
-                    for item_data in orden.items_json:
-                        try:
-                            producto = Producto.objects.get(id=item_data['producto_id'])
-                            cantidad = item_data['cantidad']
-                            
-                            if producto.stock_real < cantidad:
-                                return Response(
-                                    {'error': f'Stock insuficiente de {producto.nombre}'},
-                                    status=status.HTTP_400_BAD_REQUEST
-                                )
-                            
-                            producto.stock_real = max(0, producto.stock_real - cantidad)
-                            producto.stock_comprometido = max(0, producto.stock_comprometido - cantidad)
-                            producto.save()
-                            
-                            logger.info(
-                                f"Stock descontado: {producto.nombre} -({cantidad}) | "
-                                f"Real: {producto.stock_real}, Comprometido: {producto.stock_comprometido}"
-                            )
-                        except Producto.DoesNotExist:
-                            logger.warning(f"Producto {item_data['producto_id']} no encontrado")
-                
-                # Marcar orden como completada
-                orden.estado = 'COMPLETADA'
-                orden.fecha_completacion = timezone.now()
-                orden.save()
-            
-            logger.info(f"Orden {orden.id} entregada. Stock actualizado. Usuario: {request.user.email}")
-            
+            visible_order = self.get_object()
+            orden, _result = apply_pending_order_inventory_effect(visible_order.pk)
             return Response(
                 {
                     'status': 'Entrega confirmada',
@@ -6501,6 +6433,11 @@ class OrdenPendienteViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_200_OK
             )
         
+        except OrderInventoryError as e:
+            return Response(
+                {'error': e.detail, 'code': e.code},
+                status=status.HTTP_409_CONFLICT,
+            )
         except Exception as e:
             logger.error(f"Error confirmando entrega de orden {pk}: {str(e)}", exc_info=True)
             return Response(
@@ -6531,29 +6468,8 @@ class OrdenPendienteViewSet(viewsets.ModelViewSet):
         Cancela una orden pendiente y libera el stock comprometido.
         """
         try:
-            orden = self.get_object()
-
-            if orden.estado != 'PENDIENTE':
-                return Response(
-                    {'error': f'Solo se puede cancelar órdenes PENDIENTES. Estado actual: {orden.estado}'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            with transaction.atomic():
-                for item in orden.items.all():
-                    producto = item.producto
-                    cantidad = item.cantidad
-
-                    producto.stock_comprometido = max(0, producto.stock_comprometido - cantidad)
-                    producto.save()
-
-                    logger.info(
-                        f"Stock liberado: {producto.nombre} -({cantidad}) | "
-                        f"Comprometido: {producto.stock_comprometido}"
-                    )
-
-                orden.estado = 'CANCELADO'
-                orden.save()
+            visible_order = self.get_object()
+            orden = release_pending_order_stock_commitments(visible_order.pk)
 
             serializer = self.get_serializer(orden)
             return Response(
@@ -6565,6 +6481,11 @@ class OrdenPendienteViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_200_OK
             )
 
+        except OrderInventoryError as e:
+            return Response(
+                {'error': e.detail, 'code': e.code},
+                status=status.HTTP_409_CONFLICT,
+            )
         except Exception as e:
             logger.error(f"Error cancelando orden {pk}: {str(e)}", exc_info=True)
             return Response(
@@ -6662,47 +6583,9 @@ class OrdenCompraViewSet(viewsets.ModelViewSet):
         Descontar del stock_real y del stock_comprometido.
         """
         try:
-            orden = self.get_object()
-            
-            if orden.estado != 'PENDIENTE':
-                return Response(
-                    {'error': f'Solo se puede confirmar órdenes PENDIENTES. Estado actual: {orden.estado}'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            # Usar transacción atómica para garantizar consistencia
-            with transaction.atomic():
-                # Procesar cada item de la orden
-                for item in orden.items.all():
-                    try:
-                        producto = item.producto
-                        cantidad = item.cantidad
-                        
-                        # Validar que hay suficiente stock comprometido
-                        if producto.stock_comprometido < cantidad:
-                            return Response(
-                                {'error': f'Stock comprometido inconsistente para {producto.nombre}'},
-                                status=status.HTTP_400_BAD_REQUEST
-                            )
-                        
-                        # Descontar del real y del comprometido
-                        producto.stock_real = max(0, producto.stock_real - cantidad)
-                        producto.stock_comprometido = max(0, producto.stock_comprometido - cantidad)
-                        producto.save()
-                        
-                        logger.info(
-                            f"Stock descontado: {producto.nombre} -({cantidad}) | "
-                            f"Real: {producto.stock_real}, Comprometido: {producto.stock_comprometido}"
-                        )
-                    except Exception as e:
-                        logger.warning(f"Error procesando item {item.id}: {str(e)}")
-                        raise
-                
-                # Marcar orden como completada
-                orden.estado = 'COMPLETADO'
-                orden.save()
-            
-            logger.info(f"Orden {orden.id} completada. Stock actualizado. Usuario: {request.user.email}")
+            visible_order = self.get_object()
+            result = apply_order_inventory_effect(visible_order.pk)
+            orden = result.order
             
             # Serializar la orden actualizada
             serializer = self.get_serializer(orden)
@@ -6716,6 +6599,11 @@ class OrdenCompraViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_200_OK
             )
         
+        except OrderInventoryError as e:
+            return Response(
+                {'error': e.detail, 'code': e.code},
+                status=status.HTTP_409_CONFLICT,
+            )
         except Exception as e:
             logger.error(f"Error confirmando entrega de orden {pk}: {str(e)}", exc_info=True)
             return Response(
@@ -6731,29 +6619,12 @@ class OrdenCompraViewSet(viewsets.ModelViewSet):
         Cancela una orden pendiente y libera el stock comprometido.
         """
         try:
-            orden = self.get_object()
-
-            if orden.estado != 'PENDIENTE':
-                return Response(
-                    {'error': f'Solo se puede cancelar órdenes PENDIENTES. Estado actual: {orden.estado}'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            with transaction.atomic():
-                for item in orden.items.all():
-                    producto = item.producto
-                    cantidad = item.cantidad
-
-                    producto.stock_comprometido = max(0, producto.stock_comprometido - cantidad)
-                    producto.save()
-
-                    logger.info(
-                        f"Stock liberado: {producto.nombre} -({cantidad}) | "
-                        f"Comprometido: {producto.stock_comprometido}"
-                    )
-
-                orden.estado = 'CANCELADO'
-                orden.save()
+            visible_order = self.get_object()
+            release_order_stock_commitments(
+                visible_order.pk,
+                final_state='CANCELADO',
+            )
+            orden = OrdenCompra.objects.get(pk=visible_order.pk)
 
             serializer = self.get_serializer(orden)
             return Response(
@@ -6765,6 +6636,11 @@ class OrdenCompraViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_200_OK
             )
 
+        except OrderInventoryError as e:
+            return Response(
+                {'error': e.detail, 'code': e.code},
+                status=status.HTTP_409_CONFLICT,
+            )
         except Exception as e:
             logger.error(f"Error cancelando orden {pk}: {str(e)}", exc_info=True)
             return Response(

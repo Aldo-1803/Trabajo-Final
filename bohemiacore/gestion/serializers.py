@@ -2233,6 +2233,16 @@ class OrdenPendienteSerializer(serializers.ModelSerializer):
             'fecha_completacion',
             'nota_cliente'
         ]
+        read_only_fields = [
+            'id',
+            'cliente',
+            'estado',
+            'items_json',
+            'monto_total',
+            'fecha_creacion',
+            'fecha_confirmacion',
+            'fecha_completacion',
+        ]
 
 
 class OrdenItemSerializer(serializers.ModelSerializer):
@@ -2485,7 +2495,15 @@ class OrdenCompraSerializer(serializers.ModelSerializer):
             'creado_at',
             'actualizado_at'
         ]
-        read_only_fields = ['id', 'codigo', 'creado_at', 'actualizado_at']
+        read_only_fields = [
+            'id',
+            'codigo',
+            'cliente',
+            'estado',
+            'total',
+            'creado_at',
+            'actualizado_at',
+        ]
     
     def get_total_items(self, obj):
         return sum(item.cantidad for item in obj.items.all())

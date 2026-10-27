@@ -540,6 +540,16 @@ class Producto(models.Model):
                 name='product_nonnegative_real_stock',
             ),
             models.CheckConstraint(
+                condition=models.Q(stock_comprometido__gte=0),
+                name='product_nonnegative_committed_stock',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    stock_comprometido__lte=models.F('stock_real')
+                ),
+                name='product_committed_not_above_real_stock',
+            ),
+            models.CheckConstraint(
                 condition=models.Q(stock_minimo__gte=0),
                 name='product_nonnegative_minimum_stock',
             ),
@@ -4120,6 +4130,154 @@ class OrdenCompra(models.Model):
         return f"{self.codigo} - {self.cliente} - ${self.total}"
 
 
+class ImmutableStockCommitmentQuerySet(models.QuerySet):
+    immutable_error = (
+        'Los compromisos de stock sólo cambian mediante el servicio de órdenes.'
+    )
+
+    def update(self, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+    def delete(self):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_create(self, objs, *args, **kwargs):
+        raise ValidationError(
+            'La creación masiva de compromisos de stock no está permitida.'
+        )
+
+    def update_or_create(self, defaults=None, create_defaults=None, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+
+class StockCommitmentManager(
+    models.Manager.from_queryset(ImmutableStockCommitmentQuerySet)
+):
+    def _create_from_order_service(self, **values):
+        commitment = self.model(**values)
+        commitment._allow_order_service_create = True
+        commitment.save(force_insert=True, using=self.db)
+        return commitment
+
+    def _transition_from_order_service(self, *, commitment_ids, **values):
+        queryset = self.get_queryset().filter(pk__in=commitment_ids)
+        return models.QuerySet.update(queryset, **values)
+
+
+class CompromisoStock(models.Model):
+    class State(models.TextChoices):
+        ACTIVE = 'ACTIVE', 'Activo'
+        CONSUMED = 'CONSUMED', 'Consumido'
+        RELEASED = 'RELEASED', 'Liberado'
+
+    producto = models.ForeignKey(
+        Producto,
+        on_delete=models.PROTECT,
+        related_name='compromisos_stock',
+    )
+    orden = models.ForeignKey(
+        OrdenCompra,
+        on_delete=models.PROTECT,
+        related_name='compromisos_stock',
+    )
+    cantidad = models.PositiveIntegerField()
+    estado = models.CharField(
+        max_length=10,
+        choices=State.choices,
+        default=State.ACTIVE,
+    )
+    created_at = models.DateTimeField(default=timezone.now, editable=False)
+    consumed_at = models.DateTimeField(null=True, blank=True)
+    released_at = models.DateTimeField(null=True, blank=True)
+    idempotency_key = models.CharField(max_length=128, unique=True)
+    reason_code = models.CharField(
+        max_length=50,
+        default='ORDER_RESERVATION',
+    )
+    metadata = models.JSONField(default=dict, blank=True)
+
+    objects = StockCommitmentManager()
+
+    class Meta:
+        verbose_name = 'Compromiso de stock'
+        verbose_name_plural = 'Compromisos de stock'
+        ordering = ['pk']
+        base_manager_name = 'objects'
+        default_manager_name = 'objects'
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(cantidad__gt=0),
+                name='stock_commitment_positive_quantity',
+            ),
+            models.UniqueConstraint(
+                fields=('orden', 'producto'),
+                name='stock_commitment_unique_order_product',
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(idempotency_key=''),
+                name='stock_commitment_key_required',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        estado='ACTIVE',
+                        consumed_at__isnull=True,
+                        released_at__isnull=True,
+                    )
+                    | models.Q(
+                        estado='CONSUMED',
+                        consumed_at__isnull=False,
+                        released_at__isnull=True,
+                    )
+                    | models.Q(
+                        estado='RELEASED',
+                        consumed_at__isnull=True,
+                        released_at__isnull=False,
+                    )
+                ),
+                name='stock_commitment_coherent_state_timestamps',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['producto', 'estado'],
+                name='stock_commit_product_state_idx',
+            ),
+            models.Index(
+                fields=['orden', 'estado'],
+                name='stock_commit_order_state_idx',
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self._state.adding and not getattr(
+            self,
+            '_allow_order_service_create',
+            False,
+        ):
+            raise ValidationError(
+                'Un compromiso de stock sólo puede crearse mediante su servicio.'
+            )
+        if not self._state.adding:
+            raise ValidationError(
+                'Un compromiso persistido sólo cambia mediante su servicio.'
+            )
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Un compromiso de stock no puede eliminarse.')
+
+    def __str__(self):
+        return (
+            f'Orden {self.orden_id} - Producto {self.producto_id} '
+            f'x{self.cantidad} ({self.estado})'
+        )
+
+
 class ImmutablePagoQuerySet(models.QuerySet):
     immutable_error = 'Los Pagos financieros son inmutables fuera de sus servicios.'
 
@@ -4632,6 +4790,15 @@ class OrdenPendiente(models.Model):
         null=True,
         blank=True,
         related_name='ordenes_pendientes'
+    )
+
+    orden_compra = models.OneToOneField(
+        OrdenCompra,
+        on_delete=models.PROTECT,
+        related_name='orden_pendiente_legacy',
+        null=True,
+        blank=True,
+        help_text='OrdenCompra canónica que respalda este contrato legacy.',
     )
     
     estado = models.CharField(

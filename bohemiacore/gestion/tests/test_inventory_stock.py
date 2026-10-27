@@ -259,9 +259,11 @@ class InventoryModelAndServiceTests(InventoryFixtureMixin, TestCase):
         self.assertEqual(result.ledger_balance, 6)
 
     def test_stock_disponible_does_not_hide_legacy_debt_with_clamp(self):
+        # La constraint D2 impide persistir deuda; la property sigue siendo una
+        # resta exacta y no oculta una instancia legacy cargada en memoria.
+        self.product.stock_real = 1
         self.product.stock_comprometido = 3
-        self.product.save(update_fields=['stock_comprometido'])
-        self.assertEqual(self.product.stock_disponible, -3)
+        self.assertEqual(self.product.stock_disponible, -2)
         self.assertTrue(self.product.necesita_reposicion())
 
 

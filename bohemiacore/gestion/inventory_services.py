@@ -407,6 +407,11 @@ def apply_stock_deltas(commands):
                 'El movimiento dejaría el stock físico en negativo.',
                 code='INSUFFICIENT_REAL_STOCK',
             )
+        if stock_after < products[command.product_id].stock_comprometido:
+            raise StockConflict(
+                'El movimiento invadiría stock comprometido por órdenes activas.',
+                code='STOCK_RESERVED_BY_ACTIVE_ORDERS',
+            )
         balances[command.product_id] = stock_after
         pending.append((index, command, stock_before, stock_after))
 

@@ -6,7 +6,7 @@ from .models import (
     Notificacion, Configuracion, Personal, HorarioLaboral, BloqueoAgenda, DiasSemana, Equipamiento,
     TipoEquipamiento, RequisitoServicio, FichaTecnica, DiagnosticoCapilar,
     ContenidoEducativo, MeGusta, ContenidoGuardado, Auditoria, Producto, ImagenProducto,
-    MovimientoStock,
+    CompromisoStock, MovimientoStock,
     OrdenPendiente
     #PasoRutinaCliente, #PasoRutina,
 )
@@ -868,6 +868,40 @@ class MovimientoStockAdmin(admin.ModelAdmin):
         'reason_code',
         'reference_type',
         'reference_id',
+    )
+    ordering = ('-created_at', '-pk')
+
+    def get_readonly_fields(self, request, obj=None):
+        return tuple(field.name for field in self.model._meta.fields)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(CompromisoStock)
+class CompromisoStockAdmin(admin.ModelAdmin):
+    list_display = (
+        'id',
+        'orden',
+        'producto',
+        'cantidad',
+        'estado',
+        'created_at',
+        'consumed_at',
+        'released_at',
+    )
+    list_filter = ('estado', 'created_at')
+    search_fields = (
+        'orden__codigo',
+        'producto__sku',
+        'producto__nombre',
+        'reason_code',
     )
     ordering = ('-created_at', '-pk')
 
