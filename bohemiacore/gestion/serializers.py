@@ -14,7 +14,7 @@ from .models import (
     Carrito, CarritoItem, ContenidoEducativo, MeGusta, ContenidoGuardado,
     OrdenPendiente, OrdenCompra, OrdenItem, Pago, ConfiguracionDiagnostico,
     DecisionRevisionTecnica, PAYMENT_CURRENCY_CHOICES, Pago,
-    PaymentIntent, PaymentIntentLine, MovimientoStock,
+    PaymentIntent, PaymentIntentLine, ProviderPaymentAttempt, MovimientoStock,
     SlotHold, SolicitudTecnicaReserva,
     #PasoRutina, #PasoRutinaCliente,
 )
@@ -1463,6 +1463,71 @@ class PaymentIntentCancelCommandSerializer(serializers.Serializer):
                 'campos_no_permitidos': sorted(self.initial_data),
             })
         return attrs
+
+
+class ProviderCheckoutCommandSerializer(serializers.Serializer):
+    channel = serializers.ChoiceField(
+        choices=ProviderPaymentAttempt.Channel.choices,
+        default=ProviderPaymentAttempt.Channel.ONLINE,
+    )
+
+    def validate(self, attrs):
+        unexpected = set(self.initial_data) - {'channel'}
+        if unexpected:
+            raise serializers.ValidationError({
+                'campos_no_permitidos': sorted(unexpected),
+            })
+        return attrs
+
+
+class ProviderPaymentAttemptPublicSerializer(serializers.ModelSerializer):
+    checkout_url = serializers.SerializerMethodField()
+    payment_intent_public_id = serializers.UUIDField(
+        source='payment_intent.public_id',
+        read_only=True,
+        allow_null=True,
+    )
+    order_id = serializers.IntegerField(read_only=True, allow_null=True)
+    retryable_with_same_key = serializers.SerializerMethodField()
+    financial_authority = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ProviderPaymentAttempt
+        fields = (
+            'public_id',
+            'provider',
+            'context',
+            'channel',
+            'status',
+            'payment_intent_public_id',
+            'order_id',
+            'amount',
+            'currency',
+            'checkout_url',
+            'provider_expires_at',
+            'error_code',
+            'error_detail',
+            'retryable_with_same_key',
+            'financial_authority',
+            'created_at',
+            'updated_at',
+        )
+        read_only_fields = fields
+
+    @staticmethod
+    def get_checkout_url(obj):
+        if obj.status != ProviderPaymentAttempt.Status.READY:
+            return None
+        return obj.checkout_url or None
+
+    @staticmethod
+    def get_retryable_with_same_key(obj):
+        return obj.status == ProviderPaymentAttempt.Status.OUTCOME_UNKNOWN
+
+    @staticmethod
+    def get_financial_authority(obj):
+        # Crear o visitar el checkout nunca acredita la obligación.
+        return False
 
 
 class PaymentIntentLinePublicSerializer(serializers.ModelSerializer):

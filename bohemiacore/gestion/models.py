@@ -3774,6 +3774,137 @@ class PaymentIntentLine(models.Model):
         raise ValidationError('Una línea de PaymentIntent no puede eliminarse.')
 
 
+class ProviderPaymentAttempt(models.Model):
+    """Intento trazable de crear un checkout; no acredita ni registra dinero."""
+
+    class Provider(models.TextChoices):
+        MERCADO_PAGO = 'MERCADO_PAGO', 'Mercado Pago'
+
+    class Context(models.TextChoices):
+        BOOKING = 'BOOKING', 'Reserva'
+        ORDER = 'ORDER', 'Orden de compra'
+
+    class Channel(models.TextChoices):
+        ONLINE = 'ONLINE', 'Online'
+        IN_PERSON = 'IN_PERSON', 'Presencial'
+
+    class Status(models.TextChoices):
+        PROCESSING = 'PROCESSING', 'Creando en proveedor'
+        READY = 'READY', 'Checkout disponible'
+        OUTCOME_UNKNOWN = 'OUTCOME_UNKNOWN', 'Resultado incierto'
+        FAILED = 'FAILED', 'Creación rechazada'
+        EXPIRED = 'EXPIRED', 'No utilizable'
+
+    ACTIVE_STATUSES = (
+        Status.PROCESSING,
+        Status.READY,
+        Status.OUTCOME_UNKNOWN,
+    )
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    provider = models.CharField(max_length=20, choices=Provider.choices)
+    context = models.CharField(max_length=10, choices=Context.choices)
+    channel = models.CharField(max_length=10, choices=Channel.choices)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PROCESSING,
+    )
+    payment_intent = models.ForeignKey(
+        PaymentIntent,
+        on_delete=models.PROTECT,
+        related_name='provider_attempts',
+        null=True,
+        blank=True,
+    )
+    order = models.ForeignKey(
+        'OrdenCompra',
+        on_delete=models.PROTECT,
+        related_name='provider_attempts',
+        null=True,
+        blank=True,
+    )
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    currency = models.CharField(max_length=3, choices=PAYMENT_CURRENCY_CHOICES)
+    external_reference = models.CharField(max_length=128, unique=True)
+    client_idempotency_key = models.CharField(max_length=128)
+    provider_idempotency_key = models.CharField(max_length=128, unique=True)
+    request_fingerprint = models.CharField(max_length=64)
+    provider_order_id = models.CharField(
+        max_length=128,
+        unique=True,
+        null=True,
+        blank=True,
+    )
+    provider_status = models.CharField(max_length=50, blank=True, default='')
+    checkout_url = models.URLField(max_length=1000, blank=True, default='')
+    provider_expires_at = models.DateTimeField(null=True, blank=True)
+    error_code = models.CharField(max_length=50, blank=True, default='')
+    error_detail = models.CharField(max_length=200, blank=True, default='')
+    provider_call_count = models.PositiveSmallIntegerField(default=0)
+    last_provider_call_at = models.DateTimeField(null=True, blank=True)
+    response_received_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now, editable=False)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='provider_payment_attempts_created',
+    )
+
+    class Meta:
+        ordering = ['-created_at']
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(amount__gt=0),
+                name='provider_attempt_positive_amount',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        context='BOOKING',
+                        payment_intent__isnull=False,
+                        order__isnull=True,
+                    )
+                    | models.Q(
+                        context='ORDER',
+                        payment_intent__isnull=True,
+                        order__isnull=False,
+                    )
+                ),
+                name='provider_attempt_exact_context',
+            ),
+            models.UniqueConstraint(
+                fields=['provider', 'created_by', 'client_idempotency_key'],
+                name='provider_attempt_actor_client_key',
+            ),
+            models.UniqueConstraint(
+                fields=['provider', 'payment_intent'],
+                condition=models.Q(
+                    status__in=['PROCESSING', 'READY', 'OUTCOME_UNKNOWN']
+                ),
+                name='provider_attempt_one_active_intent',
+            ),
+            models.UniqueConstraint(
+                fields=['provider', 'order'],
+                condition=models.Q(
+                    status__in=['PROCESSING', 'READY', 'OUTCOME_UNKNOWN']
+                ),
+                name='provider_attempt_one_active_order',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['provider', 'status', '-created_at'],
+                name='provider_attempt_status_idx',
+            ),
+            models.Index(
+                fields=['context', '-created_at'],
+                name='provider_attempt_context_idx',
+            ),
+        ]
+
+
 class EvaluacionSolicitudTecnica(models.Model):
     solicitud = models.ForeignKey(
         SolicitudTecnicaReserva,

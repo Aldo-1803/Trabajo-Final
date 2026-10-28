@@ -25,9 +25,7 @@ import logging
 import datetime as dt
 import os
 from uuid import uuid4
-import mercadopago
 
-from django.conf import settings
 from django.http import FileResponse, Http404
 from django.core.exceptions import ValidationError as DjangoValidationError
 
@@ -43,6 +41,7 @@ from .models import (
     FamiliaProcesoTecnico, PerfilTecnicoServicio, PoliticaRiesgoTecnico,
     ReglaIntervaloTecnico, ReglaDiagnosticoTecnico, ReglaFrecuenciaTecnica,
     PaymentIntent, SlotHold, SolicitudTecnicaReserva, MovimientoStock,
+    ProviderPaymentAttempt,
     #PasoRutinaCliente
     #PasoRutina
 )
@@ -87,6 +86,8 @@ from .serializers import (
     PaymentIntentCancelCommandSerializer,
     PaymentIntentCreateCommandSerializer,
     PaymentIntentPublicSerializer,
+    ProviderCheckoutCommandSerializer,
+    ProviderPaymentAttemptPublicSerializer,
     StockAdjustCommandSerializer,
     StockCorrectionCommandSerializer,
     StockMovementSerializer,
@@ -170,6 +171,16 @@ from .payment_intent_services import (
     cancel_payment_intent,
     create_payment_intent,
 )
+from .provider_checkout_services import (
+    ProviderCheckoutConflict,
+    ProviderCheckoutError,
+    ProviderCheckoutNotFound,
+    ProviderCheckoutPermissionDenied,
+    start_booking_checkout,
+    start_cart_checkout,
+    start_order_checkout,
+)
+from .payment_providers import MercadoPagoAdapter
 from .manual_payment_services import (
     ManualPaymentConflict,
     ManualPaymentError,
@@ -273,7 +284,6 @@ from usuarios.access_services import (
     reactivate_account,
 )
 
-from .services import MercadoPagoService
 from usuarios.models import Usuario, Cliente
 from usuarios.filters import UsuarioFilter
 from usuarios.roles import BusinessPermission
@@ -341,40 +351,48 @@ def upload_imagen(request):
         )
 
 
-def _crear_checkout_mercadopago_para_usuario(user):
-    """
-    Crea la OrdenCompra en estado ESPERANDO_PAGO, genera la preferencia de Mercado Pago
-    y vacía el carrito. Se reutiliza desde la acción del carrito y desde la APIView.
-    """
-    cliente = Cliente.objects.get(usuario=user)
-    carrito = Carrito.objects.get_or_create(cliente=cliente)[0]
+def _checkout_error_response(exc):
+    if isinstance(exc, ProviderCheckoutPermissionDenied):
+        response_status = status.HTTP_403_FORBIDDEN
+    elif isinstance(exc, ProviderCheckoutNotFound):
+        response_status = status.HTTP_404_NOT_FOUND
+    elif isinstance(exc, ProviderCheckoutConflict):
+        response_status = status.HTTP_409_CONFLICT
+    else:
+        response_status = status.HTTP_400_BAD_REQUEST
+    return Response(
+        {'code': exc.code, 'detail': exc.detail, 'field': exc.field},
+        status=response_status,
+    )
 
-    if not carrito.items.exists():
-        raise ValidationError('El carrito está vacío o no existe.')
 
-    items_carrito = list(carrito.items.select_related('producto'))
-
-    with transaction.atomic():
-        orden = OrdenCompra.objects.create(
-            codigo=f"ORD-{uuid4().hex[:8].upper()}",
-            cliente=cliente,
-            estado='ESPERANDO_PAGO',
-            total=carrito.total_carrito,
+def _checkout_result_response(result, request, *, cart_compatibility=False):
+    attempt = result.attempt
+    data = ProviderPaymentAttemptPublicSerializer(
+        attempt,
+        context={'request': request},
+    ).data
+    if cart_compatibility:
+        data.update({
+            'init_point': data['checkout_url'],
+            'orden_id': attempt.order_id,
+            'orden_codigo': attempt.order.codigo if attempt.order_id else None,
+            'total': float(attempt.amount),
+        })
+    if attempt.status == ProviderPaymentAttempt.Status.READY:
+        response_status = (
+            status.HTTP_201_CREATED if result.created else status.HTTP_200_OK
         )
-
-        for item in items_carrito:
-            OrdenItem.objects.create(
-                orden=orden,
-                producto=item.producto,
-                cantidad=item.cantidad,
-                precio_historico=item.producto.precio,
-            )
-
-        create_order_stock_commitments(orden.pk)
-        url_pago = MercadoPagoService().crear_preferencia(orden)
-        carrito.items.all().delete()
-
-    return orden, url_pago, len(items_carrito)
+    elif attempt.status in {
+        ProviderPaymentAttempt.Status.PROCESSING,
+        ProviderPaymentAttempt.Status.OUTCOME_UNKNOWN,
+    }:
+        response_status = status.HTTP_202_ACCEPTED
+    elif attempt.status == ProviderPaymentAttempt.Status.FAILED:
+        response_status = status.HTTP_503_SERVICE_UNAVAILABLE
+    else:
+        response_status = status.HTTP_409_CONFLICT
+    return Response(data, status=response_status)
 
 
 class GenerarPagoMercadoPagoView(APIView):
@@ -386,42 +404,17 @@ class GenerarPagoMercadoPagoView(APIView):
 
     def post(self, request):
         try:
-            orden, url_pago, items_count = _crear_checkout_mercadopago_para_usuario(request.user)
-
-            logger.info(
-                f"Orden Mercado Pago generada para {request.user.email} | "
-                f"Orden: {orden.codigo} | Total: ${orden.total}"
+            result = start_cart_checkout(
+                actor=request.user,
+                idempotency_key=request.headers.get('Idempotency-Key', ''),
             )
-
-            return Response(
-                {
-                    'mensaje': 'Orden creada con éxito. Redirigiendo a Mercado Pago...',
-                    'init_point': url_pago,
-                    'orden_codigo': orden.codigo,
-                    'orden_id': orden.id,
-                    'preference_id': orden.preference_id,
-                    'total': float(orden.total),
-                    'items_count': items_count,
-                },
-                status=status.HTTP_200_OK
+            return _checkout_result_response(
+                result,
+                request,
+                cart_compatibility=True,
             )
-
-        except Cliente.DoesNotExist:
-            return Response(
-                {'error': 'El usuario no tiene perfil de cliente.'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        except OrderInventoryError as e:
-            return Response(
-                {'error': e.detail, 'code': e.code},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        except ValidationError as e:
-            mensaje = str(e.detail[0]) if hasattr(e, 'detail') and e.detail else str(e)
-            return Response({'error': mensaje}, status=status.HTTP_400_BAD_REQUEST)
-        except ValueError as e:
-            logger.error(f"Error al generar preferencia de Mercado Pago: {str(e)}")
-            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except ProviderCheckoutError as exc:
+            return _checkout_error_response(exc)
         except Exception as e:
             logger.error(f"Error generando pago Mercado Pago: {str(e)}", exc_info=True)
             return Response(
@@ -444,8 +437,7 @@ class WebhookMercadoPagoView(APIView):
             return Response({'status': 'recibido'}, status=status.HTTP_200_OK)
 
         try:
-            sdk = mercadopago.SDK(settings.MERCADO_PAGO_ACCESS_TOKEN)
-            pago_info = sdk.payment().get(payment_id)
+            pago_info = MercadoPagoAdapter().fetch_legacy_payment(payment_id)
             pago_oficial = pago_info.get('response', {})
 
             estado_pago = pago_oficial.get('status')
@@ -454,6 +446,15 @@ class WebhookMercadoPagoView(APIView):
 
             if not orden_id:
                 logger.warning(f'Webhook MP sin external_reference. Payment ID: {payment_id}')
+                return Response({'status': 'recibido'}, status=status.HTTP_200_OK)
+
+            # Las referencias namespaced de C1 no pertenecen a este webhook
+            # legacy y jamás adquieren autoridad financiera por esta vía.
+            if str(orden_id).startswith('bh:c1:'):
+                logger.info(
+                    'Webhook legacy ignoró referencia C1 para payment %s.',
+                    payment_id,
+                )
                 return Response({'status': 'recibido'}, status=status.HTTP_200_OK)
 
             with transaction.atomic():
@@ -5925,45 +5926,17 @@ class CarritoViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'], url_path='generar-pago-mercadopago')
     def generar_pago_mercadopago(self, request):
         try:
-            orden, url_pago, items_count = _crear_checkout_mercadopago_para_usuario(request.user)
-
-            logger.info(
-                f"Orden Mercado Pago generada para {request.user.email} | "
-                f"Orden: {orden.codigo} | Total: ${orden.total}"
+            result = start_cart_checkout(
+                actor=request.user,
+                idempotency_key=request.headers.get('Idempotency-Key', ''),
             )
-
-            return Response(
-                {
-                    'mensaje': 'Orden creada con éxito. Redirigiendo a Mercado Pago...',
-                    'init_point': url_pago,
-                    'orden_codigo': orden.codigo,
-                    'orden_id': orden.id,
-                    'preference_id': orden.preference_id,
-                    'total': float(orden.total),
-                    'items_count': items_count,
-                },
-                status=status.HTTP_200_OK
+            return _checkout_result_response(
+                result,
+                request,
+                cart_compatibility=True,
             )
-
-        except Cliente.DoesNotExist:
-            return Response(
-                {'error': 'El usuario no tiene perfil de cliente.'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        except OrderInventoryError as e:
-            return Response(
-                {'error': e.detail, 'code': e.code},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        except ValidationError as e:
-            mensaje = str(e.detail[0]) if hasattr(e, 'detail') and e.detail else str(e)
-            return Response({'error': mensaje}, status=status.HTTP_400_BAD_REQUEST)
-        except ValueError as e:
-            logger.error(f"Error al generar preferencia de Mercado Pago: {str(e)}")
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+        except ProviderCheckoutError as exc:
+            return _checkout_error_response(exc)
         except Exception as e:
             logger.error(f"Error generando pago Mercado Pago: {str(e)}", exc_info=True)
             return Response(
@@ -6563,6 +6536,21 @@ class OrdenCompraViewSet(viewsets.ModelViewSet):
             return OrdenCompra.objects.filter(cliente=cliente)
         except Cliente.DoesNotExist:
             return OrdenCompra.objects.none()
+
+    @action(detail=True, methods=['post'], url_path='checkout')
+    def checkout(self, request, pk=None):
+        command = ProviderCheckoutCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        try:
+            result = start_order_checkout(
+                order_id=pk,
+                actor=request.user,
+                idempotency_key=request.headers.get('Idempotency-Key', ''),
+                channel=command.validated_data['channel'],
+            )
+        except ProviderCheckoutError as exc:
+            return _checkout_error_response(exc)
+        return _checkout_result_response(result, request)
 
     @action(detail=True, methods=['post'])
     def registrar_pago(self, request, pk=None):
@@ -7200,6 +7188,21 @@ class PaymentIntentViewSet(viewsets.GenericViewSet):
 
     def retrieve(self, request, *args, **kwargs):
         return Response(self._serialize(self.get_object()))
+
+    @action(detail=True, methods=['post'], url_path='checkout')
+    def checkout(self, request, public_id=None):
+        command = ProviderCheckoutCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        try:
+            result = start_booking_checkout(
+                intent_public_id=public_id,
+                actor=request.user,
+                idempotency_key=request.headers.get('Idempotency-Key', ''),
+                channel=command.validated_data['channel'],
+            )
+        except ProviderCheckoutError as exc:
+            return _checkout_error_response(exc)
+        return _checkout_result_response(result, request)
 
     @action(detail=True, methods=['post'], url_path='cancel')
     def cancel(self, request, public_id=None):

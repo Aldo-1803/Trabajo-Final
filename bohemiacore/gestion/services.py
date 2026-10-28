@@ -2,7 +2,7 @@ from datetime import datetime
 from django.utils import timezone
 from django.conf import settings
 from .models import FichaTecnica, Servicio
-import mercadopago
+from .payment_providers import MercadoPagoAdapter
 
 class SaludCapilarService:
     @staticmethod
@@ -83,11 +83,7 @@ class MercadoPagoService:
     """
 
     def __init__(self):
-        access_token = getattr(settings, 'MERCADO_PAGO_ACCESS_TOKEN', '')
-        if not access_token:
-            raise ValueError('Falta configurar MERCADO_PAGO_ACCESS_TOKEN en settings/.env')
-
-        self.sdk = mercadopago.SDK(access_token)
+        self.adapter = MercadoPagoAdapter()
 
     def crear_preferencia(self, orden_compra):
         """
@@ -141,7 +137,7 @@ class MercadoPagoService:
             'external_reference': str(orden_compra.id),
         }
 
-        preference_response = self.sdk.preference().create(preference_data)
+        preference_response = self.adapter.create_legacy_preference(preference_data)
 
         # 🚨 MODO DEBUG: Atrapamos el error exacto de Mercado Pago y lo imprimimos
         if preference_response.get("status") not in [200, 201]:

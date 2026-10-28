@@ -1,0 +1,2 @@
+# Dependencia externa usada exclusivamente detrás de MercadoPagoAdapter.
+mercadopago==3.2.0

@@ -23,12 +23,17 @@ from gestion.models import (
     OrdenItem,
     OrdenPendiente,
     Producto,
+    ProviderPaymentAttempt,
 )
 from gestion.order_inventory_services import (
     OrderInventoryConflict,
     apply_order_inventory_effect,
     create_order_stock_commitments,
     release_order_stock_commitments,
+)
+from gestion.payment_providers import (
+    CheckoutCreated,
+    PaymentProviderOutcomeUnknown,
 )
 from usuarios.models import Cliente, Usuario
 
@@ -293,16 +298,26 @@ class OrderInventoryLegacyEndpointTests(OrderInventoryFixtureMixin, TestCase):
             1,
         )
 
-    @patch('gestion.views.MercadoPagoService.crear_preferencia')
+    @patch('gestion.provider_checkout_services.get_payment_provider')
     def test_legacy_mp_checkout_creates_commitment_before_redirect(
         self,
-        create_preference,
+        provider_factory,
     ):
-        create_preference.return_value = 'https://provider.test/checkout'
+        provider_factory.return_value.create_checkout.return_value = CheckoutCreated(
+            provider_order_id='legacy-cart-c1',
+            checkout_url='https://www.mercadopago.com.ar/checkout/test',
+            provider_status='created',
+            expires_at=None,
+        )
         self.receive(self.product, 2, 'mp-checkout')
         cart = self.add_cart_item(self.product, 1)
-        response = self.api.post(reverse('iniciar_pago_mp'), {}, format='json')
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response = self.api.post(
+            reverse('iniciar_pago_mp'),
+            {},
+            format='json',
+            HTTP_IDEMPOTENCY_KEY='legacy-cart-c1',
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         order = OrdenCompra.objects.get(pk=response.data['orden_id'])
         commitment = CompromisoStock.objects.get(orden=order)
         self.product.refresh_from_db()
@@ -312,21 +327,32 @@ class OrderInventoryLegacyEndpointTests(OrderInventoryFixtureMixin, TestCase):
         self.assertEqual(self.product.stock_comprometido, 1)
         self.assertFalse(cart.items.exists())
 
-    @patch('gestion.views.MercadoPagoService.crear_preferencia')
-    def test_mp_preference_failure_rolls_back_order_and_commitment(
+    @patch('gestion.provider_checkout_services.get_payment_provider')
+    def test_mp_unknown_outcome_preserves_order_and_commitment(
         self,
-        create_preference,
+        provider_factory,
     ):
-        create_preference.side_effect = ValueError('provider unavailable')
+        provider_factory.return_value.create_checkout.side_effect = (
+            PaymentProviderOutcomeUnknown()
+        )
         self.receive(self.product, 2, 'mp-rollback')
         cart = self.add_cart_item(self.product, 1)
-        response = self.api.post(reverse('iniciar_pago_mp'), {}, format='json')
-        self.assertEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+        response = self.api.post(
+            reverse('iniciar_pago_mp'),
+            {},
+            format='json',
+            HTTP_IDEMPOTENCY_KEY='legacy-cart-unknown',
+        )
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
         self.product.refresh_from_db()
-        self.assertFalse(OrdenCompra.objects.exists())
-        self.assertFalse(CompromisoStock.objects.exists())
-        self.assertEqual(self.product.stock_comprometido, 0)
-        self.assertTrue(cart.items.exists())
+        self.assertEqual(OrdenCompra.objects.count(), 1)
+        self.assertEqual(CompromisoStock.objects.count(), 1)
+        self.assertEqual(self.product.stock_comprometido, 1)
+        self.assertFalse(cart.items.exists())
+        self.assertEqual(
+            ProviderPaymentAttempt.objects.get().status,
+            ProviderPaymentAttempt.Status.OUTCOME_UNKNOWN,
+        )
 
     def test_order_cancellation_releases_without_physical_output(self):
         self.receive(self.product, 2, 'endpoint-cancel')
@@ -472,8 +498,8 @@ class OrderInventoryLegacyEndpointTests(OrderInventoryFixtureMixin, TestCase):
             CompromisoStock.State.CONSUMED,
         )
 
-    @patch('gestion.views.mercadopago.SDK')
-    def test_legacy_webhook_delegates_and_is_idempotent(self, sdk_class):
+    @patch('gestion.views.MercadoPagoAdapter.fetch_legacy_payment')
+    def test_legacy_webhook_delegates_and_is_idempotent(self, fetch_payment):
         self.receive(self.product, 2, 'webhook')
         order = self.make_order(
             [(self.product, 1)],
@@ -481,7 +507,7 @@ class OrderInventoryLegacyEndpointTests(OrderInventoryFixtureMixin, TestCase):
             code='D2-WEBHOOK',
         )
         create_order_stock_commitments(order.pk)
-        sdk_class.return_value.payment.return_value.get.return_value = {
+        fetch_payment.return_value = {
             'response': {
                 'status': 'approved',
                 'external_reference': str(order.pk),
@@ -503,8 +529,8 @@ class OrderInventoryLegacyEndpointTests(OrderInventoryFixtureMixin, TestCase):
             1,
         )
 
-    @patch('gestion.views.mercadopago.SDK')
-    def test_legacy_webhook_rejection_releases_without_output(self, sdk_class):
+    @patch('gestion.views.MercadoPagoAdapter.fetch_legacy_payment')
+    def test_legacy_webhook_rejection_releases_without_output(self, fetch_payment):
         self.receive(self.product, 2, 'webhook-reject')
         order = self.make_order(
             [(self.product, 1)],
@@ -512,7 +538,7 @@ class OrderInventoryLegacyEndpointTests(OrderInventoryFixtureMixin, TestCase):
             code='D2-WEBHOOK-REJECT',
         )
         create_order_stock_commitments(order.pk)
-        sdk_class.return_value.payment.return_value.get.return_value = {
+        fetch_payment.return_value = {
             'response': {
                 'status': 'rejected',
                 'external_reference': str(order.pk),

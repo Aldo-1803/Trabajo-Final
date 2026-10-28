@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { notify } from '../../utils/notificaciones';
@@ -9,6 +9,7 @@ const Carrito = () => {
     const [loading, setLoading] = useState(true);
     const [cargandoPago, setCargandoPago] = useState(false);
     const [errorPago, setErrorPago] = useState('');
+    const checkoutKeyRef = useRef(null);
     const navigate = useNavigate();
 
     useEffect(() => {
@@ -157,26 +158,45 @@ const Carrito = () => {
 
         try {
             const token = localStorage.getItem('access_token');
+            if (!checkoutKeyRef.current) {
+                checkoutKeyRef.current = window.crypto?.randomUUID?.()
+                    || `checkout-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+            }
 
             const response = await axios.post(
                 'http://127.0.0.1:8000/api/gestion/checkout/iniciar-pago/',
                 {},
-                { headers: { 'Authorization': `Bearer ${token}` } }
+                {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Idempotency-Key': checkoutKeyRef.current,
+                    },
+                }
             );
 
             const urlMercadoPago = response.data?.init_point;
 
             if (!urlMercadoPago) {
-                throw new Error('Mercado Pago no devolvió una URL válida de pago.');
+                const uncertain = response.data?.status === 'OUTCOME_UNKNOWN';
+                throw new Error(uncertain
+                    ? 'El resultado todavía es incierto. Reintenta con la misma clave; no se creará otro checkout.'
+                    : 'Mercado Pago no devolvió una URL válida de pago.');
             }
 
+            checkoutKeyRef.current = null;
             window.location.href = urlMercadoPago;
         } catch (error) {
             console.error('Error en el checkout:', error);
+            const retryableStatus = error.response?.data?.status === 'OUTCOME_UNKNOWN';
+            const retryableConfig = error.response?.data?.error_code === 'PROVIDER_CONFIGURATION_ERROR';
+            if (!retryableStatus && !retryableConfig) {
+                checkoutKeyRef.current = null;
+            }
 
             const mensajeError =
                 error.response?.data?.error ||
                 error.response?.data?.detail ||
+                error.response?.data?.error_detail ||
                 error.message ||
                 'Ocurrió un error al procesar el carrito.';
 
