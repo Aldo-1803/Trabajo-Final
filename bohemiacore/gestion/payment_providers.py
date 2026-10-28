@@ -1,7 +1,8 @@
-"""Frontera única para llamadas externas a proveedores de pago (BH-058 C1)."""
+"""Frontera única para llamadas externas a proveedores (BH-058 C1/C2a)."""
 
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 from typing import Protocol
 from urllib.parse import urlparse
 
@@ -35,6 +36,15 @@ class PaymentProviderOutcomeUnknown(PaymentProviderError):
     outcome_unknown = True
 
 
+class PaymentProviderTemporaryError(PaymentProviderError):
+    code = 'PROVIDER_TEMPORARY_ERROR'
+    outcome_unknown = True
+
+
+class PaymentProviderResponseInvalid(PaymentProviderError):
+    code = 'PROVIDER_RESPONSE_INVALID'
+
+
 @dataclass(frozen=True)
 class CheckoutRequest:
     external_reference: str
@@ -54,8 +64,50 @@ class CheckoutCreated:
     expires_at: datetime | None
 
 
+@dataclass(frozen=True)
+class ProviderOrderSnapshot:
+    provider_order_id: str
+    status: str
+    status_detail: str
+    external_reference: str
+    total_amount: Decimal | None
+    total_paid_amount: Decimal | None
+    currency: str
+    application_id: str
+    seller_id: str
+    environment: str
+    order_type: str
+    country_code: str
+    transaction_statuses: tuple[str, ...]
+
+    def sanitized(self):
+        return {
+            'id': self.provider_order_id,
+            'status': self.status,
+            'status_detail': self.status_detail,
+            'external_reference': self.external_reference,
+            'total_amount': (
+                str(self.total_amount) if self.total_amount is not None else None
+            ),
+            'total_paid_amount': (
+                str(self.total_paid_amount)
+                if self.total_paid_amount is not None else None
+            ),
+            'currency': self.currency,
+            'application_id': self.application_id,
+            'seller_id': self.seller_id,
+            'environment': self.environment,
+            'type': self.order_type,
+            'country_code': self.country_code,
+            'transaction_statuses': list(self.transaction_statuses),
+        }
+
+
 class PaymentProvider(Protocol):
     def create_checkout(self, request: CheckoutRequest) -> CheckoutCreated:
+        ...
+
+    def fetch_provider_order(self, order_id: str) -> ProviderOrderSnapshot:
         ...
 
 
@@ -92,6 +144,25 @@ class MercadoPagoAdapter:
     """Adapter de Mercado Pago; ninguna capa de dominio usa el SDK directamente."""
 
     UNKNOWN_HTTP_STATUSES = {408, 423, 429}
+
+    @staticmethod
+    def _decimal_or_none(value):
+        if value in (None, ''):
+            return None
+        try:
+            return Decimal(str(value))
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise PaymentProviderResponseInvalid(
+                'Mercado Pago devolvió un importe no verificable.'
+            ) from exc
+
+    @staticmethod
+    def _first_mapping(value):
+        if isinstance(value, list):
+            return next((item for item in value if isinstance(item, dict)), {})
+        if isinstance(value, dict):
+            return value
+        return {}
 
     def __init__(self):
         token = str(_setting('MERCADO_PAGO_ACCESS_TOKEN', '')).strip()
@@ -219,15 +290,99 @@ class MercadoPagoAdapter:
             expires_at=self._provider_expiry(response.get('expiration_time')),
         )
 
-    def fetch_order(self, provider_order_id):
-        """Consulta técnica sin conceder autoridad financiera a C1."""
+    def fetch_provider_order(self, order_id):
+        """Consulta y reduce una Order a un snapshot técnico no sensible."""
+        order_id = str(order_id or '').strip()
+        if not order_id or len(order_id) > 128:
+            raise PaymentProviderResponseInvalid(
+                'El identificador de Order no es válido.'
+            )
         try:
-            return self.sdk.order().get(
-                provider_order_id,
+            result = self.sdk.order().get(
+                order_id,
                 request_options=self.request_options,
             )
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            raise PaymentProviderTemporaryError() from exc
         except Exception as exc:
-            raise PaymentProviderOutcomeUnknown() from exc
+            raise PaymentProviderTemporaryError() from exc
+
+        try:
+            http_status, response = self._response_parts(result)
+        except PaymentProviderOutcomeUnknown as exc:
+            raise PaymentProviderTemporaryError() from exc
+        try:
+            http_status = int(http_status)
+        except (TypeError, ValueError) as exc:
+            raise PaymentProviderTemporaryError() from exc
+        if http_status in self.UNKNOWN_HTTP_STATUSES or http_status >= 500:
+            raise PaymentProviderTemporaryError(
+                f'Mercado Pago no pudo responder la consulta (HTTP {http_status}).'
+            )
+        if http_status not in {200, 201}:
+            raise PaymentProviderRejected(
+                f'Mercado Pago rechazó la consulta de Order (HTTP {http_status}).'
+            )
+        if not isinstance(response, dict):
+            raise PaymentProviderResponseInvalid()
+
+        transactions = response.get('transactions') or {}
+        payments = self._first_mapping(
+            transactions.get('payments') if isinstance(transactions, dict) else {}
+        )
+        integration = response.get('integration_data') or {}
+        if not isinstance(integration, dict):
+            integration = {}
+        live_mode = response.get('live_mode')
+        environment = ''
+        if isinstance(live_mode, bool):
+            environment = 'production' if live_mode else 'sandbox'
+        currency = (
+            response.get('currency')
+            or response.get('currency_id')
+            or payments.get('currency')
+            or payments.get('currency_id')
+            or ''
+        )
+        payment_values = (
+            transactions.get('payments', [])
+            if isinstance(transactions, dict)
+            else []
+        )
+        if isinstance(payment_values, dict):
+            payment_values = [payment_values]
+        transaction_statuses = tuple(
+            str(item.get('status') or '')[:50]
+            for item in payment_values
+            if isinstance(item, dict) and item.get('status')
+        )
+        return ProviderOrderSnapshot(
+            provider_order_id=str(response.get('id') or '').strip(),
+            status=str(response.get('status') or '')[:50],
+            status_detail=str(response.get('status_detail') or '')[:100],
+            external_reference=str(response.get('external_reference') or '')[:128],
+            total_amount=self._decimal_or_none(response.get('total_amount')),
+            total_paid_amount=self._decimal_or_none(
+                response.get('total_paid_amount')
+            ),
+            currency=str(currency).strip().upper()[:3],
+            application_id=str(
+                integration.get('application_id')
+                or response.get('application_id')
+                or ''
+            )[:128],
+            seller_id=str(
+                response.get('user_id') or response.get('collector_id') or ''
+            )[:128],
+            environment=environment,
+            order_type=str(response.get('type') or '')[:30],
+            country_code=str(response.get('country_code') or '')[:10],
+            transaction_statuses=transaction_statuses,
+        )
+
+    def fetch_order(self, provider_order_id):
+        """Alias transitorio de C1; devuelve ahora el snapshot sanitizado."""
+        return self.fetch_provider_order(provider_order_id)
 
     def fetch_legacy_payment(self, payment_id):
         """Compatibilidad aislada del webhook previo a C1."""

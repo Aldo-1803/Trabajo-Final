@@ -498,8 +498,7 @@ class OrderInventoryLegacyEndpointTests(OrderInventoryFixtureMixin, TestCase):
             CompromisoStock.State.CONSUMED,
         )
 
-    @patch('gestion.views.MercadoPagoAdapter.fetch_legacy_payment')
-    def test_legacy_webhook_delegates_and_is_idempotent(self, fetch_payment):
+    def test_legacy_webhook_cannot_approve_or_consume_stock(self):
         self.receive(self.product, 2, 'webhook')
         order = self.make_order(
             [(self.product, 1)],
@@ -507,30 +506,25 @@ class OrderInventoryLegacyEndpointTests(OrderInventoryFixtureMixin, TestCase):
             code='D2-WEBHOOK',
         )
         create_order_stock_commitments(order.pk)
-        fetch_payment.return_value = {
-            'response': {
-                'status': 'approved',
-                'external_reference': str(order.pk),
-                'transaction_amount': 100,
-            }
-        }
         payload = {'type': 'payment', 'data': {'id': 'provider-d2-1'}}
         first = self.api.post(reverse('webhook_mp'), payload, format='json')
         retry = self.api.post(reverse('webhook_mp'), payload, format='json')
-        self.assertEqual(first.status_code, status.HTTP_200_OK)
-        self.assertEqual(retry.status_code, status.HTTP_200_OK)
+        self.assertEqual(first.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(retry.status_code, status.HTTP_400_BAD_REQUEST)
+        order.refresh_from_db()
         self.product.refresh_from_db()
-        self.assertEqual(self.product.stock_real, 1)
+        self.assertEqual(order.estado, 'ESPERANDO_PAGO')
+        self.assertEqual(self.product.stock_real, 2)
+        self.assertEqual(self.product.stock_comprometido, 1)
         self.assertEqual(
             MovimientoStock.objects.filter(
                 tipo=MovimientoStock.Type.ORDER_SALE_OUT,
                 reference_id=str(order.pk),
             ).count(),
-            1,
+            0,
         )
 
-    @patch('gestion.views.MercadoPagoAdapter.fetch_legacy_payment')
-    def test_legacy_webhook_rejection_releases_without_output(self, fetch_payment):
+    def test_legacy_webhook_cannot_reject_or_release_stock(self):
         self.receive(self.product, 2, 'webhook-reject')
         order = self.make_order(
             [(self.product, 1)],
@@ -538,26 +532,19 @@ class OrderInventoryLegacyEndpointTests(OrderInventoryFixtureMixin, TestCase):
             code='D2-WEBHOOK-REJECT',
         )
         create_order_stock_commitments(order.pk)
-        fetch_payment.return_value = {
-            'response': {
-                'status': 'rejected',
-                'external_reference': str(order.pk),
-                'transaction_amount': 100,
-            }
-        }
         response = self.api.post(
             reverse('webhook_mp'),
             {'type': 'payment', 'data': {'id': 'provider-d2-rejected'}},
             format='json',
         )
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         order.refresh_from_db()
         self.product.refresh_from_db()
         commitment = CompromisoStock.objects.get(orden=order)
-        self.assertEqual(order.estado, 'RECHAZADO')
-        self.assertEqual(commitment.estado, CompromisoStock.State.RELEASED)
+        self.assertEqual(order.estado, 'ESPERANDO_PAGO')
+        self.assertEqual(commitment.estado, CompromisoStock.State.ACTIVE)
         self.assertEqual(self.product.stock_real, 2)
-        self.assertEqual(self.product.stock_comprometido, 0)
+        self.assertEqual(self.product.stock_comprometido, 1)
         self.assertFalse(
             MovimientoStock.objects.filter(
                 tipo=MovimientoStock.Type.ORDER_SALE_OUT

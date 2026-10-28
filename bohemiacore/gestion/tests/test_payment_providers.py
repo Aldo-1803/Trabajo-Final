@@ -1,4 +1,5 @@
 from datetime import timedelta
+from decimal import Decimal
 from unittest.mock import patch
 
 from django.test import SimpleTestCase, override_settings
@@ -10,6 +11,8 @@ from gestion.payment_providers import (
     MercadoPagoAdapter,
     PaymentProviderConfigurationError,
     PaymentProviderOutcomeUnknown,
+    PaymentProviderRejected,
+    PaymentProviderTemporaryError,
 )
 
 
@@ -93,3 +96,49 @@ class MercadoPagoAdapterTests(SimpleTestCase):
         }
         with self.assertRaises(PaymentProviderOutcomeUnknown):
             MercadoPagoAdapter().create_checkout(self.request())
+
+    @patch('gestion.payment_providers.mercadopago.SDK')
+    def test_fetch_provider_order_uses_orders_api_and_sanitizes(self, sdk_class):
+        sdk_class.return_value.order.return_value.get.return_value = {
+            'status': 200,
+            'response': {
+                'id': '01JMP-ORDER',
+                'status': 'processed',
+                'status_detail': 'accredited',
+                'external_reference': 'bh:c1:order:opaque',
+                'total_amount': '125.50',
+                'total_paid_amount': '125.50',
+                'currency_id': 'ARS',
+                'live_mode': False,
+                'integration_data': {'application_id': 'app-123'},
+                'user_id': 'seller-456',
+                'type': 'online',
+                'country_code': 'AR',
+                'transactions': {'payments': [{'status': 'processed'}]},
+                'payer': {'email': 'must-not-be-persisted@test.com'},
+            },
+        }
+
+        snapshot = MercadoPagoAdapter().fetch_provider_order('01JMP-ORDER')
+
+        self.assertEqual(snapshot.total_amount, Decimal('125.50'))
+        self.assertEqual(snapshot.application_id, 'app-123')
+        self.assertEqual(snapshot.environment, 'sandbox')
+        self.assertNotIn('payer', snapshot.sanitized())
+        sdk_class.return_value.order.return_value.get.assert_called_once()
+
+    @patch('gestion.payment_providers.mercadopago.SDK')
+    def test_fetch_provider_order_classifies_temporary_and_permanent_errors(self, sdk_class):
+        fetch = sdk_class.return_value.order.return_value.get
+        fetch.side_effect = requests.Timeout()
+        with self.assertRaises(PaymentProviderTemporaryError):
+            MercadoPagoAdapter().fetch_provider_order('01JMP-ORDER')
+
+        fetch.side_effect = None
+        fetch.return_value = {'status': 503, 'response': {}}
+        with self.assertRaises(PaymentProviderTemporaryError):
+            MercadoPagoAdapter().fetch_provider_order('01JMP-ORDER')
+
+        fetch.return_value = {'status': 404, 'response': {}}
+        with self.assertRaises(PaymentProviderRejected):
+            MercadoPagoAdapter().fetch_provider_order('01JMP-ORDER')

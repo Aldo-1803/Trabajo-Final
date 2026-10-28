@@ -3905,6 +3905,70 @@ class ProviderPaymentAttempt(models.Model):
         ]
 
 
+class ProviderEvent(models.Model):
+    """Inbox autenticado del proveedor; no concede autoridad financiera."""
+
+    class Provider(models.TextChoices):
+        MERCADO_PAGO = 'MERCADO_PAGO', 'Mercado Pago'
+
+    class Status(models.TextChoices):
+        RECEIVED = 'RECEIVED', 'Recibido'
+        FETCH_PENDING = 'FETCH_PENDING', 'Consulta en curso'
+        VERIFIED = 'VERIFIED', 'Verificado'
+        RETRYABLE_ERROR = 'RETRYABLE_ERROR', 'Error recuperable'
+        REJECTED = 'REJECTED', 'Rechazado'
+        MISMATCH = 'MISMATCH', 'Datos divergentes'
+
+    provider = models.CharField(max_length=20, choices=Provider.choices)
+    topic = models.CharField(max_length=30)
+    action = models.CharField(max_length=100)
+    event_id = models.CharField(max_length=128)
+    provider_resource_id = models.CharField(max_length=128)
+    received_at = models.DateTimeField(default=timezone.now, editable=False)
+    event_created_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.RECEIVED,
+    )
+    attempt = models.ForeignKey(
+        ProviderPaymentAttempt,
+        on_delete=models.PROTECT,
+        related_name='provider_events',
+        null=True,
+        blank=True,
+    )
+    notification_snapshot = models.JSONField(default=dict)
+    provider_snapshot = models.JSONField(default=dict)
+    processing_attempts = models.PositiveSmallIntegerField(default=0)
+    last_error_code = models.CharField(max_length=50, blank=True, default='')
+    last_error_detail = models.CharField(max_length=200, blank=True, default='')
+    processing_started_at = models.DateTimeField(null=True, blank=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+    next_retry_at = models.DateTimeField(null=True, blank=True)
+    claim_token = models.UUIDField(null=True, blank=True, editable=False)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['received_at', 'pk']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['provider', 'event_id'],
+                name='provider_event_unique_identity',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['provider', 'status', 'next_retry_at'],
+                name='provider_event_pending_idx',
+            ),
+            models.Index(
+                fields=['provider', 'provider_resource_id'],
+                name='provider_event_resource_idx',
+            ),
+        ]
+
+
 class EvaluacionSolicitudTecnica(models.Model):
     solicitud = models.ForeignKey(
         SolicitudTecnicaReserva,

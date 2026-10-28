@@ -218,21 +218,13 @@ class OrderProviderCheckoutTests(OrderInventoryFixtureMixin, TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertFalse(ProviderPaymentAttempt.objects.exists())
 
-    @patch('gestion.views.MercadoPagoAdapter.fetch_legacy_payment')
-    def test_legacy_webhook_ignores_namespaced_c1_reference(self, fetch_payment):
-        fetch_payment.return_value = {
-            'response': {
-                'status': 'approved',
-                'external_reference': 'bh:c1:order:opaque-reference',
-                'transaction_amount': '200.00',
-            }
-        }
+    def test_legacy_webhook_is_blocked_for_c1_reference(self):
         response = self.api.post(
             reverse('webhook_mp'),
             {'type': 'payment', 'data': {'id': 'legacy-event-for-c1'}},
             format='json',
         )
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertFalse(Pago.objects.exists())
         self.order.refresh_from_db()
         self.product.refresh_from_db()

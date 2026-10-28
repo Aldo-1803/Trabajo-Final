@@ -15,7 +15,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.pagination import PageNumberPagination
 from datetime import datetime, date, timedelta, time
-from django.db import transaction
+from django.db import DatabaseError, transaction
 from django.db.models import Q, F, Sum
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -180,7 +180,13 @@ from .provider_checkout_services import (
     start_cart_checkout,
     start_order_checkout,
 )
-from .payment_providers import MercadoPagoAdapter
+from .provider_event_services import (
+    ProviderEventAuthenticationError,
+    ProviderEventConfigurationError,
+    ProviderEventConflict,
+    ProviderEventError,
+    receive_mercado_pago_order_event,
+)
 from .manual_payment_services import (
     ManualPaymentConflict,
     ManualPaymentError,
@@ -424,91 +430,55 @@ class GenerarPagoMercadoPagoView(APIView):
 
 
 class WebhookMercadoPagoView(APIView):
-    """
-    Endpoint que recibe las notificaciones de Mercado Pago (Server-to-Server).
-    """
+    """Inbox firmado de Orders API; nunca ejecuta efectos financieros."""
+
+    authentication_classes = []
     permission_classes = [AllowAny]
 
     def post(self, request):
-        payment_id = request.data.get('data', {}).get('id') or request.GET.get('data.id') or request.GET.get('id')
-        tipo_evento = request.data.get('type') or request.data.get('topic') or request.GET.get('topic')
-
-        if tipo_evento != 'payment' or not payment_id:
-            return Response({'status': 'recibido'}, status=status.HTTP_200_OK)
-
         try:
-            pago_info = MercadoPagoAdapter().fetch_legacy_payment(payment_id)
-            pago_oficial = pago_info.get('response', {})
-
-            estado_pago = pago_oficial.get('status')
-            orden_id = pago_oficial.get('external_reference')
-            monto_pagado = pago_oficial.get('transaction_amount')
-
-            if not orden_id:
-                logger.warning(f'Webhook MP sin external_reference. Payment ID: {payment_id}')
-                return Response({'status': 'recibido'}, status=status.HTTP_200_OK)
-
-            # Las referencias namespaced de C1 no pertenecen a este webhook
-            # legacy y jamás adquieren autoridad financiera por esta vía.
-            if str(orden_id).startswith('bh:c1:'):
-                logger.info(
-                    'Webhook legacy ignoró referencia C1 para payment %s.',
-                    payment_id,
-                )
-                return Response({'status': 'recibido'}, status=status.HTTP_200_OK)
-
-            with transaction.atomic():
-                if estado_pago == 'approved':
-                    orden = OrdenCompra.objects.get(id=orden_id)
-                    Pago.objects.get_or_create(
-                        transaccion_id=str(payment_id),
-                        defaults={
-                            'orden': orden,
-                            'metodo_pago': 'MERCADO_PAGO',
-                            'monto': monto_pagado,
-                        },
-                    )
-
-                    apply_order_inventory_effect(orden.pk)
-
-                elif estado_pago in ('rejected', 'cancelled'):
-                    release_order_stock_commitments(
-                        int(orden_id),
-                        final_state='RECHAZADO',
-                    )
-
-                elif estado_pago in ('pending', 'in_process'):
-                    orden = OrdenCompra.objects.select_for_update().get(id=orden_id)
-                    if orden.estado == 'PENDIENTE':
-                        orden.estado = 'ESPERANDO_PAGO'
-                        orden.save(update_fields=['estado', 'actualizado_at'])
-
-            return Response({'status': 'recibido'}, status=status.HTTP_200_OK)
-
-        except OrdenCompra.DoesNotExist:
-            logger.warning(
-                f"Webhook MP: pago {payment_id} aprobado, pero la orden {orden_id} no existe."
+            received = receive_mercado_pago_order_event(
+                headers=request.headers,
+                query=request.query_params,
+                payload=request.data,
             )
-            return Response({'status': 'recibido'}, status=status.HTTP_200_OK)
-        except OrderInventoryError as e:
-            if e.code == 'ORDER_NOT_FOUND':
-                logger.warning(
-                    'Webhook MP: la orden %s no existe para liberar stock.',
-                    orden_id,
-                )
-                return Response(
-                    {'status': 'recibido'},
-                    status=status.HTTP_200_OK,
-                )
-            logger.warning(
-                'Webhook MP sin efecto de inventario para orden %s: %s',
-                orden_id,
-                e.code,
+        except ProviderEventAuthenticationError as exc:
+            return Response(
+                {'code': exc.code, 'detail': exc.detail},
+                status=status.HTTP_401_UNAUTHORIZED,
             )
-            return Response(status=status.HTTP_409_CONFLICT)
-        except Exception as e:
-            logger.error(f"Error en Webhook MP: {str(e)}", exc_info=True)
-            return Response(status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except ProviderEventConfigurationError as exc:
+            return Response(
+                {'code': exc.code, 'detail': exc.detail},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except ProviderEventConflict as exc:
+            return Response(
+                {'code': exc.code, 'detail': exc.detail},
+                status=status.HTTP_409_CONFLICT,
+            )
+        except ProviderEventError as exc:
+            return Response(
+                {'code': exc.code, 'detail': exc.detail},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except DatabaseError:
+            logger.exception('No se pudo persistir el webhook de Mercado Pago.')
+            return Response(
+                {'code': 'INBOX_UNAVAILABLE'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        return Response(
+            {
+                'status': 'received',
+                'duplicate': not received.created,
+            },
+            status=(
+                status.HTTP_201_CREATED
+                if received.created
+                else status.HTTP_200_OK
+            ),
+        )
 
 
 class ConfiguracionViewSet(viewsets.ModelViewSet):
