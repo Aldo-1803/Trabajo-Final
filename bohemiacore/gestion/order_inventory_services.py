@@ -15,6 +15,7 @@ from .models import (
     OrdenCompra,
     OrdenItem,
     OrdenPendiente,
+    Pago,
     Producto,
 )
 
@@ -82,6 +83,78 @@ def _require_delivery_authority(actor):
     ):
         raise OrderInventoryPermissionDenied(
             'No tiene permisos para confirmar entregas de órdenes.'
+        )
+
+
+def _has_manage_stock(actor):
+    return (
+        getattr(actor, 'is_authenticated', False)
+        and getattr(actor, 'is_active', False)
+        and actor.has_perm(BusinessPermission.MANAGE_STOCK)
+    )
+
+
+def _require_cancellation_authority(order, actor):
+    is_owner = (
+        getattr(actor, 'is_authenticated', False)
+        and getattr(actor, 'is_active', False)
+        and getattr(actor, 'pk', None) is not None
+        and order.cliente.usuario_id == actor.pk
+    )
+    if not (is_owner or _has_manage_stock(actor)):
+        raise OrderInventoryPermissionDenied(
+            'No tiene permisos para cancelar esta orden.',
+            code='ORDER_CANCELLATION_PERMISSION_DENIED',
+        )
+
+
+def _require_pending_cancellation_authority(pending_order, actor):
+    is_owner = (
+        getattr(actor, 'is_authenticated', False)
+        and getattr(actor, 'is_active', False)
+        and getattr(actor, 'pk', None) is not None
+        and pending_order.cliente_id is not None
+        and pending_order.cliente.usuario_id == actor.pk
+    )
+    if not (is_owner or _has_manage_stock(actor)):
+        raise OrderInventoryPermissionDenied(
+            'No tiene permisos para cancelar esta orden pendiente.',
+            code='ORDER_CANCELLATION_PERMISSION_DENIED',
+        )
+
+
+def _lock_unresolved_order_payments(order_id):
+    resolved_statuses = (Pago.Status.REJECTED, Pago.Status.REVERSED)
+    return list(
+        Pago.objects.select_for_update()
+        .filter(orden_id=order_id)
+        .exclude(status__in=resolved_statuses)
+        .order_by('pk')
+    )
+
+
+def _assert_order_cancellable(order):
+    unresolved_payments = _lock_unresolved_order_payments(order.pk)
+    if order.estado == ORDER_DELIVERED_STATE:
+        raise OrderInventoryConflict(
+            'Una orden completada no puede cancelarse de forma convencional.',
+            code='COMPLETED_ORDER_CANNOT_CANCEL',
+        )
+    if order.estado == ORDER_DELIVERABLE_STATE:
+        raise OrderInventoryConflict(
+            (
+                'La orden pagada requiere una resolución financiera explícita '
+                'antes de cancelarse.'
+            ),
+            code='ORDER_CANCELLATION_REQUIRES_FINANCIAL_RESOLUTION',
+        )
+    if unresolved_payments:
+        raise OrderInventoryConflict(
+            (
+                'La orden tiene pagos pendientes o conciliados y requiere una '
+                'resolución financiera explícita antes de cancelarse.'
+            ),
+            code='ORDER_CANCELLATION_REQUIRES_FINANCIAL_RESOLUTION',
         )
 
 
@@ -367,13 +440,20 @@ def apply_order_inventory_effect(order_id, *, actor):
 
 
 @transaction.atomic
-def release_order_stock_commitments(order_id, *, final_state='CANCELADO'):
+def release_order_stock_commitments(
+    order_id,
+    *,
+    actor,
+    final_state='CANCELADO',
+):
     if final_state not in {'CANCELADO', 'RECHAZADO'}:
         raise OrderInventoryInvalid(
             'El estado final de liberación no es válido.',
             code='INVALID_RELEASE_ORDER_STATE',
         )
     order = _lock_order(order_id)
+    _require_cancellation_authority(order, actor)
+    _assert_order_cancellable(order)
     quantities = _consolidated_items(order)
     products = _lock_products(quantities)
     commitments = _lock_commitments(order.pk)
@@ -520,7 +600,7 @@ def apply_pending_order_inventory_effect(pending_order_id, *, actor):
 
 
 @transaction.atomic
-def release_pending_order_stock_commitments(pending_order_id):
+def release_pending_order_stock_commitments(pending_order_id, *, actor):
     try:
         pending_order = OrdenPendiente.objects.select_for_update().get(
             pk=pending_order_id
@@ -530,6 +610,7 @@ def release_pending_order_stock_commitments(pending_order_id):
             'La OrdenPendiente no existe.',
             code='PENDING_ORDER_NOT_FOUND',
         )
+    _require_pending_cancellation_authority(pending_order, actor)
     if pending_order.estado == 'COMPLETADA':
         raise OrderInventoryConflict(
             'Una OrdenPendiente completada no puede liberar inventario.',
@@ -538,6 +619,7 @@ def release_pending_order_stock_commitments(pending_order_id):
     if pending_order.orden_compra_id:
         release_order_stock_commitments(
             pending_order.orden_compra_id,
+            actor=actor,
             final_state='CANCELADO',
         )
     OrdenPendiente.objects.filter(pk=pending_order.pk).update(estado='CANCELADA')

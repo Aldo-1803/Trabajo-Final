@@ -22,6 +22,7 @@ from gestion.models import (
     OrdenCompra,
     OrdenItem,
     OrdenPendiente,
+    Pago,
     Producto,
     ProviderPaymentAttempt,
 )
@@ -139,8 +140,8 @@ class OrderInventoryServiceTests(OrderInventoryFixtureMixin, TestCase):
         order = self.make_order([(self.product, 3)])
         create_order_stock_commitments(order.pk)
 
-        first = release_order_stock_commitments(order.pk)
-        retry = release_order_stock_commitments(order.pk)
+        first = release_order_stock_commitments(order.pk, actor=self.user)
+        retry = release_order_stock_commitments(order.pk, actor=self.user)
         order.refresh_from_db()
         self.product.refresh_from_db()
         commitment = CompromisoStock.objects.get(orden=order)
@@ -380,8 +381,8 @@ class OrderDeliveryAuthorizationTests(OrderInventoryFixtureMixin, TestCase):
         )
 
     def test_authorized_person_cannot_deliver_cancelled_order(self):
-        order = self.prepared_order(state='PAGADO', suffix='CANCELLED')
-        release_order_stock_commitments(order.pk)
+        order = self.prepared_order(state='PENDIENTE', suffix='CANCELLED')
+        release_order_stock_commitments(order.pk, actor=self.user)
         self.api.force_authenticate(self.stock_actor)
 
         response = self.api.post(
@@ -434,6 +435,271 @@ class OrderDeliveryAuthorizationTests(OrderInventoryFixtureMixin, TestCase):
                 self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
         self.assert_no_delivery_effect(order, state='PAGADO', committed=1)
+
+
+class OrderCancellationSafetyTests(OrderInventoryFixtureMixin, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.api = APIClient()
+
+    def prepared_order(self, *, state, suffix):
+        self.receive(self.product, 2, f'cancel-{suffix}')
+        order = self.make_order(
+            [(self.product, 1)],
+            state=state,
+            code=f'F5-{suffix}',
+        )
+        create_order_stock_commitments(order.pk)
+        return order
+
+    @staticmethod
+    def add_payment(order, *, payment_status=Pago.Status.RECONCILED):
+        return Pago.objects.create(
+            orden=order,
+            monto=order.total,
+            metodo_pago=Pago.Method.CASH,
+            status=payment_status,
+        )
+
+    def assert_unchanged_rejection(
+        self,
+        order,
+        *,
+        expected_state,
+        commitment_state=CompromisoStock.State.ACTIVE,
+        committed=1,
+        real_stock=2,
+        movement_count,
+    ):
+        order.refresh_from_db()
+        self.product.refresh_from_db()
+        commitment = CompromisoStock.objects.get(orden=order)
+        self.assertEqual(order.estado, expected_state)
+        self.assertEqual(commitment.estado, commitment_state)
+        self.assertEqual(self.product.stock_real, real_stock)
+        self.assertEqual(self.product.stock_comprometido, committed)
+        self.assertEqual(MovimientoStock.objects.count(), movement_count)
+
+    def test_client_cannot_cancel_paid_order_and_financial_facts_stay_intact(self):
+        order = self.prepared_order(state='PAGADO', suffix='CLIENT-PAID')
+        payment = self.add_payment(order)
+        payment_before = Pago.objects.filter(pk=payment.pk).values().get()
+        movement_count = MovimientoStock.objects.count()
+        self.api.force_authenticate(self.user)
+
+        url = reverse('orden-compra-cancelar', args=[order.pk])
+        response = self.api.post(url, {}, format='json')
+        retry = self.api.post(url, {}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(retry.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(
+            response.data['code'],
+            'ORDER_CANCELLATION_REQUIRES_FINANCIAL_RESOLUTION',
+        )
+        self.assertEqual(retry.data['code'], response.data['code'])
+        self.assertIn('resolución financiera', response.data['error'])
+        self.assertEqual(
+            Pago.objects.filter(pk=payment.pk).values().get(),
+            payment_before,
+        )
+        self.assert_unchanged_rejection(
+            order,
+            expected_state='PAGADO',
+            movement_count=movement_count,
+        )
+
+    def test_stock_manager_cannot_cancel_paid_order_without_resolution(self):
+        order = self.prepared_order(state='PAGADO', suffix='STAFF-PAID')
+        payment = self.add_payment(order)
+        movement_count = MovimientoStock.objects.count()
+        self.api.force_authenticate(self.stock_actor)
+
+        response = self.api.post(
+            reverse('orden-compra-cancelar', args=[order.pk]),
+            {},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(
+            response.data['code'],
+            'ORDER_CANCELLATION_REQUIRES_FINANCIAL_RESOLUTION',
+        )
+        payment.refresh_from_db()
+        self.assertEqual(payment.status, Pago.Status.RECONCILED)
+        self.assert_unchanged_rejection(
+            order,
+            expected_state='PAGADO',
+            movement_count=movement_count,
+        )
+
+    def test_paid_state_alone_blocks_domain_cancellation(self):
+        order = self.prepared_order(state='PAGADO', suffix='STATE-ONLY')
+        movement_count = MovimientoStock.objects.count()
+
+        with self.assertRaises(OrderInventoryConflict) as conflict:
+            release_order_stock_commitments(order.pk, actor=self.user)
+
+        self.assertEqual(
+            conflict.exception.code,
+            'ORDER_CANCELLATION_REQUIRES_FINANCIAL_RESOLUTION',
+        )
+        self.assert_unchanged_rejection(
+            order,
+            expected_state='PAGADO',
+            movement_count=movement_count,
+        )
+
+    def test_completed_order_cannot_be_cancelled_conventionally(self):
+        order = self.prepared_order(state='PAGADO', suffix='COMPLETED')
+        payment = self.add_payment(order)
+        apply_order_inventory_effect(order.pk, actor=self.stock_actor)
+        movement_count = MovimientoStock.objects.count()
+        self.api.force_authenticate(self.user)
+
+        response = self.api.post(
+            reverse('orden-compra-cancelar', args=[order.pk]),
+            {},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(response.data['code'], 'COMPLETED_ORDER_CANNOT_CANCEL')
+        payment.refresh_from_db()
+        self.assertEqual(payment.status, Pago.Status.RECONCILED)
+        self.assert_unchanged_rejection(
+            order,
+            expected_state='COMPLETADO',
+            commitment_state=CompromisoStock.State.CONSUMED,
+            committed=0,
+            real_stock=1,
+            movement_count=movement_count,
+        )
+
+    def test_unpaid_order_with_unresolved_payment_requires_resolution(self):
+        order = self.prepared_order(state='PENDIENTE', suffix='PAYMENT-FACT')
+        self.add_payment(
+            order,
+            payment_status=Pago.Status.PENDING_RECONCILIATION,
+        )
+        movement_count = MovimientoStock.objects.count()
+        self.api.force_authenticate(self.user)
+
+        response = self.api.post(
+            reverse('orden-compra-cancelar', args=[order.pk]),
+            {},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(
+            response.data['code'],
+            'ORDER_CANCELLATION_REQUIRES_FINANCIAL_RESOLUTION',
+        )
+        self.assert_unchanged_rejection(
+            order,
+            expected_state='PENDIENTE',
+            movement_count=movement_count,
+        )
+
+    def test_resolved_payment_does_not_block_unpaid_order_cancellation(self):
+        order = self.prepared_order(state='PENDIENTE', suffix='RESOLVED')
+        payment = self.add_payment(
+            order,
+            payment_status=Pago.Status.REVERSED,
+        )
+        self.api.force_authenticate(self.user)
+
+        response = self.api.post(
+            reverse('orden-compra-cancelar', args=[order.pk]),
+            {},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        order.refresh_from_db()
+        payment.refresh_from_db()
+        self.product.refresh_from_db()
+        self.assertEqual(order.estado, 'CANCELADO')
+        self.assertEqual(payment.status, Pago.Status.REVERSED)
+        self.assertEqual(self.product.stock_comprometido, 0)
+
+    def test_stock_manager_can_cancel_unpaid_order_and_retry_is_idempotent(self):
+        order = self.prepared_order(state='ESPERANDO_PAGO', suffix='STAFF-UNPAID')
+        self.api.force_authenticate(self.stock_actor)
+        url = reverse('orden-compra-cancelar', args=[order.pk])
+
+        first = self.api.post(url, {}, format='json')
+        retry = self.api.post(url, {}, format='json')
+
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+        self.assertEqual(retry.status_code, status.HTTP_200_OK)
+        order.refresh_from_db()
+        self.product.refresh_from_db()
+        commitment = CompromisoStock.objects.get(orden=order)
+        self.assertEqual(order.estado, 'CANCELADO')
+        self.assertEqual(commitment.estado, CompromisoStock.State.RELEASED)
+        self.assertEqual(self.product.stock_real, 2)
+        self.assertEqual(self.product.stock_comprometido, 0)
+
+    def test_legacy_pending_route_cannot_bypass_paid_order_protection(self):
+        order = self.prepared_order(state='PAGADO', suffix='LEGACY')
+        payment = self.add_payment(order)
+        pending = OrdenPendiente.objects.create(
+            cliente=self.client_profile,
+            orden_compra=order,
+            estado='CONFIRMADA',
+            items_json=[{
+                'producto_id': self.product.pk,
+                'cantidad': 1,
+                'precio': '100.00',
+            }],
+            monto_total=Decimal('100.00'),
+        )
+        movement_count = MovimientoStock.objects.count()
+        self.api.force_authenticate(self.user)
+
+        response = self.api.post(
+            reverse('orden-pendiente-cancelar', args=[pending.pk]),
+            {},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(
+            response.data['code'],
+            'ORDER_CANCELLATION_REQUIRES_FINANCIAL_RESOLUTION',
+        )
+        pending.refresh_from_db()
+        payment.refresh_from_db()
+        self.assertEqual(pending.estado, 'CONFIRMADA')
+        self.assertEqual(payment.status, Pago.Status.RECONCILED)
+        self.assert_unchanged_rejection(
+            order,
+            expected_state='PAGADO',
+            movement_count=movement_count,
+        )
+
+    def test_domain_rejects_actor_without_ownership_or_effective_permission(self):
+        order = self.prepared_order(state='PENDIENTE', suffix='AUTHORITY')
+        outsider = Usuario.objects.create_user(
+            email='order-outsider@test.com',
+            is_staff=True,
+        )
+
+        with self.assertRaises(OrderInventoryPermissionDenied) as denied:
+            release_order_stock_commitments(order.pk, actor=outsider)
+
+        self.assertEqual(
+            denied.exception.code,
+            'ORDER_CANCELLATION_PERMISSION_DENIED',
+        )
+        self.assert_unchanged_rejection(
+            order,
+            expected_state='PENDIENTE',
+            movement_count=MovimientoStock.objects.count(),
+        )
 
 
 class OrderInventoryLegacyEndpointTests(OrderInventoryFixtureMixin, TestCase):

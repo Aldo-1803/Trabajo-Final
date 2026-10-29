@@ -575,6 +575,7 @@ class OrderProviderReconciliationTests(OrderInventoryFixtureMixin, TestCase):
     def test_unfulfillable_order_preserves_payment_and_opens_case(self):
         release_order_stock_commitments(
             self.order.pk,
+            actor=self.user,
             final_state='CANCELADO',
         )
         event = self.event(event_id='order-not-fulfillable')

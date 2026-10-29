@@ -18,7 +18,11 @@ from gestion.models import (
     SlotHold,
     Turno,
 )
-from gestion.order_inventory_services import create_order_stock_commitments
+from gestion.order_inventory_services import (
+    OrderInventoryError,
+    create_order_stock_commitments,
+    release_order_stock_commitments,
+)
 from gestion.provider_reconciliation_services import (
     reconcile_verified_provider_event,
 )
@@ -307,3 +311,66 @@ class OrderProviderReconciliationConcurrencyTests(
             ).count(),
             2,
         )
+
+    def test_cancellation_vs_reconciliation_never_cancels_a_paid_order(self):
+        event = verified_event(
+            self.attempt,
+            event_id='order-race-cancel-reconcile',
+            snapshot=provider_snapshot(
+                self.attempt,
+                payment_id='PAY-ORDER-CANCEL-RACE',
+            ),
+        )
+        gate = threading.Barrier(2)
+
+        def reconcile():
+            gate.wait(timeout=10)
+            result = reconcile_verified_provider_event(event.pk)
+            return 'reconciled', result.decision
+
+        def cancel():
+            gate.wait(timeout=10)
+            try:
+                release_order_stock_commitments(
+                    self.order.pk,
+                    actor=self.user,
+                )
+                return 'cancelled', None
+            except OrderInventoryError as exc:
+                return 'rejected', exc.code
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = [
+                future.result(timeout=30)
+                for future in (
+                    executor.submit(self.threaded, reconcile),
+                    executor.submit(self.threaded, cancel),
+                )
+            ]
+
+        self.order.refresh_from_db()
+        self.product.refresh_from_db()
+        commitment = CompromisoStock.objects.get(orden=self.order)
+        payment = Pago.objects.get(orden=self.order)
+        cancel_result = next(result for result in results if result[0] != 'reconciled')
+        if self.order.estado == 'PAGADO':
+            self.assertEqual(
+                cancel_result,
+                (
+                    'rejected',
+                    'ORDER_CANCELLATION_REQUIRES_FINANCIAL_RESOLUTION',
+                ),
+            )
+            self.assertEqual(payment.status, Pago.Status.RECONCILED)
+            self.assertEqual(commitment.estado, CompromisoStock.State.ACTIVE)
+            self.assertEqual(self.product.stock_comprometido, 1)
+        else:
+            self.assertEqual(self.order.estado, 'CANCELADO')
+            self.assertEqual(cancel_result, ('cancelled', None))
+            self.assertEqual(
+                payment.status,
+                Pago.Status.PENDING_RECONCILIATION,
+            )
+            self.assertEqual(commitment.estado, CompromisoStock.State.RELEASED)
+            self.assertEqual(self.product.stock_comprometido, 0)
+        self.assertEqual(self.product.stock_real, 3)

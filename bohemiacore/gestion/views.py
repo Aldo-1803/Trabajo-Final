@@ -6466,7 +6466,10 @@ class OrdenPendienteViewSet(viewsets.ModelViewSet):
         """
         try:
             visible_order = self.get_object()
-            orden = release_pending_order_stock_commitments(visible_order.pk)
+            orden = release_pending_order_stock_commitments(
+                visible_order.pk,
+                actor=request.user,
+            )
 
             serializer = self.get_serializer(orden)
             return Response(
@@ -6641,6 +6644,7 @@ class OrdenCompraViewSet(viewsets.ModelViewSet):
             visible_order = self.get_object()
             release_order_stock_commitments(
                 visible_order.pk,
+                actor=request.user,
                 final_state='CANCELADO',
             )
             orden = OrdenCompra.objects.get(pk=visible_order.pk)

@@ -189,20 +189,26 @@ class OrderInventoryConcurrencyTests(TransactionTestCase):
                 )[0].estado
             ),
             self.operation(
-                lambda: release_pending_order_stock_commitments(pending.pk).estado
+                lambda: release_pending_order_stock_commitments(
+                    pending.pk,
+                    actor=self.user,
+                ).estado
             ),
         )
         pending.refresh_from_db()
         order.refresh_from_db()
         self.first_product.refresh_from_db()
         self.assertEqual(sum(code == 'ok' for code, _ in results), 1)
-        self.assertIn(pending.estado, {'COMPLETADA', 'CANCELADA'})
-        if pending.estado == 'COMPLETADA':
-            self.assertEqual(order.estado, 'COMPLETADO')
-            self.assertEqual(self.first_product.stock_real, 0)
-        else:
-            self.assertEqual(order.estado, 'CANCELADO')
-            self.assertEqual(self.first_product.stock_real, 1)
+        self.assertEqual(
+            sum(
+                code == 'ORDER_CANCELLATION_REQUIRES_FINANCIAL_RESOLUTION'
+                for code, _ in results
+            ),
+            1,
+        )
+        self.assertEqual(pending.estado, 'COMPLETADA')
+        self.assertEqual(order.estado, 'COMPLETADO')
+        self.assertEqual(self.first_product.stock_real, 0)
         self.assertEqual(self.first_product.stock_comprometido, 0)
 
     def test_release_vs_consume_only_one_transition_wins(self):
@@ -221,15 +227,29 @@ class OrderInventoryConcurrencyTests(TransactionTestCase):
                 ).order.estado
             ),
             self.operation(
-                lambda: release_order_stock_commitments(order.pk)[0].estado
+                lambda: release_order_stock_commitments(
+                    order.pk,
+                    actor=self.user,
+                )[0].estado
             ),
         )
         commitment = CompromisoStock.objects.get(orden=order)
         self.first_product.refresh_from_db()
         self.assertEqual(sum(code == 'ok' for code, _ in results), 1)
-        self.assertIn(
-            commitment.estado,
-            {CompromisoStock.State.CONSUMED, CompromisoStock.State.RELEASED},
+        self.assertEqual(
+            sum(
+                code == 'ORDER_CANCELLATION_REQUIRES_FINANCIAL_RESOLUTION'
+                for code, _ in results
+            ),
+            1,
+        )
+        self.assertEqual(commitment.estado, CompromisoStock.State.CONSUMED)
+        self.assertEqual(
+            MovimientoStock.objects.filter(
+                tipo=MovimientoStock.Type.ORDER_SALE_OUT,
+                reference_id=str(order.pk),
+            ).count(),
+            1,
         )
         self.assertEqual(self.first_product.stock_comprometido, 0)
 
