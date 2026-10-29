@@ -212,6 +212,25 @@ describe('ProtectedRoute declarativo con acceso por URL directa', () => {
         expectRedirect('/acceso-denegado');
     });
 
+    test('manage_stock habilita la ruta operativa de órdenes', () => {
+        renderDirectUrl('/admin/ordenes', {
+            requiredPermission: 'gestion.manage_stock'
+        }, {
+            businessRole: 'EMPLEADO',
+            permissions: ['gestion.manage_stock']
+        });
+
+        expect(screen.getByText('Contenido protegido')).toBeInTheDocument();
+    });
+
+    test('la ruta de órdenes rechaza incluso a admin sin manage_stock', () => {
+        renderDirectUrl('/admin/ordenes', {
+            requiredPermission: 'gestion.manage_stock'
+        }, {businessRole: 'ADMINISTRADOR'});
+
+        expectRedirect('/acceso-denegado');
+    });
+
     test.each(['EMPLEADO', 'PROFESIONAL'])(
         '%s con view_clients entra directamente a Gestión de Clientes',
         (businessRole) => {

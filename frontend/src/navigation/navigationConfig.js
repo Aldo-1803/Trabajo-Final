@@ -158,6 +158,13 @@ export const navigationItems = [
         ]
     },
     {
+        id: 'admin-orders',
+        label: 'Órdenes',
+        path: ADMIN_ROUTES.ORDENES,
+        placement: NAVIGATION_PLACEMENT.PRIMARY,
+        requiredPermission: 'gestion.manage_stock'
+    },
+    {
         id: 'admin-reports',
         label: 'Reportes',
         path: ADMIN_ROUTES.REPORTES,

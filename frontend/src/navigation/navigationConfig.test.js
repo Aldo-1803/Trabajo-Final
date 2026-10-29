@@ -66,4 +66,21 @@ describe('navegación de inventario por permisos', () => {
         );
         expect(visible.map((item) => item.id)).not.toContain('admin-products');
     });
+
+    test('Órdenes requiere manage_stock sin depender del rol', () => {
+        const operator = getVisibleNavigationItems(
+            access({
+                permissions: ['gestion.manage_stock'],
+                businessRole: 'EMPLEADO'
+            }),
+            NAVIGATION_PLACEMENT.PRIMARY
+        );
+        const adminWithoutPermission = getVisibleNavigationItems(
+            access({permissions: [], businessRole: 'ADMINISTRADOR'}),
+            NAVIGATION_PLACEMENT.PRIMARY
+        );
+
+        expect(operator.map((item) => item.id)).toContain('admin-orders');
+        expect(adminWithoutPermission.map((item) => item.id)).not.toContain('admin-orders');
+    });
 });

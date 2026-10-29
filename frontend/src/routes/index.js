@@ -144,7 +144,7 @@ export const AppRoutes = () => {
                 <Route path={ADMIN_ROUTES.EDITAR_CONTENIDO} element={<ProtectedRoute><EditorContenidoEducativo /></ProtectedRoute>} />
 
                 {/* Admin Routes - Órdenes */}
-                <Route path={ADMIN_ROUTES.ORDENES} element={<ProtectedRoute><GestionOrdenes /></ProtectedRoute>} />
+                <Route path={ADMIN_ROUTES.ORDENES} element={<ProtectedRoute requiredPermission="gestion.manage_stock"><GestionOrdenes /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.CAJA} element={<ProtectedRoute><HistorialPagos /></ProtectedRoute>} />
 
                 {/* Admin Routes - Auditoría */}
