@@ -45,6 +45,19 @@ const activeHold = {
     personal: approvedRequest.personal_preferido
 };
 
+const paymentOptions = {
+    slot_hold_public_id: activeHold.public_id,
+    policy_version: 'F3-POLICY',
+    total_amount: '1000.00',
+    currency: 'ARS',
+    expires_at: activeHold.expires_at,
+    modes: [
+        {mode: 'DEPOSIT', required_amount: '250.00'},
+        {mode: 'FULL', required_amount: '1000.00'},
+    ],
+    existing_intent: null,
+};
+
 
 describe('SolicitudesTecnicas', () => {
     beforeEach(() => {
@@ -54,7 +67,9 @@ describe('SolicitudesTecnicas', () => {
                 ? [{id: 4, nombre: 'Color'}]
                 : url.includes('/personal/')
                     ? [{id: 8, nombre: 'Ada', apellido: 'Lovelace'}]
-                    : [warningRequest]
+                    : url.includes('/slot-holds/')
+                        ? []
+                        : [warningRequest]
         }));
     });
 
@@ -107,7 +122,11 @@ describe('SolicitudesTecnicas', () => {
                 ? [{id: 4, nombre: 'Color'}]
                 : url.includes('/personal/')
                     ? [{id: 8, nombre: 'Ada', apellido: 'Lovelace'}]
-                    : [approvedRequest]
+                    : url.includes('/slot-holds/')
+                        ? []
+                        : url.includes('/payment-intents/options/')
+                            ? paymentOptions
+                            : [approvedRequest]
         }));
         axios.post
             .mockResolvedValueOnce({data: activeHold})
@@ -133,8 +152,9 @@ describe('SolicitudesTecnicas', () => {
             },
             {headers: {'Idempotency-Key': expect.any(String)}}
         ));
-        expect(await screen.findByText(/Reserva temporal activa: 02:05/)).toBeInTheDocument();
-        expect(screen.getByText(/el servidor decide la vigencia/i)).toBeInTheDocument();
+        expect(await screen.findByText(/Tiempo disponible: 02:05/)).toBeInTheDocument();
+        expect(screen.getByText(/el servidor verifica nuevamente la vigencia/i)).toBeInTheDocument();
+        expect(await screen.findByText(/Total:/)).toHaveTextContent('$ 1.000,00');
         expect(screen.queryByText(/Turno confirmado/i)).not.toBeInTheDocument();
 
         fireEvent.click(screen.getByRole('button', {name: 'Liberar reserva temporal'}));
@@ -142,6 +162,6 @@ describe('SolicitudesTecnicas', () => {
             `/api/gestion/slot-holds/${activeHold.public_id}/release/`,
             {}
         ));
-        expect(await screen.findByText('Reserva temporal liberada.')).toBeInTheDocument();
+        expect(await screen.findByText(/HOLD está vencido o liberado/)).toBeInTheDocument();
     });
 });

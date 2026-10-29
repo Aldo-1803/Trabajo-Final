@@ -87,9 +87,9 @@ export const AppRoutes = () => {
                 <Route path={AUTH_ROUTES.REGISTRO} element={<Registro />} />
                 <Route path={AUTH_ROUTES.RECUPERAR_CONTRASENA} element={<RecuperarContrasena />} />
                 <Route path={AUTH_ROUTES.RESETEAR_CLAVE} element={<ResetearClave />} />
-                <Route path="/compra-exitosa" element={<RetornoMercadoPago result="success" />} />
-                <Route path="/compra-pendiente" element={<RetornoMercadoPago result="pending" />} />
-                <Route path="/compra-fallida" element={<RetornoMercadoPago result="failure" />} />
+                <Route path="/compra-exitosa" element={<ProtectedRoute requiredProfile="cliente"><RetornoMercadoPago result="success" /></ProtectedRoute>} />
+                <Route path="/compra-pendiente" element={<ProtectedRoute requiredProfile="cliente"><RetornoMercadoPago result="pending" /></ProtectedRoute>} />
+                <Route path="/compra-fallida" element={<ProtectedRoute requiredProfile="cliente"><RetornoMercadoPago result="failure" /></ProtectedRoute>} />
 
                 {/* Session landing routes */}
                 <Route path={SESSION_ROUTES.OPERACIONES} element={<ProtectedRoute requiredAnyPermission={['gestion.view_global_agenda', 'usuarios.create_walkin_client', 'gestion.create_turno_for_client', 'gestion.register_arrival', 'gestion.reprogram_any_turno', 'gestion.cancel_any_turno']}><Operaciones /></ProtectedRoute>} />

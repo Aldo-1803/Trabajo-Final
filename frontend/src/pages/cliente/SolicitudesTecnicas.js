@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 
+import BookingPaymentFlow from './BookingPaymentFlow';
+
 
 const API_URL = '/api/gestion/solicitudes-tecnicas/';
 
@@ -22,14 +24,6 @@ const idempotencyKey = () => (
     || `slot-hold-${Date.now()}-${Math.random().toString(16).slice(2)}`
 );
 
-const formatCountdown = (seconds) => {
-    const safeSeconds = Math.max(0, seconds || 0);
-    const minutes = Math.floor(safeSeconds / 60);
-    const remainder = safeSeconds % 60;
-    return `${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`;
-};
-
-
 const SolicitudesTecnicas = () => {
     const [services, setServices] = useState([]);
     const [professionals, setProfessionals] = useState([]);
@@ -49,16 +43,32 @@ const SolicitudesTecnicas = () => {
         setLoading(true);
         setError('');
         try {
-            const [servicesResponse, professionalsResponse, requestsResponse] = await Promise.all([
+            const [
+                servicesResponse,
+                professionalsResponse,
+                requestsResponse,
+                holdsResponse,
+            ] = await Promise.all([
                 axios.get('/api/gestion/servicios/'),
                 axios.get('/api/gestion/personal/?activo=true'),
-                axios.get(API_URL)
+                axios.get(API_URL),
+                axios.get('/api/gestion/slot-holds/'),
             ]);
             const serviceData = servicesResponse.data.results || servicesResponse.data;
             const professionalData = professionalsResponse.data.results || professionalsResponse.data;
             setServices(Array.isArray(serviceData) ? serviceData : []);
             setProfessionals(Array.isArray(professionalData) ? professionalData : []);
             setRequests(Array.isArray(requestsResponse.data) ? requestsResponse.data : []);
+            const holdData = holdsResponse.data.results || holdsResponse.data;
+            const resumable = {};
+            if (Array.isArray(holdData)) {
+                holdData.forEach((hold) => {
+                    if (!resumable[hold.solicitud_id]) {
+                        resumable[hold.solicitud_id] = hold;
+                    }
+                });
+            }
+            setHolds(resumable);
         } catch (requestError) {
             setError('No pudimos cargar tus solicitudes técnicas.');
         } finally {
@@ -69,29 +79,6 @@ const SolicitudesTecnicas = () => {
     useEffect(() => {
         load();
     }, [load]);
-
-    useEffect(() => {
-        const timer = window.setInterval(() => {
-            setHolds((current) => Object.fromEntries(
-                Object.entries(current).map(([requestId, hold]) => [
-                    requestId,
-                    hold.effective_state === 'ACTIVE'
-                        ? {
-                            ...hold,
-                            countdown: {
-                                ...hold.countdown,
-                                seconds_remaining: Math.max(
-                                    0,
-                                    hold.countdown.seconds_remaining - 1
-                                )
-                            }
-                        }
-                        : hold
-                ])
-            ));
-        }, 1000);
-        return () => window.clearInterval(timer);
-    }, []);
 
     const toggleService = (serviceId) => {
         setSelectedServices((current) => (
@@ -205,6 +192,15 @@ const SolicitudesTecnicas = () => {
         }
     };
 
+    const retryAvailability = (requestId) => {
+        delete holdKeys.current[requestId];
+        setHolds((current) => {
+            const next = {...current};
+            delete next[requestId];
+            return next;
+        });
+    };
+
     return (
         <main className="container mx-auto p-4 max-w-5xl">
             <h1 className="text-3xl font-bold mb-2">Solicitudes técnicas</h1>
@@ -309,38 +305,18 @@ const SolicitudesTecnicas = () => {
                         )
                     )}
                     {holds[item.id] && (
-                        <section className="mt-3 border rounded p-3" aria-label="Reserva temporal">
-                            {holds[item.id].effective_state === 'ACTIVE'
-                                && holds[item.id].countdown.seconds_remaining > 0 ? (
-                                <>
-                                    <p className="font-semibold">
-                                        Reserva temporal activa: {' '}
-                                        {formatCountdown(holds[item.id].countdown.seconds_remaining)}
-                                    </p>
-                                    <p className="text-sm">
-                                        El contador es informativo; el servidor decide la vigencia.
-                                        Esto todavía no confirma un Turno.
-                                    </p>
-                                    <button
-                                        type="button"
-                                        onClick={() => releaseHold(
-                                            item.id,
-                                            holds[item.id].public_id
-                                        )}
-                                        disabled={holdRequestId === item.id}
-                                        className="mt-2 bg-slate-700 text-white rounded px-3 py-2 disabled:opacity-50"
-                                    >
-                                        Liberar reserva temporal
-                                    </button>
-                                </>
-                            ) : (
-                                <p className="font-semibold">
-                                    Reserva temporal {holds[item.id].effective_state === 'RELEASED'
-                                        ? 'liberada'
-                                        : 'vencida'}.
-                                </p>
-                            )}
-                        </section>
+                        <BookingPaymentFlow
+                            request={item}
+                            initialHold={holds[item.id]}
+                            busy={holdRequestId === item.id}
+                            onHoldUpdate={(hold) => setHolds((current) => ({
+                                ...current,
+                                [item.id]: hold,
+                            }))}
+                            onRelease={releaseHold}
+                            onAvailabilityRefresh={() => retryAvailability(item.id)}
+                            onError={setError}
+                        />
                     )}
                     {item.estado === 'ADVERTENCIA_PENDIENTE' && (
                         <button

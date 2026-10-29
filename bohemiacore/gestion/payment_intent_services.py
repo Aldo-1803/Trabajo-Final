@@ -1,7 +1,7 @@
 """Políticas e Intents financieros internos, sin registrar dinero (BH-058 B1)."""
 
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
 from django.contrib.auth import get_user_model
@@ -99,6 +99,23 @@ class PaymentIntentTransitionResult:
     code: str = ''
 
 
+@dataclass(frozen=True)
+class PaymentIntentModeOption:
+    mode: str
+    required_amount: Decimal
+
+
+@dataclass(frozen=True)
+class PaymentIntentOptionsResult:
+    hold: SlotHold
+    existing_intent: PaymentIntent | None
+    policy_version: str
+    total_amount: Decimal
+    currency: str
+    expires_at: datetime
+    modes: tuple[PaymentIntentModeOption, ...]
+
+
 def _authorized_policy_actor(actor):
     user_model = get_user_model()
     if (
@@ -193,8 +210,8 @@ def _policy_snapshot(policy):
     }
 
 
-def _validate_mode(policy, mode):
-    valid_modes = {
+def _allowed_modes(policy):
+    return {
         PaymentPolicy.AllowedMode.DEPOSIT_ONLY: {PaymentIntent.Mode.DEPOSIT},
         PaymentPolicy.AllowedMode.FULL_ONLY: {PaymentIntent.Mode.FULL},
         PaymentPolicy.AllowedMode.DEPOSIT_OR_FULL: {
@@ -202,6 +219,10 @@ def _validate_mode(policy, mode):
             PaymentIntent.Mode.FULL,
         },
     }[policy.allowed_mode]
+
+
+def _validate_mode(policy, mode):
+    valid_modes = _allowed_modes(policy)
     if mode not in valid_modes:
         raise PaymentIntentConflict(
             'PAYMENT_MODE_NOT_ALLOWED',
@@ -288,6 +309,206 @@ def _create_failure(code, detail):
     )
 
 
+def _locked_payment_terms(*, solicitud, hold, cliente, now):
+    snapshots = tuple(
+        SlotHoldService.objects.filter(hold=hold).order_by('orden', 'pk')
+    )
+    service_ids = sorted({item.servicio_id for item in snapshots})
+    services_by_id = {
+        service.pk: service
+        for service in Servicio.objects.select_for_update()
+        .filter(pk__in=service_ids)
+        .order_by('pk')
+    }
+    policies = list(PaymentPolicy.objects.select_for_update().order_by('pk'))
+    policy = next(
+        (
+            item for item in policies
+            if item.status == PaymentPolicy.Status.PUBLISHED
+        ),
+        None,
+    )
+    if not technical_request_is_current_for_hold(
+        solicitud=solicitud,
+        hold=hold,
+        snapshots=snapshots,
+    ):
+        raise PaymentIntentConflict(
+            'TECHNICAL_REQUEST_INVALIDATED',
+            'La solicitud o evaluación técnica ya no está vigente.',
+        )
+    if (
+        solicitud.cliente_id != cliente.pk
+        or not cliente.activo
+        or not cliente.usuario.is_active
+    ):
+        raise PaymentIntentConflict(
+            'INVALID_CLIENT',
+            'El Cliente del HOLD ya no está activo.',
+        )
+    if (
+        not snapshots
+        or len(services_by_id) != len(snapshots)
+        or any(not service.activo for service in services_by_id.values())
+    ):
+        raise PaymentIntentConflict(
+            'INVALID_HOLD_SERVICES',
+            'Los Servicios del HOLD ya no son válidos.',
+        )
+    if policy is None:
+        raise PaymentIntentConflict(
+            'NO_PUBLISHED_PAYMENT_POLICY',
+            'No existe una política de pago publicada.',
+        )
+    try:
+        policy.full_clean()
+    except ValidationError as exc:
+        raise PaymentIntentConflict(
+            'INVALID_PAYMENT_POLICY',
+            'La política de pago publicada no es válida.',
+        ) from exc
+
+    line_values = []
+    total = Decimal('0')
+    for snapshot in snapshots:
+        service = services_by_id[snapshot.servicio_id]
+        if service.precio_base is None or service.precio_base <= 0:
+            raise PaymentIntentConflict(
+                'INVALID_SERVICE_PRICE',
+                'Un Servicio del HOLD no tiene un precio válido.',
+            )
+        unit_price = _quantize(service.precio_base, policy.currency)
+        discount = _quantize(Decimal('0'), policy.currency)
+        subtotal = _quantize(unit_price - discount, policy.currency)
+        line_values.append((snapshot, service, unit_price, discount, subtotal))
+        total += subtotal
+    total = _quantize(total, policy.currency)
+    if total <= 0:
+        raise PaymentIntentConflict(
+            'INVALID_TOTAL_AMOUNT',
+            'El total contractual debe ser mayor que cero.',
+        )
+    expires_at = min(
+        now + timedelta(minutes=policy.intent_ttl_minutes),
+        hold.expires_at,
+    )
+    return policy, tuple(line_values), total, expires_at
+
+
+def _options_for_terms(policy, total):
+    options = []
+    for mode in (PaymentIntent.Mode.DEPOSIT, PaymentIntent.Mode.FULL):
+        if mode not in _allowed_modes(policy):
+            continue
+        try:
+            required = _required_amount(policy=policy, mode=mode, total=total)
+        except PaymentIntentConflict as exc:
+            if exc.code == 'FIXED_DEPOSIT_EXCEEDS_TOTAL':
+                continue
+            raise
+        options.append(PaymentIntentModeOption(
+            mode=mode,
+            required_amount=required,
+        ))
+    if not options:
+        raise PaymentIntentConflict(
+            'NO_AVAILABLE_PAYMENT_MODE',
+            'La política no ofrece una modalidad válida para este total.',
+        )
+    return tuple(options)
+
+
+@transaction.atomic
+def get_payment_intent_options(*, hold, actor):
+    """Cotiza B1 para un HOLD propio sin crear obligaciones ni registrar dinero."""
+    if hold is None or getattr(hold, 'pk', None) is None:
+        raise PaymentIntentNotFound()
+    try:
+        target = SlotHold.objects.only('solicitud_id').get(pk=hold.pk)
+        solicitud = SolicitudTecnicaReserva.objects.select_for_update().get(
+            pk=target.solicitud_id
+        )
+        locked_hold = SlotHold.objects.select_for_update().get(pk=hold.pk)
+        locked_intents = list(
+            PaymentIntent.objects.select_for_update()
+            .filter(slot_hold=locked_hold)
+            .order_by('pk')
+        )
+        cliente = (
+            Cliente.objects.select_for_update()
+            .select_related('usuario')
+            .get(pk=locked_hold.cliente_id)
+        )
+    except (SlotHold.DoesNotExist, SolicitudTecnicaReserva.DoesNotExist) as exc:
+        raise PaymentIntentNotFound() from exc
+    if (
+        not getattr(actor, 'is_authenticated', False)
+        or getattr(actor, 'pk', None) != cliente.usuario_id
+    ):
+        raise PaymentIntentNotFound()
+
+    existing = next(
+        (
+            intent for intent in reversed(locked_intents)
+            if intent.status == PaymentIntent.Status.APPROVED
+            or intent.status in PaymentIntent.ACTIVE_STATUSES
+        ),
+        None,
+    )
+    now = database_now()
+    if existing is not None:
+        if (
+            existing.status in PaymentIntent.ACTIVE_STATUSES
+            and (
+                existing.expires_at <= now
+                or locked_hold.state != SlotHold.State.ACTIVE
+                or locked_hold.expires_at <= now
+            )
+        ):
+            raise PaymentIntentConflict(
+                'INTENT_EXPIRED',
+                'El Intent existente ya no está vigente.',
+            )
+        return PaymentIntentOptionsResult(
+            hold=locked_hold,
+            existing_intent=existing,
+            policy_version=str(existing.policy_snapshot.get('version') or ''),
+            total_amount=existing.total_amount_snapshot,
+            currency=existing.currency,
+            expires_at=existing.expires_at,
+            modes=(PaymentIntentModeOption(
+                mode=existing.mode,
+                required_amount=existing.required_amount,
+            ),),
+        )
+
+    if locked_hold.state != SlotHold.State.ACTIVE or locked_hold.expires_at <= now:
+        raise PaymentIntentConflict(
+            'HOLD_EXPIRED',
+            'La reserva temporal está vencida.',
+        )
+    policy, _line_values, total, expires_at = _locked_payment_terms(
+        solicitud=solicitud,
+        hold=locked_hold,
+        cliente=cliente,
+        now=now,
+    )
+    if expires_at <= now:
+        raise PaymentIntentConflict(
+            'HOLD_EXPIRED',
+            'La reserva temporal está vencida.',
+        )
+    return PaymentIntentOptionsResult(
+        hold=locked_hold,
+        existing_intent=None,
+        policy_version=policy.version,
+        total_amount=total,
+        currency=policy.currency,
+        expires_at=expires_at,
+        modes=_options_for_terms(policy, total),
+    )
+
+
 def _same_create_payload(intent, *, hold_id, mode):
     return intent.slot_hold_id == hold_id and intent.mode == mode
 
@@ -360,24 +581,6 @@ def create_payment_intent(*, hold, mode, idempotency_key, actor):
             'El HOLD ya tiene un Intent no terminal.',
         )
 
-    snapshots = tuple(
-        SlotHoldService.objects.filter(hold=locked_hold).order_by('orden', 'pk')
-    )
-    service_ids = sorted({item.servicio_id for item in snapshots})
-    services_by_id = {
-        service.pk: service
-        for service in Servicio.objects.select_for_update()
-        .filter(pk__in=service_ids)
-        .order_by('pk')
-    }
-    policies = list(PaymentPolicy.objects.select_for_update().order_by('pk'))
-    policy = next(
-        (
-            item for item in policies
-            if item.status == PaymentPolicy.Status.PUBLISHED
-        ),
-        None,
-    )
     now = database_now()
 
     if locked_hold.state == SlotHold.State.ACTIVE and locked_hold.expires_at <= now:
@@ -396,72 +599,14 @@ def create_payment_intent(*, hold, mode, idempotency_key, actor):
             code,
             'La reserva temporal no está disponible para crear un Intent.',
         )
-    if not technical_request_is_current_for_hold(
+    policy, line_values, total, expires_at = _locked_payment_terms(
         solicitud=solicitud,
         hold=locked_hold,
-        snapshots=snapshots,
-    ):
-        raise PaymentIntentConflict(
-            'TECHNICAL_REQUEST_INVALIDATED',
-            'La solicitud o evaluación técnica ya no está vigente.',
-        )
-    if (
-        solicitud.cliente_id != cliente.pk
-        or not cliente.activo
-        or not cliente.usuario.is_active
-    ):
-        raise PaymentIntentConflict(
-            'INVALID_CLIENT',
-            'El Cliente del HOLD ya no está activo.',
-        )
-    if (
-        not snapshots
-        or len(services_by_id) != len(snapshots)
-        or any(not service.activo for service in services_by_id.values())
-    ):
-        raise PaymentIntentConflict(
-            'INVALID_HOLD_SERVICES',
-            'Los Servicios del HOLD ya no son válidos.',
-        )
-    if policy is None:
-        raise PaymentIntentConflict(
-            'NO_PUBLISHED_PAYMENT_POLICY',
-            'No existe una política de pago publicada.',
-        )
-    try:
-        policy.full_clean()
-    except ValidationError as exc:
-        raise PaymentIntentConflict(
-            'INVALID_PAYMENT_POLICY',
-            'La política de pago publicada no es válida.',
-        ) from exc
-    _validate_mode(policy, mode)
-
-    line_values = []
-    total = Decimal('0')
-    for snapshot in snapshots:
-        service = services_by_id[snapshot.servicio_id]
-        if service.precio_base is None or service.precio_base <= 0:
-            raise PaymentIntentConflict(
-                'INVALID_SERVICE_PRICE',
-                'Un Servicio del HOLD no tiene un precio válido.',
-            )
-        unit_price = _quantize(service.precio_base, policy.currency)
-        discount = _quantize(Decimal('0'), policy.currency)
-        subtotal = _quantize(unit_price - discount, policy.currency)
-        line_values.append((snapshot, service, unit_price, discount, subtotal))
-        total += subtotal
-    total = _quantize(total, policy.currency)
-    if total <= 0:
-        raise PaymentIntentConflict(
-            'INVALID_TOTAL_AMOUNT',
-            'El total contractual debe ser mayor que cero.',
-        )
-    required = _required_amount(policy=policy, mode=mode, total=total)
-    expires_at = min(
-        now + timedelta(minutes=policy.intent_ttl_minutes),
-        locked_hold.expires_at,
+        cliente=cliente,
+        now=now,
     )
+    _validate_mode(policy, mode)
+    required = _required_amount(policy=policy, mode=mode, total=total)
     if expires_at <= now:
         _expire_locked_hold(locked_hold, now=now, actor=actor)
         return _create_failure(

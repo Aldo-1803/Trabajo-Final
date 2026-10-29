@@ -14,8 +14,8 @@ from .models import (
     Carrito, CarritoItem, ContenidoEducativo, MeGusta, ContenidoGuardado,
     OrdenPendiente, OrdenCompra, OrdenItem, Pago, ConfiguracionDiagnostico,
     DecisionRevisionTecnica, PAYMENT_CURRENCY_CHOICES, Pago,
-    PaymentIntent, PaymentIntentLine, ProviderPaymentAttempt, MovimientoStock,
-    SlotHold, SolicitudTecnicaReserva,
+    PaymentIntent, PaymentIntentLine, PaymentReconciliationCase, ProviderEvent,
+    ProviderPaymentAttempt, MovimientoStock, SlotHold, SolicitudTecnicaReserva,
     #PasoRutina, #PasoRutinaCliente,
 )
 
@@ -1402,15 +1402,24 @@ class SlotHoldPublicSerializer(serializers.ModelSerializer):
         model = SlotHold
         fields = (
             'public_id',
+            'solicitud_id',
             'starts_at',
             'ends_at',
             'expires_at',
+            'created_at',
             'persisted_state',
             'effective_state',
             'countdown',
             'personal',
         )
         read_only_fields = fields
+
+    def get_fields(self):
+        fields = super().get_fields()
+        if not self.context.get('include_resume_metadata', False):
+            fields.pop('solicitud_id', None)
+            fields.pop('created_at', None)
+        return fields
 
     def _now(self):
         return self.context['database_now']
@@ -1449,6 +1458,18 @@ class PaymentIntentCreateCommandSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         unexpected = set(self.initial_data) - {'slot_hold_public_id', 'mode'}
+        if unexpected:
+            raise serializers.ValidationError({
+                'campos_no_permitidos': sorted(unexpected),
+            })
+        return attrs
+
+
+class PaymentIntentOptionsQuerySerializer(serializers.Serializer):
+    slot_hold_public_id = serializers.UUIDField()
+
+    def validate(self, attrs):
+        unexpected = set(self.initial_data) - {'slot_hold_public_id'}
         if unexpected:
             raise serializers.ValidationError({
                 'campos_no_permitidos': sorted(unexpected),
@@ -1561,6 +1582,10 @@ class PaymentIntentPublicSerializer(serializers.ModelSerializer):
     confirmation_due = serializers.SerializerMethodField()
     balance = serializers.SerializerMethodField()
     financial_threshold_reached = serializers.SerializerMethodField()
+    confirmed_turno_id = serializers.IntegerField(read_only=True, allow_null=True)
+    hold_effective_state = serializers.SerializerMethodField()
+    checkout = serializers.SerializerMethodField()
+    tracking = serializers.SerializerMethodField()
 
     class Meta:
         model = PaymentIntent
@@ -1586,6 +1611,10 @@ class PaymentIntentPublicSerializer(serializers.ModelSerializer):
             'confirmation_due',
             'balance',
             'financial_threshold_reached',
+            'confirmed_turno_id',
+            'hold_effective_state',
+            'checkout',
+            'tracking',
             'lines',
         )
         read_only_fields = fields
@@ -1619,6 +1648,174 @@ class PaymentIntentPublicSerializer(serializers.ModelSerializer):
             'server_now': now.isoformat(),
             'seconds_remaining': remaining,
             'authoritative': False,
+        }
+
+    def get_hold_effective_state(self, obj):
+        if (
+            obj.slot_hold.state == SlotHold.State.ACTIVE
+            and obj.slot_hold.expires_at <= self._now()
+        ):
+            return SlotHold.State.EXPIRED
+        return obj.slot_hold.state
+
+    @staticmethod
+    def _latest_attempt(obj):
+        attempts = list(obj.provider_attempts.all())
+        return max(
+            attempts,
+            key=lambda item: (item.created_at, item.pk),
+            default=None,
+        )
+
+    @staticmethod
+    def _latest_event(attempt):
+        if attempt is None:
+            return None
+        events = list(attempt.provider_events.all())
+        return max(
+            events,
+            key=lambda item: (item.received_at, item.pk),
+            default=None,
+        )
+
+    def get_checkout(self, obj):
+        attempt = self._latest_attempt(obj)
+        if attempt is None:
+            return None
+        return ProviderPaymentAttemptPublicSerializer(
+            attempt,
+            context=self.context,
+        ).data
+
+    def get_tracking(self, obj):
+        attempt = self._latest_attempt(obj)
+        event = self._latest_event(attempt)
+        open_cases = [
+            case for case in obj.reconciliation_cases.all()
+            if case.status == PaymentReconciliationCase.Status.OPEN
+        ]
+        has_pending_payment = any(
+            payment.status == Pago.Status.PENDING_RECONCILIATION
+            for payment in obj.payments.all()
+        )
+        booking_failure = next(
+            (
+                case for case in open_cases
+                if case.case_type in {
+                    PaymentReconciliationCase.Type.LATE_PAYMENT,
+                    PaymentReconciliationCase.Type.BOOKING_CONFIRMATION_FAILED,
+                }
+            ),
+            None,
+        )
+        if booking_failure is not None:
+            return {
+                'state': 'PAID_WITHOUT_BOOKING',
+                'code': booking_failure.reason_code,
+                'requires_polling': False,
+            }
+        if (
+            open_cases
+            or has_pending_payment
+            or event is not None
+            and event.reconciliation_status
+            == ProviderEvent.ReconciliationStatus.REVIEW_REQUIRED
+        ):
+            state = 'ADMIN_REVIEW'
+            code = (
+                event.reconciliation_code
+                if event is not None and event.reconciliation_code
+                else 'PAYMENT_RECONCILIATION_REQUIRED'
+            )
+            return {'state': state, 'code': code, 'requires_polling': False}
+
+        if obj.status == PaymentIntent.Status.APPROVED and obj.confirmed_turno_id:
+            return {
+                'state': 'CONFIRMED',
+                'code': 'BOOKING_CONFIRMED',
+                'requires_polling': False,
+            }
+        if obj.status == PaymentIntent.Status.REJECTED:
+            return {
+                'state': 'PAYMENT_REJECTED',
+                'code': obj.terminal_reason or 'PAYMENT_REJECTED',
+                'requires_polling': False,
+            }
+        if obj.status == PaymentIntent.Status.CANCELLED:
+            return {
+                'state': 'CANCELLED',
+                'code': obj.terminal_reason or 'PAYMENT_INTENT_CANCELLED',
+                'requires_polling': False,
+            }
+        if self.get_effective_status(obj) == PaymentIntent.Status.EXPIRED:
+            return {
+                'state': 'HOLD_EXPIRED',
+                'code': obj.terminal_reason or 'HOLD_EXPIRED',
+                'requires_polling': False,
+            }
+
+        if event is not None:
+            provider_status = str(
+                (event.provider_snapshot or {}).get('status') or ''
+            ).lower()
+            if (
+                event.reconciliation_status
+                == ProviderEvent.ReconciliationStatus.IGNORED
+                and provider_status
+                in {'failed', 'rejected', 'canceled', 'cancelled'}
+            ):
+                return {
+                    'state': 'PAYMENT_REJECTED',
+                    'code': event.reconciliation_code or 'PAYMENT_NOT_ACCREDITED',
+                    'requires_polling': False,
+                }
+            if (
+                event.reconciliation_status
+                == ProviderEvent.ReconciliationStatus.IGNORED
+                and provider_status in {'created', 'processing', 'pending'}
+            ):
+                return {
+                    'state': 'PAYMENT_PENDING',
+                    'code': 'PAYMENT_PENDING',
+                    'requires_polling': True,
+                }
+            if (
+                event.reconciliation_status
+                == ProviderEvent.ReconciliationStatus.APPLIED
+                or obj.status == PaymentIntent.Status.PENDING
+            ):
+                return {
+                    'state': 'PAYMENT_PENDING',
+                    'code': event.reconciliation_code or 'PAYMENT_PENDING',
+                    'requires_polling': True,
+                }
+
+        if attempt is not None:
+            if attempt.status == ProviderPaymentAttempt.Status.OUTCOME_UNKNOWN:
+                return {
+                    'state': 'CHECKOUT_UNCERTAIN',
+                    'code': attempt.error_code or 'PROVIDER_OUTCOME_UNKNOWN',
+                    'requires_polling': True,
+                }
+            if attempt.status == ProviderPaymentAttempt.Status.FAILED:
+                return {
+                    'state': 'CHECKOUT_ERROR',
+                    'code': attempt.error_code or 'PROVIDER_CHECKOUT_FAILED',
+                    'requires_polling': False,
+                }
+            if attempt.status in {
+                ProviderPaymentAttempt.Status.PROCESSING,
+                ProviderPaymentAttempt.Status.READY,
+            }:
+                return {
+                    'state': 'PAYMENT_VERIFICATION',
+                    'code': 'AWAITING_PROVIDER_VERIFICATION',
+                    'requires_polling': True,
+                }
+        return {
+            'state': 'READY_FOR_CHECKOUT',
+            'code': 'PAYMENT_INTENT_READY',
+            'requires_polling': False,
         }
 
     @staticmethod

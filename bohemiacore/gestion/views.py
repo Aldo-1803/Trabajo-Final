@@ -85,6 +85,7 @@ from .serializers import (
     SlotHoldReleaseCommandSerializer,
     PaymentIntentCancelCommandSerializer,
     PaymentIntentCreateCommandSerializer,
+    PaymentIntentOptionsQuerySerializer,
     PaymentIntentPublicSerializer,
     ProviderCheckoutCommandSerializer,
     ProviderPaymentAttemptPublicSerializer,
@@ -170,6 +171,7 @@ from .payment_intent_services import (
     PaymentIntentNotFound,
     cancel_payment_intent,
     create_payment_intent,
+    get_payment_intent_options,
 )
 from .provider_checkout_services import (
     ProviderCheckoutConflict,
@@ -7074,6 +7076,19 @@ class SlotHoldViewSet(viewsets.GenericViewSet):
         # GET calcula estado efectivo, pero nunca materializa una transición.
         return Response(self._serialize(self.get_object()))
 
+    def list(self, request, *args, **kwargs):
+        # Historial propio para reanudar el recorrido después de recargar la UI.
+        serializer = self.get_serializer(
+            self.get_queryset(),
+            many=True,
+            context={
+                **self.get_serializer_context(),
+                'database_now': database_now(),
+                'include_resume_metadata': True,
+            },
+        )
+        return Response(serializer.data)
+
     @action(detail=True, methods=['post'], url_path='release')
     def release(self, request, public_id=None):
         hold = self.get_object()
@@ -7110,7 +7125,12 @@ class PaymentIntentViewSet(viewsets.GenericViewSet):
         return (
             PaymentIntent.objects.filter(cliente=cliente)
             .select_related('slot_hold', 'policy')
-            .prefetch_related('lines')
+            .prefetch_related(
+                'lines',
+                'payments',
+                'reconciliation_cases',
+                'provider_attempts__provider_events',
+            )
         )
 
     def _serialize(self, intent):
@@ -7176,6 +7196,46 @@ class PaymentIntentViewSet(viewsets.GenericViewSet):
             status.HTTP_201_CREATED if result.created else status.HTTP_200_OK
         )
         return Response(self._serialize(result.intent), status=response_status)
+
+    @action(detail=False, methods=['get'], url_path='options')
+    def options(self, request):
+        command = PaymentIntentOptionsQuerySerializer(
+            data=request.query_params
+        )
+        command.is_valid(raise_exception=True)
+        try:
+            hold = SlotHold.objects.get(
+                public_id=command.validated_data['slot_hold_public_id'],
+                cliente__usuario=request.user,
+            )
+        except SlotHold.DoesNotExist:
+            raise Http404
+        try:
+            result = get_payment_intent_options(
+                hold=hold,
+                actor=request.user,
+            )
+        except PaymentIntentError as exc:
+            return self._error_response(exc)
+        return Response({
+            'slot_hold_public_id': str(result.hold.public_id),
+            'policy_version': result.policy_version,
+            'total_amount': str(result.total_amount),
+            'currency': result.currency,
+            'expires_at': result.expires_at.isoformat(),
+            'modes': [
+                {
+                    'mode': option.mode,
+                    'required_amount': str(option.required_amount),
+                }
+                for option in result.modes
+            ],
+            'existing_intent': (
+                self._serialize(result.existing_intent)
+                if result.existing_intent is not None
+                else None
+            ),
+        })
 
     def retrieve(self, request, *args, **kwargs):
         return Response(self._serialize(self.get_object()))
