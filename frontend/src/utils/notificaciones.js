@@ -1,5 +1,7 @@
+import React from 'react';
 import Swal from 'sweetalert2';
 import toast from 'react-hot-toast';
+import { IconInfo } from '../components/common/Icons';
 
 /**
  * Muestra un diálogo de confirmación personalizado
@@ -77,8 +79,9 @@ export const notify = {
      */
     info: (message, options = {}) => {
         toast((t) => (
-            <div style={{ color: '#817773', fontWeight: 'bold' }}>
-                ℹ️ {message}
+            <div className="inline-flex items-center gap-2" style={{ color: '#817773', fontWeight: 'bold' }}>
+                <IconInfo className="h-4 w-4" />
+                {message}
             </div>
         ), {
             duration: 4000,

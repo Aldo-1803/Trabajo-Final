@@ -1,13 +1,19 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import GenericTableManager from '../../components/admin/GenericTableManager';
+import ConfiguracionGeneral from './ConfiguracionGeneral';
 
 const ConfiguracionAdmin = () => {
     const navigate = useNavigate();
-    const [tabActivo, setTabActivo] = useState('tipoCabello');
+    const [tabActivo, setTabActivo] = useState('configuracionGeneral');
 
     // Definición de todas las tablas configurables con campos específicos
     const tablas = {
+        configuracionGeneral: {
+            nombre: 'Configuración General',
+            component: <ConfiguracionGeneral />,
+            es_component: true
+        },
         tipoCabello: {
             nombre: 'Tipos de Cabello',
             apiUrl: '/api/gestion/tipos-cabello/',
@@ -81,6 +87,16 @@ const ConfiguracionAdmin = () => {
                 { nombre: 'nombre', label: 'Nombre', tipo: 'text' },
                 { nombre: 'descripcion', label: 'Descripción', tipo: 'textarea' }
             ]
+        },
+        categoriaProducto: {
+            nombre: 'Categorías de Productos',
+            apiUrl: '/api/gestion/categorias-productos/',
+            campos: [
+                { nombre: 'id', label: 'ID', tipo: 'hidden' },
+                { nombre: 'nombre', label: 'Nombre', tipo: 'text' },
+                { nombre: 'descripcion', label: 'Descripción', tipo: 'textarea' },
+                { nombre: 'activo', label: 'Activo', tipo: 'boolean' }
+            ]
         }
     };
 
@@ -90,20 +106,23 @@ const ConfiguracionAdmin = () => {
     }));
 
     return (
-        <div className="min-h-screen bg-gray-100">
-            {/* HEADER */}
-            <div className="bg-white shadow-md">
+        <div className="min-h-screen" style={{ backgroundColor: '#F5F5EB' }}>
+            {/* HEADER CON TÍTULO */}
+            <div className="bg-white shadow-md border-b" style={{ borderColor: '#E8DCC4' }}>
                 <div className="max-w-7xl mx-auto px-6 py-6">
                     <div className="flex justify-between items-center">
                         <div>
-                            <h1 className="text-3xl font-bold text-gray-800">Configuración del Sistema</h1>
-                            <p className="text-gray-500 mt-1">Gestiona los parámetros y catálogos del salón</p>
+                            <h1 className="text-3xl font-bold" style={{ color: '#817773' }}>Configuración del Sistema</h1>
+                            <p className="text-xs mt-1 font-medium" style={{ color: '#8B8682' }}>Gestiona parámetros y catálogos</p>
                         </div>
                         <button
                             onClick={() => navigate('/admin-dashboard')}
-                            className="text-gray-500 hover:underline px-4 py-2 border rounded-lg"
+                            className="px-4 py-2 rounded-lg font-bold transition-all duration-200"
+                            style={{ backgroundColor: '#E8DCC4', color: '#817773' }}
+                            onMouseEnter={(e) => e.target.style.backgroundColor = '#D5BDAF'}
+                            onMouseLeave={(e) => e.target.style.backgroundColor = '#E8DCC4'}
                         >
-                            ← Volver
+                            Volver
                         </button>
                     </div>
                 </div>
@@ -111,17 +130,30 @@ const ConfiguracionAdmin = () => {
 
             {/* TABS (PESTAÑAS) */}
             <div className="max-w-7xl mx-auto px-6 py-8">
-                <div className="bg-white shadow-md rounded-t-lg">
-                    <div className="flex overflow-x-auto border-b">
+                <div className="bg-white shadow-md rounded-lg overflow-hidden border" style={{ borderColor: '#E8DCC4' }}>
+                    <div className="flex overflow-x-auto" style={{ borderBottom: '2px solid #E8DCC4' }}>
                         {tabsArray.map((tab) => (
                             <button
                                 key={tab.key}
                                 onClick={() => setTabActivo(tab.key)}
-                                className={`px-6 py-4 font-semibold whitespace-nowrap transition-colors ${
-                                    tabActivo === tab.key
-                                        ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50'
-                                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
-                                }`}
+                                className="px-6 py-4 font-semibold whitespace-nowrap transition-all duration-200 border-b-2 hover:shadow-md"
+                                style={{
+                                    color: tabActivo === tab.key ? '#fff' : '#8B8682',
+                                    borderBottomColor: tabActivo === tab.key ? '#817773' : 'transparent',
+                                    backgroundColor: tabActivo === tab.key ? '#817773' : 'transparent'
+                                }}
+                                onMouseEnter={(e) => {
+                                    if (tabActivo !== tab.key) {
+                                        e.target.style.backgroundColor = '#E8DCC4';
+                                        e.target.style.color = '#817773';
+                                    }
+                                }}
+                                onMouseLeave={(e) => {
+                                    if (tabActivo !== tab.key) {
+                                        e.target.style.backgroundColor = 'transparent';
+                                        e.target.style.color = '#8B8682';
+                                    }
+                                }}
                             >
                                 {tab.nombre}
                             </button>
@@ -130,17 +162,21 @@ const ConfiguracionAdmin = () => {
                 </div>
 
                 {/* CONTENIDO DE LAS TABS */}
-                <div className="bg-gray-100 py-8">
+                <div className="py-8 px-6 bg-white" style={{ backgroundColor: '#fff' }}>
                     {tabsArray.map((tab) => (
                         <div
                             key={tab.key}
                             style={{ display: tabActivo === tab.key ? 'block' : 'none' }}
                         >
-                            <GenericTableManager
-                                apiUrl={tab.apiUrl}
-                                titulo={tab.nombre}
-                                campos={tab.campos}
-                            />
+                            {tab.es_component ? (
+                                tab.component
+                            ) : (
+                                <GenericTableManager
+                                    apiUrl={tab.apiUrl}
+                                    titulo={tab.nombre}
+                                    campos={tab.campos}
+                                />
+                            )}
                         </div>
                     ))}
                 </div>

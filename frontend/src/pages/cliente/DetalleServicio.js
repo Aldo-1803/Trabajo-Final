@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useNavigate, useParams } from 'react-router-dom';
+import { IconCheckCircle, IconFolder } from '../../components/common/Icons';
 
 const DetalleServicio = () => {
   const { servicioId } = useParams();
@@ -80,7 +81,9 @@ const DetalleServicio = () => {
           >
             <h1 className="text-4xl font-bold text-white">{servicio.nombre}</h1>
             {servicio.categoria_nombre && (
-              <p className="mt-2 text-lg" style={{ color: '#E3D5CA' }}>📁 {servicio.categoria_nombre}</p>
+              <p className="mt-2 text-lg inline-flex items-center gap-2" style={{ color: '#E3D5CA' }}>
+                <IconFolder className="h-5 w-5" /> {servicio.categoria_nombre}
+              </p>
             )}
           </div>
 
@@ -123,8 +126,14 @@ const DetalleServicio = () => {
               {/* ESTADO */}
               <div className="p-6 rounded-lg border-l-4" style={{ backgroundColor: '#E8F0F5', borderColor: '#AB9A91' }}>
                 <p className="text-sm font-bold mb-2" style={{ color: '#8B8682' }}>Estado</p>
-                <p className="text-lg font-bold" style={{ color: '#817773' }}>
-                  {servicio.activo ? '✓ Disponible' : 'No disponible'}
+                <p className="text-lg font-bold inline-flex items-center gap-2" style={{ color: '#817773' }}>
+                  {servicio.activo ? (
+                    <>
+                      <IconCheckCircle className="h-5 w-5" /> Disponible
+                    </>
+                  ) : (
+                    'No disponible'
+                  )}
                 </p>
               </div>
             </div>
@@ -170,7 +179,9 @@ const DetalleServicio = () => {
             {/* BOTONES DE ACCIÓN */}
             <div className="mt-8 flex gap-4">
               <button
-                onClick={() => navigate('/agendar-turno')}
+                onClick={() => navigate('/reservar', {
+                  state: { servicioPreseleccionado: servicio.id }
+                })}
                 className="flex-1 py-3 rounded-lg font-bold text-white transition"
                 style={{ backgroundColor: '#AB9A91' }}
                 onMouseEnter={(e) => e.target.style.backgroundColor = '#817773'}

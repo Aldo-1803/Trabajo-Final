@@ -13,6 +13,20 @@ const GestionarReglas = () => {
     const [estados, setEstados] = useState([]);
     const [rutinas, setRutinas] = useState([]);
     const [servicios, setServicios] = useState([]);
+    const [configDiag, setConfigDiag] = useState(null);
+    const [configForm, setConfigForm] = useState({
+        umbral_critico: 2,
+        umbral_alerta: 6,
+        mensaje_critico: '',
+        mensaje_alerta: '',
+        mensaje_saludable: '',
+        rutina_critico: '',
+        rutina_alerta: '',
+        rutina_saludable: '',
+        servicio_critico: '',
+        servicio_alerta: '',
+        servicio_saludable: ''
+    });
 
     const [loading, setLoading] = useState(true);
     const [showForm, setShowForm] = useState(false);
@@ -44,7 +58,7 @@ const GestionarReglas = () => {
             const token = localStorage.getItem('access_token');
             const config = { headers: { 'Authorization': `Bearer ${token}` } };
 
-            const [reglasRes, tiposRes, grosRes, poroRes, cueroRes, estRes, rutRes, servRes] = await Promise.all([
+            const results = await Promise.allSettled([
                 axios.get('http://127.0.0.1:8000/api/gestion/reglas-diagnostico/', config),
                 axios.get('http://127.0.0.1:8000/api/gestion/tipos-cabello/', config),
                 axios.get('http://127.0.0.1:8000/api/gestion/grosores-cabello/', config),
@@ -52,20 +66,52 @@ const GestionarReglas = () => {
                 axios.get('http://127.0.0.1:8000/api/gestion/cueros-cabelludos/', config),
                 axios.get('http://127.0.0.1:8000/api/gestion/estados-generales/', config),
                 axios.get('http://127.0.0.1:8000/api/gestion/rutinas/', config),
-                axios.get('http://127.0.0.1:8000/api/gestion/servicios/', config)
+                axios.get('http://127.0.0.1:8000/api/gestion/servicios/', config),
+                axios.get('http://127.0.0.1:8000/api/gestion/configuracion-diagnostico/', config)
             ]);
 
             // Función auxiliar para arrays seguros
             const getSafeArray = (res) => Array.isArray(res.data) ? res.data : (res.data.results || []);
 
-            setReglas(getSafeArray(reglasRes));
-            setTipos(getSafeArray(tiposRes));
-            setGrosores(getSafeArray(grosRes));
-            setPorosidades(getSafeArray(poroRes));
-            setCueros(getSafeArray(cueroRes));
-            setEstados(getSafeArray(estRes));
-            setRutinas(getSafeArray(rutRes));
-            setServicios(getSafeArray(servRes));
+            const getData = (idx) => (results[idx].status === 'fulfilled' ? results[idx].value : null);
+
+            const reglasRes = getData(0);
+            const tiposRes = getData(1);
+            const grosRes = getData(2);
+            const poroRes = getData(3);
+            const cueroRes = getData(4);
+            const estRes = getData(5);
+            const rutRes = getData(6);
+            const servRes = getData(7);
+            const configRes = getData(8);
+
+            if (reglasRes) setReglas(getSafeArray(reglasRes));
+            if (tiposRes) setTipos(getSafeArray(tiposRes));
+            if (grosRes) setGrosores(getSafeArray(grosRes));
+            if (poroRes) setPorosidades(getSafeArray(poroRes));
+            if (cueroRes) setCueros(getSafeArray(cueroRes));
+            if (estRes) setEstados(getSafeArray(estRes));
+            if (rutRes) setRutinas(getSafeArray(rutRes));
+            if (servRes) setServicios(getSafeArray(servRes));
+
+            const configArr = configRes ? getSafeArray(configRes) : [];
+            const configItem = configArr[0] || null;
+            setConfigDiag(configItem);
+            if (configItem) {
+                setConfigForm({
+                    umbral_critico: configItem.umbral_critico ?? 2,
+                    umbral_alerta: configItem.umbral_alerta ?? 6,
+                    mensaje_critico: configItem.mensaje_critico || '',
+                    mensaje_alerta: configItem.mensaje_alerta || '',
+                    mensaje_saludable: configItem.mensaje_saludable || '',
+                    rutina_critico: configItem.rutina_critico || '',
+                    rutina_alerta: configItem.rutina_alerta || '',
+                    rutina_saludable: configItem.rutina_saludable || '',
+                    servicio_critico: configItem.servicio_critico || '',
+                    servicio_alerta: configItem.servicio_alerta || '',
+                    servicio_saludable: configItem.servicio_saludable || ''
+                });
+            }
             
             setLoading(false);
         } catch (error) {
@@ -105,6 +151,31 @@ const GestionarReglas = () => {
         } catch (error) {
             console.error(error);
             alert("Error al guardar la regla.");
+        }
+    };
+
+    const handleSaveConfig = async (e) => {
+        e.preventDefault();
+        try {
+            const token = localStorage.getItem('access_token');
+            const payload = { ...configForm };
+            Object.keys(payload).forEach(key => {
+                if (payload[key] === '') payload[key] = null;
+            });
+
+            if (configDiag && configDiag.id) {
+                await axios.put(
+                    `http://127.0.0.1:8000/api/gestion/configuracion-diagnostico/${configDiag.id}/`,
+                    payload,
+                    { headers: { 'Authorization': `Bearer ${token}` } }
+                );
+            }
+
+            cargarDatos();
+            alert('Configuración de diagnóstico guardada.');
+        } catch (error) {
+            console.error(error);
+            alert('Error al guardar la configuración del diagnóstico.');
         }
     };
 
@@ -156,7 +227,7 @@ const GestionarReglas = () => {
     if (loading) return <div className="p-10 text-center">Cargando Motor de Reglas...</div>;
 
     return (
-        <div className="p-8 bg-gray-50 min-h-screen">
+        <div className="p-8 min-h-screen" style={{ backgroundColor: '#F5F5EB' }}>
             <div className="max-w-7xl mx-auto">
                 <div className="flex justify-between items-center mb-8">
                     <div>
@@ -171,6 +242,133 @@ const GestionarReglas = () => {
                             + Nueva Regla
                         </button>
                     )}
+                </div>
+
+                <div className="bg-white p-8 rounded-xl shadow-lg border border-gray-200 mb-8">
+                    <h2 className="text-xl font-bold text-gray-800 mb-6 border-b pb-2">Configuración Nivel 2 (Matriz)</h2>
+                    <form onSubmit={handleSaveConfig}>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div>
+                                <label className="block text-xs font-bold text-gray-600 mb-1">Umbral Crítico (&lt;=)</label>
+                                <input
+                                    type="number"
+                                    className="w-full border p-2 rounded"
+                                    value={configForm.umbral_critico}
+                                    onChange={e => setConfigForm({ ...configForm, umbral_critico: e.target.value })}
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-gray-600 mb-1">Umbral Alerta (&lt;=)</label>
+                                <input
+                                    type="number"
+                                    className="w-full border p-2 rounded"
+                                    value={configForm.umbral_alerta}
+                                    onChange={e => setConfigForm({ ...configForm, umbral_alerta: e.target.value })}
+                                />
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4">
+                            <div>
+                                <label className="block text-xs font-bold text-gray-600 mb-1">Rutina Crítico</label>
+                                <select
+                                    className="w-full border p-2 rounded"
+                                    value={configForm.rutina_critico}
+                                    onChange={e => setConfigForm({ ...configForm, rutina_critico: e.target.value })}
+                                >
+                                    <option value="">-- Sin rutina --</option>
+                                    {rutinas.map(r => <option key={r.id} value={r.id}>{r.nombre}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-gray-600 mb-1">Servicio Crítico</label>
+                                <select
+                                    className="w-full border p-2 rounded"
+                                    value={configForm.servicio_critico}
+                                    onChange={e => setConfigForm({ ...configForm, servicio_critico: e.target.value })}
+                                >
+                                    <option value="">-- Sin servicio --</option>
+                                    {servicios.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-gray-600 mb-1">Rutina Alerta</label>
+                                <select
+                                    className="w-full border p-2 rounded"
+                                    value={configForm.rutina_alerta}
+                                    onChange={e => setConfigForm({ ...configForm, rutina_alerta: e.target.value })}
+                                >
+                                    <option value="">-- Sin rutina --</option>
+                                    {rutinas.map(r => <option key={r.id} value={r.id}>{r.nombre}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-gray-600 mb-1">Servicio Alerta</label>
+                                <select
+                                    className="w-full border p-2 rounded"
+                                    value={configForm.servicio_alerta}
+                                    onChange={e => setConfigForm({ ...configForm, servicio_alerta: e.target.value })}
+                                >
+                                    <option value="">-- Sin servicio --</option>
+                                    {servicios.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-gray-600 mb-1">Rutina Saludable</label>
+                                <select
+                                    className="w-full border p-2 rounded"
+                                    value={configForm.rutina_saludable}
+                                    onChange={e => setConfigForm({ ...configForm, rutina_saludable: e.target.value })}
+                                >
+                                    <option value="">-- Sin rutina --</option>
+                                    {rutinas.map(r => <option key={r.id} value={r.id}>{r.nombre}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-gray-600 mb-1">Servicio Saludable</label>
+                                <select
+                                    className="w-full border p-2 rounded"
+                                    value={configForm.servicio_saludable}
+                                    onChange={e => setConfigForm({ ...configForm, servicio_saludable: e.target.value })}
+                                >
+                                    <option value="">-- Sin servicio --</option>
+                                    {servicios.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+                                </select>
+                            </div>
+                        </div>
+
+                        <div className="mt-4">
+                            <label className="block text-xs font-bold text-gray-600 mb-1">Mensaje Crítico</label>
+                            <textarea
+                                className="w-full border p-2 rounded h-20"
+                                value={configForm.mensaje_critico}
+                                onChange={e => setConfigForm({ ...configForm, mensaje_critico: e.target.value })}
+                                placeholder="Usa {score} y {servicio} si quieres."
+                            />
+                        </div>
+                        <div className="mt-2">
+                            <label className="block text-xs font-bold text-gray-600 mb-1">Mensaje Alerta</label>
+                            <textarea
+                                className="w-full border p-2 rounded h-20"
+                                value={configForm.mensaje_alerta}
+                                onChange={e => setConfigForm({ ...configForm, mensaje_alerta: e.target.value })}
+                                placeholder="Usa {score} y {servicio} si quieres."
+                            />
+                        </div>
+                        <div className="mt-2">
+                            <label className="block text-xs font-bold text-gray-600 mb-1">Mensaje Saludable</label>
+                            <textarea
+                                className="w-full border p-2 rounded h-20"
+                                value={configForm.mensaje_saludable}
+                                onChange={e => setConfigForm({ ...configForm, mensaje_saludable: e.target.value })}
+                                placeholder="Usa {score} y {servicio} si quieres."
+                            />
+                        </div>
+
+                        <div className="flex justify-end gap-3 mt-4">
+                            <button type="submit" className="px-6 py-2 bg-purple-700 text-white rounded font-bold shadow hover:bg-purple-800">Guardar Configuración</button>
+                        </div>
+                    </form>
                 </div>
 
                 {showForm ? (

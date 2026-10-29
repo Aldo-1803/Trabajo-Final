@@ -1,0 +1,107 @@
+@startuml
+title UC-32 Gestionar Productos (DSS)
+
+actor Profesional
+participant ":Sistema"
+
+'==================== PRECONDICIÓN ====================
+note over Profesional,":Sistema"
+Precondición: usuario con rol Profesional ha iniciado sesión.
+Objetivo: crear, editar o eliminar productos del catálogo.
+IRQ: Productos.
+end note
+
+'==================== SECUENCIA NORMAL =================
+Profesional -> ":Sistema": navegarGestionProductos()
+":Sistema" --> Profesional: mostrarListaProductos(productos[])
+
+Profesional -> ":Sistema": seleccionarAccion(accion)  ' "Crear", "Editar", "Eliminar"
+
+alt acción == "CREAR"
+  ":Sistema" --> Profesional: mostrarFormularioCreacion()\ncampos = nombre, descripcion, precio, stock, marca, SKU, etc.
+  
+  Profesional -> ":Sistema": completarFormulario(datosProducto)\nguardarCambios()
+  activate ":Sistema"
+  ":Sistema" -> ":Sistema": validarDatos(datosProducto)
+  
+  alt datos válidos
+    ":Sistema" -> ":Sistema": crearProducto(datosProducto)
+    ":Sistema" --> Profesional: confirmarCreacionExitosa(productoId)
+    deactivate ":Sistema"
+  
+  else errores de validación
+    ":Sistema" --> Profesional: mostrarErroresValidacion(errores[])\nno guardar cambios
+    deactivate ":Sistema"
+  end
+
+else acción == "EDITAR"
+  Profesional -> ":Sistema": seleccionarProducto(productoId)
+  ":Sistema" --> Profesional: cargarDatosFormulario(producto)
+  
+  Profesional -> ":Sistema": modificarInformacion(datosModificados)\nguardarCambios()
+  activate ":Sistema"
+  ":Sistema" -> ":Sistema": validarDatos(datosModificados)
+  
+  alt datos válidos
+    ":Sistema" -> ":Sistema": actualizarProducto(productoId, datosModificados)
+    ":Sistema" --> Profesional: confirmarActualizacionExitosa()
+    deactivate ":Sistema"
+  
+  else errores de validación
+    ":Sistema" --> Profesional: mostrarErroresValidacion(errores[])\nno guardar cambios
+    deactivate ":Sistema"
+  end
+
+else acción == "ELIMINAR"
+  Profesional -> ":Sistema": seleccionarProducto(productoId)
+  ":Sistema" --> Profesional: solicitarConfirmacion()\nmensaje = "¿Seguro que desea eliminar este producto?"
+  
+  Profesional -> ":Sistema": confirmarEliminacion()
+  activate ":Sistema"
+  ":Sistema" -> ":Sistema": eliminarProducto(productoId)
+  ":Sistema" --> Profesional: confirmarEliminacionExitosa()
+  deactivate ":Sistema"
+end
+
+'==================== VALIDACIONES ====================
+note right of ":Sistema"
+**Validaciones recomendadas:**
+- Nombre: no vacío, único
+- Precio: > 0
+- Stock: >= 0
+- SKU: único, formato válido
+- Marca: no vacía
+- Descripción: max 500 caracteres
+- Imagen: formato válido (jpg, png)
+end note
+
+'==================== POSTCONDICIÓN ====================
+note over Profesional,":Sistema"
+Postcondición (flujo exitoso):
+- Nuevo producto creado, o
+- Producto existente modificado, o
+- Producto eliminado del catálogo.
+- Profesional notificado del resultado de la operación.
+end note
+
+'==================== RENDIMIENTO ======================
+note right of ":Sistema"
+Rendimiento (paso 6):
+Operación de guardado <= 500 ms.
+end note
+
+'==================== COMENTARIOS ======================
+note over ":Sistema"
+Tecnología:
+- Backend Django con DRF (Django Rest Framework).
+- Persistencia en PostgreSQL.
+- Modelo Producto con campos:
+  * id, sku, nombre, marca, descripcion
+  * precio, stock_actual
+  * compatibilidades (relación con servicios/rutinas)
+  * estado_publicacion (publicado, oculto)
+  * imagen_url
+- CRUD completo en un solo UC.
+- Frecuencia: baja-media (tarea administrativa).
+end note
+@enduml

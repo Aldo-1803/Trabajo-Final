@@ -1,11 +1,17 @@
 from django.contrib import admin
+from django.utils.html import format_html
 from .models import (
     TipoCabello, GrosorCabello, PorosidadCabello, CueroCabelludo, EstadoGeneral,
     CategoriaServicio, Servicio, ReglaDiagnostico, Rutina, RutinaCliente,
     Notificacion, Configuracion, Personal, HorarioLaboral, BloqueoAgenda, DiasSemana, Equipamiento,
-    TipoEquipamiento, RequisitoServicio, FichaTecnica, DiagnosticoCapilar
+    TipoEquipamiento, RequisitoServicio, FichaTecnica, DiagnosticoCapilar,
+    ContenidoEducativo, MeGusta, ContenidoGuardado, Auditoria, Producto, ImagenProducto,
+    CategoriaProducto, Promocion,
+    CompromisoStock, MovimientoStock,
+    OrdenPendiente
     #PasoRutinaCliente, #PasoRutina,
 )
+from usuarios.roles import BusinessPermission
 
 # ----------------------------------------------------
 # 1. CLASE ADMIN PERSONALIZADA (Para Mantenibilidad)
@@ -278,10 +284,14 @@ class ConfiguracionAdmin(admin.ModelAdmin):
     """
     Controla que solo exista una configuración en el sistema.
     """
-    list_display = ('__str__', 'monto_sena', 'max_dias_anticipacion')
+    list_display = ('__str__', 'monto_sena', 'max_dias_anticipacion', 'whatsapp_numero')
     fieldsets = (
         ('Reglas Generales', {
-            'fields': ('intervalo_turnos', 'max_dias_anticipacion')
+            'fields': (
+                'intervalo_turnos',
+                'max_dias_anticipacion',
+                'slot_hold_ttl_minutes',
+            )
         }),
         ('Política de Señas y Pagos', {
             'fields': ('monto_sena', 'tiempo_limite_pago_sena'),
@@ -290,6 +300,16 @@ class ConfiguracionAdmin(admin.ModelAdmin):
         ('Cancelaciones y Reprogramaciones', {
             'fields': ('max_reprogramaciones', 'horas_limite_cancelacion'),
             'description': 'Reglas para evitar huecos en la agenda a último momento.'
+        }),
+        ('Contacto - WhatsApp para Pedidos', {
+            'fields': ('whatsapp_numero',),
+            'description': 'Número de WhatsApp donde llegan los pedidos de clientes. Formato: 549112233445 (con código de país, sin espacios ni símbolos).',
+            'classes': ('collapse',)
+        }),
+        ('Formato del Mensaje de WhatsApp', {
+            'fields': ('whatsapp_saludo', 'whatsapp_formato_producto', 'whatsapp_cierre'),
+            'description': 'Personaliza cómo se ven los mensajes que llegan a WhatsApp. Variables disponibles: {nombre}, {cantidad}, {precio}, {subtotal}, {total}',
+            'classes': ('collapse',)
         }),
     )
 
@@ -319,6 +339,11 @@ class PersonalAdmin(admin.ModelAdmin):
     list_display = ('nombre', 'apellido', 'rol', 'activo', 'skills_resumen')
     list_filter = ('rol', 'activo')
     search_fields = ('nombre', 'apellido', 'email')
+    readonly_fields = (
+        'realiza_diagnostico',
+        'realiza_color',
+        'realiza_lavado',
+    )
     
     # Aquí incrustamos los horarios dentro del personal
     inlines = [HorarioLaboralInline]
@@ -332,7 +357,10 @@ class PersonalAdmin(admin.ModelAdmin):
         }),
         ('Habilidades Técnicas', {
             'fields': ('realiza_diagnostico', 'realiza_color', 'realiza_lavado'),
-            'description': 'Define qué tipos de turno puede atender esta persona.'
+            'description': (
+                'Flags legacy de sólo lectura. La autoridad operativa está '
+                'en PersonalHabilidad.'
+            )
         }),
     )
 
@@ -448,3 +476,623 @@ class DiagnosticoCapilarAdmin(admin.ModelAdmin):
         }),
     )
     ordering = ('-fecha_diagnostico',)
+
+
+# ============================================
+# ADMIN PARA CONTENIDO EDUCATIVO
+# ============================================
+@admin.register(ContenidoEducativo)
+class ContenidoEducativoAdmin(admin.ModelAdmin):
+    """
+    Admin mejorado para gestionar contenido educativo.
+    Permite edición rápida de estado y visualización clara de métricas.
+    """
+    # Qué columnas se ven en la lista principal
+    list_display = ('titulo', 'autor', 'tipo_badge', 'estado', 'fecha_publicacion', 'get_likes', 'get_guardados')
+    
+    # Filtros laterales para encontrar rápido lo que busca
+    list_filter = ('estado', 'tipo', 'autor', 'fecha_publicacion')
+    
+    # Buscador por título, etiquetas o descripción
+    search_fields = ('titulo', 'tags', 'descripcion')
+    
+    # Para que pueda editar el estado rápido sin entrar al post
+    list_editable = ('estado',)
+    
+    # Orden cronológico inverso (lo más nuevo arriba)
+    date_hierarchy = 'fecha_publicacion'
+    
+    # Campos de solo lectura
+    readonly_fields = ('fecha_publicacion', 'fecha_actualizacion', 'total_likes', 'total_guardados')
+    
+    # Organizar el formulario de edición
+    fieldsets = (
+        ('Información Principal', {
+            'fields': ('titulo', 'descripcion', 'tipo', 'autor')
+        }),
+        ('Contenido y Etiquetas', {
+            'fields': ('contenido', 'imagen', 'tags'),
+            'classes': ('wide',)
+        }),
+        ('Publicación y Estado', {
+            'fields': ('estado', 'fecha_publicacion', 'fecha_actualizacion')
+        }),
+        ('Métricas (Solo Lectura)', {
+            'fields': ('total_likes', 'total_guardados'),
+            'classes': ('collapse',)
+        }),
+    )
+
+    def tipo_badge(self, obj):
+        """Muestra el tipo con badge de color"""
+        colores = {
+            'articulo': '#3498db',      # Azul
+            'video': '#e74c3c',          # Rojo
+            'tutorial': '#2ecc71',       # Verde
+            'consejo': '#f39c12',        # Naranja
+        }
+        color = colores.get(obj.tipo, '#95a5a6')  # Gris por defecto
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 3px 8px; border-radius: 3px; font-size: 11px;">{}</span>',
+            color,
+            obj.get_tipo_display()
+        )
+    tipo_badge.short_description = 'Tipo'
+
+    def get_likes(self, obj):
+        """Muestra la cantidad de likes con emoji"""
+        return format_html('❤️ <strong>{}</strong>', obj.total_likes)
+    get_likes.short_description = 'Likes'
+
+    def get_guardados(self, obj):
+        """Muestra la cantidad de guardados con emoji"""
+        return format_html('💾 <strong>{}</strong>', obj.total_guardados)
+    get_guardados.short_description = 'Guardados'
+
+
+@admin.register(MeGusta)
+class MeGustaAdmin(admin.ModelAdmin):
+    """
+    Admin para visualizar todas las reacciones "Me Gusta".
+    Los likes se crean automáticamente, no deberían editarse manualmente.
+    """
+    list_display = ('cliente', 'contenido', 'fecha_badge')
+    list_filter = ('fecha',)
+    search_fields = ('cliente__usuario__email', 'contenido__titulo')
+    readonly_fields = ('cliente', 'contenido', 'fecha')
+    ordering = ('-fecha',)
+    
+    def fecha_badge(self, obj):
+        """Muestra la fecha formateada"""
+        return obj.fecha.strftime('%d/%m/%Y %H:%M')
+    fecha_badge.short_description = 'Fecha'
+    
+    def has_add_permission(self, request):
+        """Los likes se crean automáticamente desde el frontend"""
+        return False
+    
+    def has_delete_permission(self, request, obj=None):
+        """No se pueden eliminar likes manualmente (auditoría)"""
+        return False
+
+
+@admin.register(ContenidoGuardado)
+class ContenidoGuardadoAdmin(admin.ModelAdmin):
+    """
+    Admin para ver qué contenido han guardado los clientes.
+    Los guardados se crean automáticamente, no deberían editarse manualmente.
+    """
+    list_display = ('cliente', 'contenido', 'fecha_badge')
+    list_filter = ('fecha',)
+    search_fields = ('cliente__usuario__email', 'contenido__titulo')
+    readonly_fields = ('cliente', 'contenido', 'fecha')
+    ordering = ('-fecha',)
+    
+    def fecha_badge(self, obj):
+        """Muestra la fecha formateada"""
+        return obj.fecha.strftime('%d/%m/%Y %H:%M')
+    fecha_badge.short_description = 'Fecha'
+    
+    def has_add_permission(self, request):
+        """Los guardados se crean automáticamente desde el frontend"""
+        return False
+    
+    def has_delete_permission(self, request, obj=None):
+        """No se pueden eliminar guardados manualmente (auditoría)"""
+        return False
+
+# ============================================================
+# AUDITORÍA - Log de cambios en el sistema
+# ============================================================
+
+@admin.register(Auditoria)
+class AuditoriaAdmin(admin.ModelAdmin):
+    """
+    Panel de auditoría para ver todos los cambios realizados en el sistema.
+    Registra ALTA, MODIFICACION y BAJA de registros.
+    """
+    list_display = (
+        'accion_badge', 
+        'tabla', 
+        'registro_id', 
+        'usuario_badge',
+        'fecha_hora_badge',
+        'cambios_detectados'
+    )
+    list_filter = (
+        'accion',
+        'tabla',
+        'fecha_hora',
+        'usuario'
+    )
+    search_fields = (
+        'tabla',
+        'usuario__first_name',
+        'usuario__last_name',
+        'usuario__email',
+        'ip_address'
+    )
+    readonly_fields = (
+        'tabla',
+        'registro_id',
+        'usuario',
+        'fecha_hora',
+        'accion',
+        'valor_anterior_display',
+        'valor_nuevo_display',
+        'cambios_detectados_detail',
+        'ip_address'
+    )
+    ordering = ('-fecha_hora',)
+    
+    fieldsets = (
+        ('Información de la Acción', {
+            'fields': ('accion_badge_detail', 'tabla', 'registro_id', 'usuario_badge_detail', 'fecha_hora')
+        }),
+        ('Ubicación', {
+            'fields': ('ip_address',),
+            'classes': ('collapse',)
+        }),
+        ('Cambios Realizados', {
+            'fields': ('cambios_detectados_detail', 'valor_anterior_display', 'valor_nuevo_display'),
+            'classes': ('wide',)
+        }),
+    )
+    
+    def accion_badge(self, obj):
+        """Muestra la acción con color según el tipo"""
+        colores = {
+            'ALTA': '#28a745',  # Verde
+            'MODIFICACION': '#ffc107',  # Amarillo
+            'BAJA': '#dc3545',  # Rojo
+        }
+        color = colores.get(obj.accion, '#6c757d')
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 5px 10px; border-radius: 3px; font-weight: bold;">{}</span>',
+            color,
+            obj.accion
+        )
+    accion_badge.short_description = 'Acción'
+    
+    def accion_badge_detail(self, obj):
+        """Para usar en detail view"""
+        return self.accion_badge(obj)
+    accion_badge_detail.short_description = 'Acción'
+    
+    def usuario_badge(self, obj):
+        """Muestra el usuario que realizó la acción"""
+        if obj.usuario:
+            return f"{obj.usuario.get_full_name()} ({obj.usuario.email})"
+        return "Sistema/Anónimo"
+    usuario_badge.short_description = 'Usuario'
+    
+    def usuario_badge_detail(self, obj):
+        """Para usar en detail view"""
+        if obj.usuario:
+            return format_html(
+                '<strong>{}</strong><br/><small>{}</small>',
+                obj.usuario.get_full_name(),
+                obj.usuario.email
+            )
+        return "Sistema/Anónimo"
+    usuario_badge_detail.short_description = 'Usuario'
+    
+    def fecha_hora_badge(self, obj):
+        """Muestra la fecha y hora formateada"""
+        return obj.fecha_hora.strftime('%d/%m/%Y %H:%M:%S')
+    fecha_hora_badge.short_description = 'Fecha y Hora'
+    
+    def cambios_detectados(self, obj):
+        """Muestra un resumen de los cambios en la lista"""
+        diferencias = obj.obtener_diferencias()
+        
+        if not diferencias:
+            return "—"
+        
+        if obj.accion == 'MODIFICACION':
+            campos = list(diferencias.keys())
+            resumen = ", ".join(campos[:3])  # Mostrar primeros 3 campos
+            if len(campos) > 3:
+                resumen += f" (+{len(campos) - 3} más)"
+            return format_html(
+                '<small style="color: #666;">{}</small>',
+                resumen
+            )
+        
+        if obj.accion == 'ALTA':
+            cantidad = len(diferencias.get('valores', {}))
+            return format_html(
+                '<small style="color: #28a745;"><strong>+{} campos</strong></small>',
+                cantidad
+            )
+        
+        if obj.accion == 'BAJA':
+            cantidad = len(diferencias.get('valores', {}))
+            return format_html(
+                '<small style="color: #dc3545;"><strong>-{} campos</strong></small>',
+                cantidad
+            )
+        
+        return "—"
+    cambios_detectados.short_description = 'Cambios'
+    
+    def cambios_detectados_detail(self, obj):
+        """Detalle completo de cambios para el detail view"""
+        diferencias = obj.obtener_diferencias()
+        
+        if not diferencias:
+            return "Sin cambios detectados"
+        
+        if obj.accion == 'MODIFICACION':
+            html = '<table style="width: 100%; border-collapse: collapse;">'
+            html += '<tr style="background-color: #f5f5f5;"><th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Campo</th><th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Antes</th><th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Ahora</th></tr>'
+            
+            for campo, cambio in diferencias.items():
+                html += f'<tr>'
+                html += f'<td style="border: 1px solid #ddd; padding: 8px;"><strong>{campo}</strong></td>'
+                html += f'<td style="border: 1px solid #ddd; padding: 8px; background-color: #ffe8e8;"><code>{cambio["antes"]}</code></td>'
+                html += f'<td style="border: 1px solid #ddd; padding: 8px; background-color: #e8f5e9;"><code>{cambio["ahora"]}</code></td>'
+                html += f'</tr>'
+            
+            html += '</table>'
+            return format_html(html)
+        
+        return format_html('<small>N/A</small>')
+    cambios_detectados_detail.short_description = 'Cambios Detectados'
+    
+    def valor_anterior_display(self, obj):
+        """Muestra los valores anteriores en formato legible"""
+        import json
+        if obj.valor_anterior:
+            return format_html(
+                '<pre style="background-color: #ffe8e8; padding: 10px; border-radius: 5px; overflow-x: auto; border-left: 4px solid #dc3545;">{}</pre>',
+                json.dumps(obj.valor_anterior, ensure_ascii=False, indent=2)
+            )
+        return "N/A"
+    valor_anterior_display.short_description = 'Todos los Valores Anteriores'
+    
+    def valor_nuevo_display(self, obj):
+        """Muestra los valores nuevos en formato legible"""
+        import json
+        if obj.valor_nuevo:
+            return format_html(
+                '<pre style="background-color: #e8f5e9; padding: 10px; border-radius: 5px; overflow-x: auto; border-left: 4px solid #28a745;">{}</pre>',
+                json.dumps(obj.valor_nuevo, ensure_ascii=False, indent=2)
+            )
+        return "N/A"
+    valor_nuevo_display.short_description = 'Todos los Valores Nuevos'
+    
+    def has_add_permission(self, request):
+        """No se pueden crear auditorías manualmente"""
+        return False
+    
+    def has_delete_permission(self, request, obj=None):
+        """No se pueden eliminar registros de auditoría (son inmutables)"""
+        return False
+    
+    def has_change_permission(self, request, obj=None):
+        """No se pueden modificar registros de auditoría"""
+        return False
+
+
+# ============================================================
+# PRODUCTO E IMAGEN DE PRODUCTO
+# ============================================================
+
+class ImagenProductoInline(admin.TabularInline):
+    """
+    Inline para manejar múltiples imágenes de un producto
+    """
+    model = ImagenProducto
+    extra = 1
+    fields = ('imagen', 'orden', 'fecha_creacion')
+    readonly_fields = ('fecha_creacion',)
+
+    def has_view_or_change_permission(self, request, obj=None):
+        return request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+
+    def has_add_permission(self, request, obj=None):
+        return request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+
+    def has_delete_permission(self, request, obj=None):
+        return request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+
+
+@admin.register(Producto)
+class ProductoAdmin(admin.ModelAdmin):
+    """
+    Panel de administración para productos
+    """
+    list_display = ('sku', 'nombre', 'marca', 'categoria', 'precio', 'activo')
+    list_filter = ('activo', 'categoria', 'marca')
+    search_fields = ('sku', 'nombre', 'marca', 'descripcion')
+    inlines = [ImagenProductoInline]
+    inventory_fields = (
+        'stock_real', 'stock_comprometido', 'stock_disponible', 'stock_minimo'
+    )
+    metadata_fields = (
+        'sku', 'nombre', 'marca', 'categoria', 'descripcion', 'imagen',
+        'compatibilidad', 'estado_publicacion', 'activo',
+    )
+
+    def get_list_display(self, request):
+        fields = list(super().get_list_display(request))
+        if request.user.has_perm(BusinessPermission.VIEW_STOCK):
+            fields[5:5] = ['stock_real', 'stock_disponible']
+        return tuple(fields)
+
+    def get_readonly_fields(self, request, obj=None):
+        fields = list(self.inventory_fields)
+        if not request.user.has_perm(BusinessPermission.MANAGE_PRICES):
+            fields.append('precio')
+        if not request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS):
+            fields.extend(self.metadata_fields)
+        return tuple(fields)
+
+    def get_fieldsets(self, request, obj=None):
+        price_stock_fields = ['precio']
+        if request.user.has_perm(BusinessPermission.VIEW_STOCK):
+            price_stock_fields.extend(self.inventory_fields)
+        return (
+            ('Información General', {
+                'fields': ('sku', 'nombre', 'marca', 'categoria', 'descripcion')
+            }),
+            ('Precio e inventario', {
+                'fields': tuple(price_stock_fields),
+                'description': (
+                    'El inventario es de sólo lectura y cambia únicamente '
+                    'mediante los commands semánticos de stock.'
+                ),
+            }),
+            ('Imágenes', {'fields': ('imagen',)}),
+            ('Detalles Técnicos', {
+                'fields': ('compatibilidad',),
+                'classes': ('collapse',),
+            }),
+            ('Publicación', {'fields': ('estado_publicacion', 'activo')}),
+        )
+
+    def get_inline_instances(self, request, obj=None):
+        if not request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS):
+            return []
+        return super().get_inline_instances(request, obj)
+
+    def has_module_permission(self, request):
+        return any(request.user.has_perm(permission) for permission in (
+            BusinessPermission.MANAGE_PRODUCTS,
+            BusinessPermission.MANAGE_PRICES,
+            BusinessPermission.VIEW_STOCK,
+        ))
+
+    def has_view_permission(self, request, obj=None):
+        return self.has_module_permission(request)
+
+    def has_add_permission(self, request):
+        return bool(
+            request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+            and request.user.has_perm(BusinessPermission.MANAGE_PRICES)
+        )
+
+    def has_change_permission(self, request, obj=None):
+        return bool(
+            request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+            or request.user.has_perm(BusinessPermission.MANAGE_PRICES)
+        )
+
+    def has_delete_permission(self, request, obj=None):
+        return request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+    
+    def stock_disponible(self, obj):
+        return obj.stock_disponible
+    stock_disponible.short_description = "Stock Disponible"
+
+
+@admin.register(MovimientoStock)
+class MovimientoStockAdmin(admin.ModelAdmin):
+    list_display = (
+        'id',
+        'producto',
+        'tipo',
+        'delta',
+        'stock_before',
+        'stock_after',
+        'actor_kind',
+        'created_at',
+    )
+    list_filter = ('tipo', 'actor_kind', 'created_at')
+    search_fields = (
+        'producto__sku',
+        'producto__nombre',
+        'reason_code',
+        'reference_type',
+        'reference_id',
+    )
+    ordering = ('-created_at', '-pk')
+
+    def get_readonly_fields(self, request, obj=None):
+        return tuple(field.name for field in self.model._meta.fields)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(CompromisoStock)
+class CompromisoStockAdmin(admin.ModelAdmin):
+    list_display = (
+        'id',
+        'orden',
+        'producto',
+        'cantidad',
+        'estado',
+        'created_at',
+        'consumed_at',
+        'released_at',
+    )
+    list_filter = ('estado', 'created_at')
+    search_fields = (
+        'orden__codigo',
+        'producto__sku',
+        'producto__nombre',
+        'reason_code',
+    )
+    ordering = ('-created_at', '-pk')
+
+    def get_readonly_fields(self, request, obj=None):
+        return tuple(field.name for field in self.model._meta.fields)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ImagenProducto)
+class ImagenProductoAdmin(admin.ModelAdmin):
+    """
+    Panel de administración para imágenes de productos
+    """
+    list_display = ('producto', 'imagen', 'orden')
+    list_filter = ('producto',)
+    search_fields = ('producto__nombre', 'producto__sku')
+    ordering = ('producto', 'orden')
+
+    def has_module_permission(self, request):
+        return request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+
+    def has_view_permission(self, request, obj=None):
+        return self.has_module_permission(request)
+
+    def has_add_permission(self, request):
+        return self.has_module_permission(request)
+
+    def has_change_permission(self, request, obj=None):
+        return self.has_module_permission(request)
+
+    def has_delete_permission(self, request, obj=None):
+        return self.has_module_permission(request)
+
+
+@admin.register(CategoriaProducto)
+class CategoriaProductoAdmin(admin.ModelAdmin):
+    list_display = ('nombre', 'activo')
+    search_fields = ('nombre',)
+    list_filter = ('activo',)
+
+    def has_module_permission(self, request):
+        return request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+
+    def has_view_permission(self, request, obj=None):
+        return self.has_module_permission(request)
+
+    def has_add_permission(self, request):
+        return self.has_module_permission(request)
+
+    def has_change_permission(self, request, obj=None):
+        return self.has_module_permission(request)
+
+    def has_delete_permission(self, request, obj=None):
+        return self.has_module_permission(request)
+
+
+@admin.register(Promocion)
+class PromocionAdmin(admin.ModelAdmin):
+    list_display = (
+        'nombre', 'tipo', 'descuento_porcentaje', 'fecha_inicio', 'fecha_fin',
+        'is_active',
+    )
+    list_filter = ('tipo', 'is_active', 'estado_sugerencia')
+    search_fields = ('nombre', 'descripcion')
+
+    def has_module_permission(self, request):
+        return request.user.has_perm(BusinessPermission.MANAGE_PROMOTIONS)
+
+    def has_view_permission(self, request, obj=None):
+        return self.has_module_permission(request)
+
+    def has_add_permission(self, request):
+        return self.has_module_permission(request)
+
+    def has_change_permission(self, request, obj=None):
+        return self.has_module_permission(request)
+
+    def has_delete_permission(self, request, obj=None):
+        return self.has_module_permission(request)
+
+
+@admin.register(OrdenPendiente)
+class OrdenPendienteAdmin(admin.ModelAdmin):
+    """
+    Auditoría de órdenes pendientes (intenciones de compra por WhatsApp)
+    """
+    list_display = ('id', 'cliente_nombre', 'estado', 'monto_total', 'fecha_creacion', 'items_count')
+    list_filter = ('estado', 'fecha_creacion', 'cliente')
+    search_fields = ('cliente__usuario__first_name', 'cliente__usuario__last_name', 'cliente__usuario__email')
+    readonly_fields = ('id', 'items_json', 'fecha_creacion', 'fecha_confirmacion', 'fecha_completacion')
+    
+    fieldsets = (
+        ('Información de la Orden', {
+            'fields': ('id', 'cliente', 'estado', 'fecha_creacion')
+        }),
+        ('Detalles del Pedido', {
+            'fields': ('items_json', 'monto_total'),
+            'classes': ('wide',)
+        }),
+        ('Seguimiento', {
+            'fields': ('fecha_confirmacion', 'fecha_completacion'),
+            'classes': ('collapse',)
+        }),
+        ('Notas', {
+            'fields': ('nota_cliente',)
+        }),
+    )
+    
+    def cliente_nombre(self, obj):
+        if obj.cliente:
+            return f"{obj.cliente.usuario.get_full_name()} ({obj.cliente.usuario.email})"
+        return "Anónimo"
+    cliente_nombre.short_description = "Cliente"
+    
+    def items_count(self, obj):
+        try:
+            return len(obj.items_json) if obj.items_json else 0
+        except:
+            return 0
+    items_count.short_description = "Cantidad de Items"
+    
+    def has_add_permission(self, request):
+        # Las órdenes se crean desde el frontend, no se agregan manualmente
+        return False
+    
+    def has_delete_permission(self, request, obj=None):
+        # Conservar las órdenes para auditoría
+        return False

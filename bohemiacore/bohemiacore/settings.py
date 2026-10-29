@@ -1,6 +1,10 @@
 from pathlib import Path
 from decouple import config
 import os
+from dotenv import load_dotenv
+
+# Cargar variables desde .env
+load_dotenv()
 
 # Build paths inside the project
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -29,6 +33,8 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt',
     'rest_framework_simplejwt.token_blacklist',
     'corsheaders',
+    'django_filters',
+    'simple_history',
     
     # Mis Apps
     'usuarios',
@@ -47,6 +53,8 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'gestion.middleware.AuditoriaMiddleware',  # Middleware de auditoría
+    'simple_history.middleware.HistoryRequestMiddleware',
 ]
 ROOT_URLCONF = 'bohemiacore.urls'
 
@@ -110,6 +118,11 @@ STATICFILES_DIRS = [BASE_DIR / 'static']
 # Media files (Uploads)
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+PRIVATE_PAYMENT_RECEIPT_ROOT = os.path.join(
+    BASE_DIR,
+    'private_media',
+    'payment_receipts',
+)
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
@@ -125,14 +138,19 @@ REST_FRAMEWORK = {
     ),
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 10,
+    'DEFAULT_FILTER_BACKENDS': [
+        'django_filters.rest_framework.DjangoFilterBackend',
+        'rest_framework.filters.SearchFilter',
+        'rest_framework.filters.OrderingFilter',
+    ],
 }
 
 # JWT Configuration
 from datetime import timedelta
 
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(hours=1),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'ACCESS_TOKEN_LIFETIME': timedelta(days=7),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=30),
     'ROTATE_REFRESH_TOKENS': False,
     'BLACKLIST_AFTER_ROTATION': False,
 }
@@ -145,8 +163,8 @@ CORS_ALLOWED_ORIGINS = [
     'http://127.0.0.1:5173',
 ]
 
-# Permitir que el navegador incluya credenciales (cookies/Authorization) en peticiones CORS
-CORS_ALLOW_CREDENTIALS = True
+# JWT via Authorization header only; no cookies/session credentials in CORS requests.
+CORS_ALLOW_CREDENTIALS = False
 
 CSRF_TRUSTED_ORIGINS = [
     'http://localhost:3000',
@@ -160,6 +178,36 @@ EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
-EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
-EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
-DEFAULT_FROM_EMAIL = config('EMAIL_HOST_USER', default='')
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
+DEFAULT_FROM_EMAIL = f'Bohemia Hair <{os.getenv("EMAIL_HOST_USER", "")}>'
+
+# Mercado Pago
+MERCADO_PAGO_ACCESS_TOKEN = config(
+    'MERCADO_PAGO_ACCESS_TOKEN',
+    default=config('MERCADOPAGO_ACCESS_TOKEN', default='')
+)
+MERCADO_PAGO_PUBLIC_KEY = config(
+    'MERCADO_PAGO_PUBLIC_KEY',
+    default=config('MERCADOPAGO_PUBLIC_KEY', default='')
+)
+MERCADO_PAGO_PUBLIC_BASE_URL = config(
+    'MERCADO_PAGO_PUBLIC_BASE_URL',
+    default='https://garland-bucked-mauve.ngrok-free.dev'
+)
+MERCADO_PAGO_WEBHOOK_URL = config(
+    'MERCADO_PAGO_WEBHOOK_URL',
+    default=f'{MERCADO_PAGO_PUBLIC_BASE_URL}/api/gestion/checkout/webhook/'
+)
+MERCADO_PAGO_BACK_SUCCESS_URL = config(
+    'MERCADO_PAGO_BACK_SUCCESS_URL',
+    default=f'{MERCADO_PAGO_PUBLIC_BASE_URL}/api/gestion/compra-exitosa/'
+)
+MERCADO_PAGO_BACK_FAILURE_URL = config(
+    'MERCADO_PAGO_BACK_FAILURE_URL',
+    default=f'{MERCADO_PAGO_PUBLIC_BASE_URL}/api/gestion/compra-fallida/'
+)
+MERCADO_PAGO_BACK_PENDING_URL = config(
+    'MERCADO_PAGO_BACK_PENDING_URL',
+    default=f'{MERCADO_PAGO_PUBLIC_BASE_URL}/api/gestion/compra-pendiente/'
+)

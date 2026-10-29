@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
-import CampanaNotificaciones from '../../components/CampanaNotificaciones';
 import Calendario from './Calendario';
+import AlertasCriticas from '../../components/AlertasCriticas';
 
 const DashboardAdmin = () => {
     const [stats, setStats] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState('');
     const navigate = useNavigate();
 
     useEffect(() => {
@@ -20,10 +21,14 @@ const DashboardAdmin = () => {
                 setLoading(false);
             } catch (error) {
                 console.error("Error cargando dashboard", error);
-                // Si falla (ej: no es admin), redirigir o mostrar error
                 if (error.response && error.response.status === 403) {
-                    navigate('/perfil'); // No es admin, volver a perfil cliente
+                    setLoadError(
+                        'El dashboard administrativo todavía no está disponible para esta cuenta.'
+                    );
+                } else {
+                    setLoadError('No se pudo cargar el dashboard administrativo.');
                 }
+                setLoading(false);
             }
         };
         fetchStats();
@@ -31,11 +36,23 @@ const DashboardAdmin = () => {
 
     if (loading) return <div className="text-center mt-20" style={{ color: '#8B8682' }}>Cargando Panel de Control...</div>;
 
+    if (loadError) {
+        return (
+            <div className="min-h-screen flex items-center justify-center px-4" style={{ backgroundColor: '#F5F5EB' }}>
+                <div className="max-w-xl rounded-xl bg-white p-8 text-center shadow-md">
+                    <h2 className="text-2xl font-bold mb-3" style={{ color: '#817773' }}>
+                        Panel administrativo no disponible
+                    </h2>
+                    <p style={{ color: '#8B8682' }}>{loadError}</p>
+                </div>
+            </div>
+        );
+    }
+
     return (
-        <div className="min-h-screen" style={{ backgroundColor: '#F5EBE0' }}>
+        <div className="min-h-screen" style={{ backgroundColor: '#F5F5EB' }}>
             {/* --- CAMPANA DE NOTIFICACIONES --- */}
             <div className="fixed top-4 right-4 z-50">
-                <CampanaNotificaciones />
             </div>
 
             {/* --- CONTENIDO PRINCIPAL --- */}
@@ -53,7 +70,6 @@ const DashboardAdmin = () => {
                                 <p className="text-4xl font-bold mt-2" style={{ color: '#817773' }}>{stats.turnos_hoy}</p>
                             </div>
                             <div className="p-3 rounded-full" style={{ backgroundColor: '#E3D5CA', color: '#AB9A91' }}>
-                                📅
                             </div>
                         </div>
                     </div>
@@ -68,7 +84,6 @@ const DashboardAdmin = () => {
                                 <p className="text-4xl font-bold mt-2" style={{ color: '#817773' }}>{stats.pendientes_accion}</p>
                             </div>
                             <div className="p-3 rounded-full animate-pulse" style={{ backgroundColor: '#E8D5CA', color: '#AB9A91' }}>
-                                ⚠️
                             </div>
                         </div>
                         <p className="text-xs mt-2 font-semibold" style={{ color: '#AB9A91' }}>Requieren tu aprobación</p>
@@ -82,10 +97,24 @@ const DashboardAdmin = () => {
                                 <p className="text-4xl font-bold mt-2" style={{ color: '#817773' }}>{stats.esperando_sena}</p>
                             </div>
                             <div className="p-3 rounded-full" style={{ backgroundColor: '#E3D5CA', color: '#817773' }}>
-                                💰
                             </div>
                         </div>
                     </div>
+                </div>
+
+                {/* --- ALERTAS Y PROMOS (COLAPSABLE) --- */}
+                <div className="mb-8">
+                    <details className="bg-white rounded-xl shadow-md">
+                        <summary
+                            className="cursor-pointer select-none px-5 py-4 text-sm font-semibold"
+                            style={{ color: '#817773' }}
+                        >
+                            Alertas de stock y promociones Last Minute
+                        </summary>
+                        <div className="px-5 pb-5 pt-2">
+                            <AlertasCriticas />
+                        </div>
+                    </details>
                 </div>
 
                 {/* --- SECCIÓN DE ACCESOS RÁPIDOS Y AGENDA --- */}
@@ -99,10 +128,10 @@ const DashboardAdmin = () => {
                             onClick={() => navigate('/admin/gestionar-rutinas')}
                             className="w-full p-4 rounded-lg shadow hover:shadow-md flex items-center gap-4 transition-all"
                             style={{ backgroundColor: 'white' }}
-                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F5EBE0'}
+                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F5F5EB'}
                             onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'white'}
                         >
-                            <span className="p-2 rounded-lg" style={{ backgroundColor: '#E3D5CA', color: '#817773' }}>💅</span>
+                            <span className="p-2 rounded-lg" style={{ backgroundColor: '#E3D5CA', color: '#817773' }}></span>
                             <div className="text-left">
                                 <h4 className="font-bold" style={{ color: '#817773' }}>Gestionar Rutinas</h4>
                                 <p className="text-xs" style={{ color: '#8B8682' }}>Crear o editar recomendaciones</p>
@@ -113,10 +142,10 @@ const DashboardAdmin = () => {
                             onClick={() => navigate('/admin/clientes')}
                             className="w-full p-4 rounded-lg shadow hover:shadow-md flex items-center gap-4 transition-all"
                             style={{ backgroundColor: 'white' }}
-                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F5EBE0'}
+                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F5F5EB'}
                             onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'white'}
                         >
-                            <span className="p-2 rounded-lg" style={{ backgroundColor: '#E3D5CA', color: '#817773' }}>👥</span>
+                            <span className="p-2 rounded-lg" style={{ backgroundColor: '#E3D5CA', color: '#817773' }}></span>
                             <div className="text-left">
                                 <h4 className="font-bold" style={{ color: '#817773' }}>Clientes</h4>
                                 <p className="text-xs" style={{ color: '#8B8682' }}>Ver base de datos y perfiles</p>
@@ -127,10 +156,10 @@ const DashboardAdmin = () => {
                             onClick={() => navigate('/admin/usuarios')}
                             className="w-full p-4 rounded-lg shadow hover:shadow-md flex items-center gap-4 transition-all"
                             style={{ backgroundColor: 'white' }}
-                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F5EBE0'}
+                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F5F5EB'}
                             onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'white'}
                         >
-                            <span className="p-2 rounded-lg" style={{ backgroundColor: '#E3D5CA', color: '#817773' }}>👤</span>
+                            <span className="p-2 rounded-lg" style={{ backgroundColor: '#E3D5CA', color: '#817773' }}></span>
                             <div className="text-left">
                                 <h4 className="font-bold" style={{ color: '#817773' }}>Gestionar Usuarios</h4>
                                 <p className="text-xs" style={{ color: '#8B8682' }}>Permisos y cuentas de staff</p>
@@ -141,10 +170,10 @@ const DashboardAdmin = () => {
                             onClick={() => navigate('/admin/personal')}
                             className="w-full p-4 rounded-lg shadow hover:shadow-md flex items-center gap-4 transition-all"
                             style={{ backgroundColor: 'white' }}
-                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F5EBE0'}
+                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F5F5EB'}
                             onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'white'}
                         >
-                            <span className="p-2 rounded-lg" style={{ backgroundColor: '#E3D5CA', color: '#817773' }}>💼</span>
+                            <span className="p-2 rounded-lg" style={{ backgroundColor: '#E3D5CA', color: '#817773' }}></span>
                             <div className="text-left">
                                 <h4 className="font-bold" style={{ color: '#817773' }}>Personal & Profesionales</h4>
                                 <p className="text-xs" style={{ color: '#8B8682' }}>Equipo, roles y habilidades</p>
@@ -155,10 +184,10 @@ const DashboardAdmin = () => {
                             onClick={() => navigate('/admin/servicios')}
                             className="w-full p-4 rounded-lg shadow hover:shadow-md flex items-center gap-4 transition-all"
                             style={{ backgroundColor: 'white' }}
-                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F5EBE0'}
+                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F5F5EB'}
                             onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'white'}
                         >
-                            <span className="p-2 rounded-lg" style={{ backgroundColor: '#E3D5CA', color: '#817773' }}>⚙️</span>
+                            <span className="p-2 rounded-lg" style={{ backgroundColor: '#E3D5CA', color: '#817773' }}></span>
                             <div className="text-left">
                                 <h4 className="font-bold" style={{ color: '#817773' }}>Servicios & Impacto</h4>
                                 <p className="text-xs" style={{ color: '#8B8682' }}>Configurar precios y reglas</p>
@@ -169,10 +198,10 @@ const DashboardAdmin = () => {
                             onClick={() => navigate('/admin/productos')}
                             className="w-full p-4 rounded-lg shadow hover:shadow-md flex items-center gap-4 transition-all"
                             style={{ backgroundColor: 'white' }}
-                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F5EBE0'}
+                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F5F5EB'}
                             onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'white'}
                         >
-                            <span className="p-2 rounded-lg" style={{ backgroundColor: '#E3D5CA', color: '#817773' }}>🛍️</span>
+                            <span className="p-2 rounded-lg" style={{ backgroundColor: '#E3D5CA', color: '#817773' }}></span>
                             <div className="text-left">
                                 <h4 className="font-bold" style={{ color: '#817773' }}>Gestionar Productos</h4>
                                 <p className="text-xs" style={{ color: '#8B8682' }}>Inventario y catálogo</p>
@@ -183,10 +212,10 @@ const DashboardAdmin = () => {
                             onClick={() => navigate('/admin/equipamiento')}
                             className="w-full p-4 rounded-lg shadow hover:shadow-md flex items-center gap-4 transition-all"
                             style={{ backgroundColor: 'white' }}
-                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F5EBE0'}
+                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F5F5EB'}
                             onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'white'}
                         >
-                            <span className="p-2 rounded-lg" style={{ backgroundColor: '#E3D5CA', color: '#817773' }}>🔧</span>
+                            <span className="p-2 rounded-lg" style={{ backgroundColor: '#E3D5CA', color: '#817773' }}></span>
                             <div className="text-left">
                                 <h4 className="font-bold" style={{ color: '#817773' }}>Gestionar Equipamiento</h4>
                                 <p className="text-xs" style={{ color: '#8B8682' }}>Herramientas y estado</p>
@@ -197,10 +226,10 @@ const DashboardAdmin = () => {
                             onClick={() => navigate('/admin/reglas')}
                             className="w-full p-4 rounded-lg shadow hover:shadow-md flex items-center gap-4 transition-all"
                             style={{ backgroundColor: 'white' }}
-                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F5EBE0'}
+                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F5F5EB'}
                             onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'white'}
                         >
-                            <span className="p-2 rounded-lg" style={{ backgroundColor: '#E3D5CA', color: '#817773' }}>🧠</span>
+                            <span className="p-2 rounded-lg" style={{ backgroundColor: '#E3D5CA', color: '#817773' }}></span>
                             <div className="text-left">
                                 <h4 className="font-bold" style={{ color: '#817773' }}>Motor de Diagnóstico</h4>
                                 <p className="text-xs" style={{ color: '#8B8682' }}>Reglas para asignar rutinas</p>
@@ -211,10 +240,10 @@ const DashboardAdmin = () => {
                             onClick={() => navigate('/admin/agenda')}
                             className="w-full p-4 rounded-lg shadow hover:shadow-md flex items-center gap-4 transition-all"
                             style={{ backgroundColor: 'white' }}
-                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F5EBE0'}
+                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F5F5EB'}
                             onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'white'}
                         >
-                            <span className="p-2 rounded-lg" style={{ backgroundColor: '#E3D5CA', color: '#817773' }}>📅</span>
+                            <span className="p-2 rounded-lg" style={{ backgroundColor: '#E3D5CA', color: '#817773' }}></span>
                             <div className="text-left">
                                 <h4 className="font-bold" style={{ color: '#817773' }}>Gestión de Agenda</h4>
                                 <p className="text-xs" style={{ color: '#8B8682' }}>Horarios y disponibilidad</p>
@@ -225,13 +254,41 @@ const DashboardAdmin = () => {
                             onClick={() => navigate('/admin/configuracion')}
                             className="w-full p-4 rounded-lg shadow hover:shadow-md flex items-center gap-4 transition-all"
                             style={{ backgroundColor: 'white' }}
-                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F5EBE0'}
+                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F5F5EB'}
                             onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'white'}
                         >
-                            <span className="p-2 rounded-lg" style={{ backgroundColor: '#E3D5CA', color: '#817773' }}>⚙️</span>
+                            <span className="p-2 rounded-lg" style={{ backgroundColor: '#E3D5CA', color: '#817773' }}></span>
                             <div className="text-left">
                                 <h4 className="font-bold" style={{ color: '#817773' }}>Configuración del Sistema</h4>
                                 <p className="text-xs" style={{ color: '#8B8682' }}>Parámetros y catálogos</p>
+                            </div>
+                        </button>
+
+                        <button 
+                            onClick={() => navigate('/admin/ordenes')}
+                            className="w-full p-4 rounded-lg shadow hover:shadow-md flex items-center gap-4 transition-all"
+                            style={{ backgroundColor: 'white' }}
+                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F5F5EB'}
+                            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'white'}
+                        >
+                            <span className="p-2 rounded-lg" style={{ backgroundColor: '#E3D5CA', color: '#817773' }}></span>
+                            <div className="text-left">
+                                <h4 className="font-bold" style={{ color: '#817773' }}>Gestión de Órdenes</h4>
+                                <p className="text-xs" style={{ color: '#8B8682' }}>Órdenes de compra de clientes</p>
+                            </div>
+                        </button>
+
+                        <button 
+                            onClick={() => navigate('/admin/auditoria')}
+                            className="w-full p-4 rounded-lg shadow hover:shadow-md flex items-center gap-4 transition-all"
+                            style={{ backgroundColor: 'white' }}
+                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F5F5EB'}
+                            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'white'}
+                        >
+                            <span className="p-2 rounded-lg" style={{ backgroundColor: '#E3D5CA', color: '#817773' }}></span>
+                            <div className="text-left">
+                                <h4 className="font-bold" style={{ color: '#817773' }}>Auditoría del Sistema</h4>
+                                <p className="text-xs" style={{ color: '#8B8682' }}>Registro de cambios y acciones</p>
                             </div>
                         </button>
                     </div>

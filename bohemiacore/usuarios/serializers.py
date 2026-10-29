@@ -1,7 +1,9 @@
 from rest_framework import serializers
 from django.db import transaction
+from django.core.exceptions import ValidationError
 from .models import Usuario, Cliente
 from django.contrib.auth.password_validation import validate_password
+import re
 from gestion.models import (
     TipoCabello,
     GrosorCabello,
@@ -10,6 +12,146 @@ from gestion.models import (
     CueroCabelludo,
     Servicio 
 )
+from usuarios.access_services import assign_initial_client_role
+from usuarios.roles import BusinessPermission, get_business_role
+
+
+class StrictInputFieldsMixin:
+    """Reject fields outside an explicit command contract."""
+
+    def to_internal_value(self, data):
+        if hasattr(data, 'keys'):
+            unexpected_fields = set(data.keys()) - set(self.fields)
+            if unexpected_fields:
+                raise serializers.ValidationError({
+                    field: ['Este campo no está permitido.']
+                    for field in sorted(unexpected_fields)
+                })
+        return super().to_internal_value(data)
+
+
+class AdminClientAccountCreateCommandSerializer(
+    StrictInputFieldsMixin,
+    serializers.Serializer,
+):
+    first_name = serializers.CharField(
+        max_length=150,
+        allow_blank=False,
+        trim_whitespace=True,
+    )
+    last_name = serializers.CharField(
+        max_length=150,
+        allow_blank=False,
+        trim_whitespace=True,
+    )
+    email = serializers.EmailField()
+    password_temporal = serializers.CharField(
+        write_only=True,
+        trim_whitespace=False,
+    )
+    telefono = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=20,
+        trim_whitespace=True,
+    )
+    zona = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=100,
+        trim_whitespace=True,
+    )
+    motivo = serializers.CharField(
+        min_length=3,
+        max_length=500,
+        allow_blank=False,
+        trim_whitespace=True,
+    )
+
+    def validate_password_temporal(self, value):
+        try:
+            validate_password(value)
+        except ValidationError as exc:
+            raise serializers.ValidationError(exc.messages) from exc
+        return value
+
+
+class AdminAdministratorAccountCreateCommandSerializer(
+    StrictInputFieldsMixin,
+    serializers.Serializer,
+):
+    first_name = serializers.CharField(
+        max_length=150,
+        allow_blank=False,
+        trim_whitespace=True,
+    )
+    last_name = serializers.CharField(
+        max_length=150,
+        allow_blank=False,
+        trim_whitespace=True,
+    )
+    email = serializers.EmailField()
+    password_temporal = serializers.CharField(
+        write_only=True,
+        trim_whitespace=False,
+    )
+    motivo = serializers.CharField(
+        min_length=3,
+        max_length=500,
+        allow_blank=False,
+        trim_whitespace=True,
+    )
+
+    def validate_password_temporal(self, value):
+        try:
+            validate_password(value)
+        except ValidationError as exc:
+            raise serializers.ValidationError(exc.messages) from exc
+        return value
+
+
+class CurrentSessionUserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Usuario
+        fields = ('id', 'email', 'first_name', 'last_name', 'is_active')
+        read_only_fields = fields
+
+
+class CurrentSessionSerializer(serializers.Serializer):
+    """Read-only context for the currently authenticated SPA session."""
+
+    user = CurrentSessionUserSerializer(source='*', read_only=True)
+    business_role = serializers.SerializerMethodField()
+    permissions = serializers.SerializerMethodField()
+    profiles = serializers.SerializerMethodField()
+
+    def get_business_role(self, obj):
+        return get_business_role(obj)
+
+    def get_permissions(self, obj):
+        # Django superusers receive every registered permission; the
+        # intersection keeps the session contract limited to business access.
+        canonical_permissions = set(BusinessPermission.ALL)
+        return sorted(obj.get_all_permissions() & canonical_permissions)
+
+    def get_profiles(self, obj):
+        cliente = getattr(obj, 'cliente', None)
+        personal = getattr(obj, 'perfil_profesional', None)
+
+        return {
+            'cliente': {
+                'exists': cliente is not None,
+                'id': cliente.pk if cliente is not None else None,
+                'active': cliente.activo if cliente is not None else None,
+            },
+            'personal': {
+                'exists': personal is not None,
+                'id': personal.pk if personal is not None else None,
+                'active': personal.activo if personal is not None else None,
+                'function_role': personal.rol if personal is not None else None,
+            },
+        }
+
 
 class UsuarioPerfilReadSerializer(serializers.ModelSerializer):
     """
@@ -190,7 +332,7 @@ class UsuarioDetalleSerializer(serializers.ModelSerializer):
         fields = ['id', 'email', 'first_name', 'last_name']
 
 
-class RegistroSerializer(serializers.ModelSerializer):
+class RegistroSerializer(StrictInputFieldsMixin, serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=True, style={'input_type': 'password'})
     password2 = serializers.CharField(write_only=True, required=True, style={'input_type': 'password'})
     
@@ -242,17 +384,37 @@ class RegistroSerializer(serializers.ModelSerializer):
         }
 
     def to_internal_value(self, data):
-        # Mapeo de nombres del frontend al modelo
-        if 'porosidad' in data and 'porosidad_cabello' not in data:
-            data['porosidad_cabello'] = data.pop('porosidad')
-        if 'grosor' in data and 'grosor_cabello' not in data:
-            data['grosor_cabello'] = data.pop('grosor')
+        # Preserve the public aliases without mutating request.data.
+        normalized_data = data.copy()
+        if 'porosidad' in normalized_data:
+            if 'porosidad_cabello' not in normalized_data:
+                normalized_data['porosidad_cabello'] = normalized_data[
+                    'porosidad'
+                ]
+            normalized_data.pop('porosidad')
+        if 'grosor' in normalized_data:
+            if 'grosor_cabello' not in normalized_data:
+                normalized_data['grosor_cabello'] = normalized_data['grosor']
+            normalized_data.pop('grosor')
         
-        return super().to_internal_value(data)
+        return super().to_internal_value(normalized_data)
 
     def validate(self, attrs):
         if attrs['password'] != attrs['password2']:
             raise serializers.ValidationError({"password": "Las contraseñas no coinciden."})
+
+        numero = attrs.get('numero', '')
+        if numero and not numero.isdigit():
+            raise serializers.ValidationError({"numero": "El teléfono solo debe contener números."})
+
+        password = attrs['password']
+        if not re.search(r'[A-Za-z]', password):
+            raise serializers.ValidationError({"password": "La contraseña debe incluir al menos una letra."})
+        if not re.search(r'\d', password):
+            raise serializers.ValidationError({"password": "La contraseña debe incluir al menos un número."})
+        if not re.search(r'[^A-Za-z0-9]', password):
+            raise serializers.ValidationError({"password": "La contraseña debe incluir al menos un signo especial."})
+
         validate_password(attrs['password'])
         return attrs
 
@@ -292,12 +454,18 @@ class RegistroSerializer(serializers.ModelSerializer):
                 grosor_cabello=cliente.grosor_cabello,
                 porosidad_cabello=cliente.porosidad_cabello,
                 cuero_cabelludo=cliente.cuero_cabelludo,
-                estado_general=cliente.estado_general
+                estado_general=cliente.estado_general,
+                procedencia=DiagnosticoCapilar.Procedencia.AUTORREPORTE,
             )
             
             # Ejecutar el motor diagnóstico automáticamente
             viewset = DiagnosticoCapilarViewSet()
             viewset._ejecutar_motor_diagnostico(diag)
+
+        assign_initial_client_role(
+            user,
+            source='public_registration',
+        )
         
         return user
 

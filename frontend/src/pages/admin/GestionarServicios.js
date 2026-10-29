@@ -283,16 +283,25 @@ const GestionarServicios = () => {
                         cantidad_minima: Math.max(1, parseInt(req.cantidad_minima) || 1)
                     }));
                 
+                console.log('📦 Requisitos a guardar:', requisitosFiltrados);
+                
                 if (requisitosFiltrados.length > 0) {
                     try {
-                        const promesasRequisitos = requisitosFiltrados.map(reqPayload =>
-                            axios.post('http://127.0.0.1:8000/api/gestion/requisitos-servicio/', reqPayload, config)
-                        );
+                        const promesasRequisitos = requisitosFiltrados.map(reqPayload => {
+                            console.log('Enviando requisito:', reqPayload);
+                            return axios.post('http://127.0.0.1:8000/api/gestion/requisitos-servicio/', reqPayload, config);
+                        });
                         await Promise.all(promesasRequisitos);
-                        notify.success('Requisitos de equipamiento guardados');
+                        notify.success('✅ Requisitos de equipamiento guardados correctamente');
                     } catch (err) {
-                        console.warn('Algunos requisitos no se guardaron:', err.response?.data || err.message);
-                        // Continuar sin bloquear - el servicio ya se guardó
+                        const errorMsg = err.response?.data?.detail || 
+                                       err.response?.data?.non_field_errors?.[0] ||
+                                       err.response?.data?.tipo_equipamiento?.[0] ||
+                                       err.response?.data?.cantidad_minima?.[0] ||
+                                       err.message;
+                        console.error('Error al guardar requisitos:', err.response?.data || err.message);
+                        notify.error(`❌ Error al guardar equipamiento: ${errorMsg}`);
+                        throw err;
                     }
                 }
             }
@@ -344,7 +353,7 @@ const GestionarServicios = () => {
     if (error) return <div className="p-8 text-center" style={{ color: '#C73E3E' }}>Error: {error}</div>;
 
     return (
-        <div className="p-8 min-h-screen" style={{ backgroundColor: '#F5EBE0' }}>
+        <div className="p-8 min-h-screen" style={{ backgroundColor: '#F5F5EB' }}>
             <div className="max-w-6xl mx-auto">
                 <div className="flex justify-between items-center mb-8">
                     <div>
@@ -377,7 +386,7 @@ const GestionarServicios = () => {
                             {/* Header del Modal */}
                             <div className="flex justify-between items-center p-6 border-b" style={{ borderColor: '#D5D1CC' }}>
                                 <h3 className="text-2xl font-bold" style={{ color: '#817773' }}>
-                                    {editingId ? '✏️ Editar Servicio' : '➕ Crear Nuevo Servicio'}
+                                    {editingId ? ' Editar Servicio' : '+ Crear Nuevo Servicio'}
                                 </h3>
                                 <button
                                     onClick={() => resetForm()}
@@ -729,12 +738,22 @@ const GestionarServicios = () => {
                                                                     onChange={e => actualizarRequisito(idx, 'tipo_equipamiento', e.target.value)}
                                                                     className="w-full p-1 border rounded text-xs"
                                                                     style={{ borderColor: '#D5D1CC' }}
+                                                                    title="Solo aparecen tipos de equipamiento que tienen equipos activos cargados en el sistema"
                                                                 >
                                                                     <option value="">-- Seleccionar --</option>
-                                                                    {tiposEquipamiento.map(te => (
-                                                                        <option key={te.id} value={te.id}>{te.nombre}</option>
-                                                                    ))}
+                                                                    {tiposEquipamiento.length === 0 ? (
+                                                                        <option disabled>⚠️ Sin equipos disponibles</option>
+                                                                    ) : (
+                                                                        tiposEquipamiento.map(te => (
+                                                                            <option key={te.id} value={te.id}>{te.nombre}</option>
+                                                                        ))
+                                                                    )}
                                                                 </select>
+                                                                {tiposEquipamiento.length === 0 && (
+                                                                    <p style={{ fontSize: '0.75rem', color: '#E11D48', marginTop: '4px' }}>
+                                                                        💡 Carga equipos en Gestión de Equipamiento
+                                                                    </p>
+                                                                )}
                                                             </td>
                                                             <td className="p-2">
                                                                 <input 
@@ -782,7 +801,7 @@ const GestionarServicios = () => {
                                     value={formData.rutina_recomendada}
                                     onChange={e => setFormData({...formData, rutina_recomendada: e.target.value})}
                                     className="w-full p-2 border rounded-lg"
-                                    style={{ borderColor: '#D5D1CC', backgroundColor: '#F5EBE0', color: '#817773' }}
+                                    style={{ borderColor: '#D5D1CC', backgroundColor: '#F5F5EB', color: '#817773' }}
                                 >
                                     <option value="">-- Sin Rutina --</option>
                                     {rutinas.map(r => (
@@ -798,7 +817,7 @@ const GestionarServicios = () => {
                                     value={formData.impacto_porosidad}
                                     onChange={e => setFormData({...formData, impacto_porosidad: e.target.value})}
                                     className="w-full p-2 border rounded-lg"
-                                    style={{ borderColor: '#D5D1CC', backgroundColor: '#F5EBE0', color: '#817773' }}
+                                    style={{ borderColor: '#D5D1CC', backgroundColor: '#F5F5EB', color: '#817773' }}
                                 >
                                     <option value="">-- Sin Cambio --</option>
                                     {porosidades.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
@@ -812,7 +831,7 @@ const GestionarServicios = () => {
                                     value={formData.impacto_estado}
                                     onChange={e => setFormData({...formData, impacto_estado: e.target.value})}
                                     className="w-full p-2 border rounded-lg"
-                                    style={{ borderColor: '#D5D1CC', backgroundColor: '#F5EBE0', color: '#817773' }}
+                                    style={{ borderColor: '#D5D1CC', backgroundColor: '#F5F5EB', color: '#817773' }}
                                 >
                                     <option value="">-- Sin Cambio --</option>
                                     {estados.map(e => <option key={e.id} value={e.id}>{e.nombre}</option>)}

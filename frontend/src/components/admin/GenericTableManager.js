@@ -22,7 +22,15 @@ const GenericTableManager = ({ apiUrl, titulo, campos = [] }) => {
             console.log(`✅ Datos cargados para ${titulo}:`, datos);
         } catch (error) {
             console.error(`Error al cargar ${titulo}:`, error);
-            setMensaje(`❌ Error al cargar ${titulo}: ${error.message}`);
+            let mensajeError = error.message;
+            
+            if (error.code === 'ERR_NETWORK' || error.code === 'ECONNREFUSED') {
+                mensajeError = '❌ No se puede conectar al servidor. ¿Está Django corriendo? (python manage.py runserver)';
+            } else if (error.response) {
+                mensajeError = `❌ Error ${error.response.status}: ${error.response.statusText}`;
+            }
+            
+            setMensaje(mensajeError);
         } finally {
             setLoading(false);
         }

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { IconCalendar, IconClipboard, IconSparkles, IconWarning } from '../../components/common/Icons';
 
 const MiAgenda = () => {
   const [agenda, setAgenda] = useState([]);
@@ -53,7 +54,9 @@ const MiAgenda = () => {
       {/* Header */}
       <div className="px-6 sm:px-8 py-12 text-white" style={{ background: 'linear-gradient(135deg, #7a5c3c 0%, #b08e6b 100%)' }}>
         <div className="max-w-4xl mx-auto">
-          <h1 className="text-4xl font-bold mb-2">📋 Mi Agenda Capilar</h1>
+          <h1 className="text-4xl font-bold mb-2 inline-flex items-center gap-2">
+            <IconClipboard className="h-6 w-6" /> Mi Agenda Capilar
+          </h1>
           <p className="text-amber-50">Tu rutina personalizada de cuidados</p>
         </div>
       </div>
@@ -62,13 +65,17 @@ const MiAgenda = () => {
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         {error && (
           <div className="mb-6 p-4 rounded-lg border-l-4" style={{ backgroundColor: '#ffe8e8', borderColor: '#c73e3e' }}>
-            <p style={{ color: '#c73e3e' }} className="font-medium">⚠️ {error}</p>
+            <p style={{ color: '#c73e3e' }} className="font-medium inline-flex items-center gap-2">
+              <IconWarning className="h-4 w-4" /> {error}
+            </p>
           </div>
         )}
         
         {agenda.length === 0 ? (
           <div className="bg-white rounded-2xl p-12 shadow-lg text-center">
-            <p className="text-2xl text-gray-600 mb-4">📝 Sin tareas pendientes</p>
+            <p className="text-2xl text-gray-600 mb-4 inline-flex items-center gap-2">
+              <IconSparkles className="h-6 w-6" /> Sin tareas pendientes
+            </p>
             <p className="text-gray-500">No tienes tareas de cuidados asignadas. ¡Agenda un turno para recibir tu rutina personalizada!</p>
           </div>
         ) : (
@@ -85,7 +92,9 @@ const MiAgenda = () => {
                 <div className="flex justify-between items-start mb-3">
                   <h3 className="font-bold text-xl text-gray-800">{item.titulo}</h3>
                   <span className="text-sm text-gray-600 font-semibold bg-white px-3 py-1 rounded">
-                    📅 {item.fecha}
+                    <span className="inline-flex items-center gap-2">
+                      <IconCalendar className="h-4 w-4" /> {item.fecha}
+                    </span>
                   </span>
                 </div>
                 <p className="text-gray-700 mb-3">{item.descripcion}</p>

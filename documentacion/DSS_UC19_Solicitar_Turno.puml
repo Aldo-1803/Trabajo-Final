@@ -1,0 +1,94 @@
+@startuml
+title UC-19 Solicitar Turno (DSS)
+
+actor Cliente
+participant ":Sistema"
+
+'==================== PRECONDICIÓN ====================
+note over Cliente,":Sistema"
+Precondición: el cliente ha iniciado sesión.
+Objetivo: permitir solicitar y reservar un turno con gestión de estados y seña.
+IRQ: Agendas y Disponibilidad, Turnos.
+end note
+
+'==================== SECUENCIA NORMAL =================
+Cliente -> ":Sistema": navegarSolicitarTurno()
+":Sistema" --> Cliente: mostrarCatalogoServicios()
+
+Cliente -> ":Sistema": seleccionarServicios(servicios[])
+activate ":Sistema"
+":Sistema" -> ":Sistema": calcularDuracionTotal(servicios[])
+":Sistema" --> Cliente: mostrarDisponibilidad(fechasHorarios, duracionTotal)
+deactivate ":Sistema"
+
+Cliente -> ":Sistema": seleccionarFechaHorario(fecha, horario)
+activate ":Sistema"
+":Sistema" -> ":Sistema": crearTurno(clienteId, servicios[], fecha, horario)\nestado = "SOLICITADO"
+":Sistema" -> ":Sistema": notificarProfesional(turnoId)
+":Sistema" --> Cliente: confirmarSolicitudEnAnalisis(turnoId)
+deactivate ":Sistema"
+
+'--- Aprobación por Admin/Profesional ---
+":Sistema" -> ":Sistema": esperarAprobacionManual()
+
+alt turno aprobado por admin
+  activate ":Sistema"
+  ":Sistema" -> ":Sistema": cambiarEstado(turnoId, "ESPERANDO_SEÑA")
+  ":Sistema" -> ":Sistema": notificarCliente(turnoId, "subirComprobante")
+  ":Sistema" --> Cliente: notificacionSeñaRequerida()
+  deactivate ":Sistema"
+  
+  Cliente -> ":Sistema": accederMisTurnos()
+  ":Sistema" --> Cliente: mostrarTurnosPendientes()
+  
+  Cliente -> ":Sistema": subirComprobantePago(turnoId, archivoComprobante)
+  activate ":Sistema"
+  ":Sistema" -> ":Sistema": almacenarComprobante(archivoComprobante)\ncambiarEstado(turnoId, "PENDIENTE_CONFIRMACION_FINAL")
+  ":Sistema" -> ":Sistema": asignarTurnoEnAgenda(turnoId)
+  ":Sistema" -> ":Sistema": enviarNotificacionConfirmacion(clienteId)
+  ":Sistema" --> Cliente: confirmarTurnoAsignado()
+  deactivate ":Sistema"
+
+else turno rechazado por profesional
+  activate ":Sistema"
+  ":Sistema" -> ":Sistema": cambiarEstado(turnoId, "RECHAZADO")\nregistrarMotivo(motivo)
+  ":Sistema" -> ":Sistema": notificarCliente(turnoId, motivo)
+  ":Sistema" --> Cliente: turnoRechazado(motivo)
+  deactivate ":Sistema"
+end
+
+'--- Excepción: Vencimiento de Seña ---
+note over ":Sistema"
+**Excepción Paso 9:**
+Si el cliente NO sube comprobante dentro del tiempo límite (24hs):
+- Sistema ejecuta tarea programada
+- cambiarEstado(turnoId, "VENCIDO")
+- liberarHorarioEnAgenda(turnoId)
+- notificarCliente("señaVencida")
+end note
+
+'==================== POSTCONDICIÓN ====================
+note over Cliente,":Sistema"
+Postcondición (flujo exitoso):
+- Turno creado con estado PENDIENTE_CONFIRMACION_FINAL.
+- Comprobante de seña almacenado.
+- Cliente y profesional notificados.
+- Horario asignado en agenda.
+end note
+
+'==================== RENDIMIENTO ======================
+note right of ":Sistema"
+Rendimiento (paso 7):
+Creación del turno y actualización de estados <= 500 ms.
+end note
+
+'==================== COMENTARIOS ======================
+note over ":Sistema"
+Tecnología:
+- Backend Django maneja FSM de estados del turno:
+  SOLICITADO → ESPERANDO_SEÑA → PENDIENTE_CONFIRMACION_FINAL → CONFIRMADO
+- Almacenamiento seguro de comprobante (Django FileField).
+- Tarea programada (Celery/Django-Q) para vencimiento de seña.
+- Cálculo de disponibilidad considera duración de servicios seleccionados.
+end note
+@enduml
