@@ -26,6 +26,7 @@ class BusinessPermission:
     FINALIZE_SERVICE = 'gestion.finalize_service'
     CONFIRM_DEPOSIT = 'gestion.confirm_deposit'
     REGISTER_PAYMENT = 'gestion.register_payment'
+    RECONCILE_EXTERNAL_PAYMENT = 'gestion.reconcile_external_payment'
     MANAGE_PAYMENT_CONFIGURATION = 'gestion.manage_payment_configuration'
     CREATE_DIAGNOSIS = 'gestion.create_diagnosis'
     MANAGE_TECHNICAL_RECORD = 'gestion.manage_technical_record'
@@ -60,6 +61,7 @@ class BusinessPermission:
         FINALIZE_SERVICE,
         CONFIRM_DEPOSIT,
         REGISTER_PAYMENT,
+        RECONCILE_EXTERNAL_PAYMENT,
         MANAGE_PAYMENT_CONFIGURATION,
         CREATE_DIAGNOSIS,
         MANAGE_TECHNICAL_RECORD,

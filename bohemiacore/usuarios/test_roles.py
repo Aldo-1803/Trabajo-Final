@@ -57,6 +57,7 @@ ALL_BUSINESS_PERMISSIONS = {
     'gestion.finalize_service',
     'gestion.confirm_deposit',
     'gestion.register_payment',
+    'gestion.reconcile_external_payment',
     'gestion.manage_payment_configuration',
     'gestion.create_diagnosis',
     'gestion.manage_technical_record',

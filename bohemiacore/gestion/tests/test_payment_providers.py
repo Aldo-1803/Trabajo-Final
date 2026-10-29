@@ -114,7 +114,29 @@ class MercadoPagoAdapterTests(SimpleTestCase):
                 'user_id': 'seller-456',
                 'type': 'online',
                 'country_code': 'AR',
-                'transactions': {'payments': [{'status': 'processed'}]},
+                'created_date': '2026-10-28T20:00:00Z',
+                'last_updated_date': '2026-10-28T20:01:00Z',
+                'transactions': {
+                    'payments': [{
+                        'id': 'PAY-123',
+                        'amount': '125.50',
+                        'paid_amount': '125.50',
+                        'status': 'processed',
+                        'status_detail': 'accredited',
+                        'payment_method': {'token': 'must-not-be-persisted'},
+                    }],
+                    'refunds': [{
+                        'id': 'REF-123',
+                        'transaction_id': 'PAY-123',
+                        'amount': '25.00',
+                        'status': 'processed',
+                    }],
+                    'chargebacks': [{
+                        'id': 'CBK-123',
+                        'transaction_id': 'PAY-123',
+                        'status': 'in_process',
+                    }],
+                },
                 'payer': {'email': 'must-not-be-persisted@test.com'},
             },
         }
@@ -125,6 +147,11 @@ class MercadoPagoAdapterTests(SimpleTestCase):
         self.assertEqual(snapshot.application_id, 'app-123')
         self.assertEqual(snapshot.environment, 'sandbox')
         self.assertNotIn('payer', snapshot.sanitized())
+        self.assertEqual(snapshot.payments[0]['id'], 'PAY-123')
+        self.assertEqual(snapshot.payments[0]['paid_amount'], '125.50')
+        self.assertNotIn('payment_method', snapshot.payments[0])
+        self.assertEqual(snapshot.refunds[0]['transaction_id'], 'PAY-123')
+        self.assertEqual(snapshot.chargebacks[0]['id'], 'CBK-123')
         sdk_class.return_value.order.return_value.get.assert_called_once()
 
     @patch('gestion.payment_providers.mercadopago.SDK')

@@ -3795,6 +3795,13 @@ class ProviderPaymentAttempt(models.Model):
         FAILED = 'FAILED', 'Creación rechazada'
         EXPIRED = 'EXPIRED', 'No utilizable'
 
+    class ReconciliationStatus(models.TextChoices):
+        NOT_EVALUATED = 'NOT_EVALUATED', 'No evaluado'
+        PARTIAL = 'PARTIAL', 'Pago parcial'
+        APPLIED = 'APPLIED', 'Aplicado'
+        LATE = 'LATE', 'Pago tardío'
+        REVIEW_REQUIRED = 'REVIEW_REQUIRED', 'Revisión requerida'
+
     ACTIVE_STATUSES = (
         Status.PROCESSING,
         Status.READY,
@@ -3844,6 +3851,13 @@ class ProviderPaymentAttempt(models.Model):
     provider_call_count = models.PositiveSmallIntegerField(default=0)
     last_provider_call_at = models.DateTimeField(null=True, blank=True)
     response_received_at = models.DateTimeField(null=True, blank=True)
+    reconciliation_status = models.CharField(
+        max_length=20,
+        choices=ReconciliationStatus.choices,
+        default=ReconciliationStatus.NOT_EVALUATED,
+    )
+    last_reconciled_at = models.DateTimeField(null=True, blank=True)
+    last_provider_status = models.CharField(max_length=50, blank=True, default='')
     created_at = models.DateTimeField(default=timezone.now, editable=False)
     updated_at = models.DateTimeField(auto_now=True)
     created_by = models.ForeignKey(
@@ -3919,6 +3933,12 @@ class ProviderEvent(models.Model):
         REJECTED = 'REJECTED', 'Rechazado'
         MISMATCH = 'MISMATCH', 'Datos divergentes'
 
+    class ReconciliationStatus(models.TextChoices):
+        NOT_EVALUATED = 'NOT_EVALUATED', 'No evaluado'
+        APPLIED = 'APPLIED', 'Aplicado'
+        REVIEW_REQUIRED = 'REVIEW_REQUIRED', 'Revisión requerida'
+        IGNORED = 'IGNORED', 'Sin efecto financiero'
+
     provider = models.CharField(max_length=20, choices=Provider.choices)
     topic = models.CharField(max_length=30)
     action = models.CharField(max_length=100)
@@ -3947,6 +3967,20 @@ class ProviderEvent(models.Model):
     processed_at = models.DateTimeField(null=True, blank=True)
     next_retry_at = models.DateTimeField(null=True, blank=True)
     claim_token = models.UUIDField(null=True, blank=True, editable=False)
+    reconciliation_status = models.CharField(
+        max_length=20,
+        choices=ReconciliationStatus.choices,
+        default=ReconciliationStatus.NOT_EVALUATED,
+    )
+    reconciliation_attempts = models.PositiveSmallIntegerField(default=0)
+    reconciled_at = models.DateTimeField(null=True, blank=True)
+    reconciliation_code = models.CharField(max_length=50, blank=True, default='')
+    business_result = models.JSONField(default=dict, blank=True)
+    financial_payments = models.ManyToManyField(
+        'Pago',
+        related_name='provider_events',
+        blank=True,
+    )
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -4296,6 +4330,7 @@ class OrdenCompra(models.Model):
     ESTADOS = (
         ('PENDIENTE', 'Pendiente'),
         ('ESPERANDO_PAGO', 'Esperando Pago'),
+        ('PAGADO', 'Pagado'),
         ('COMPLETADO', 'Completado'),
         ('RECHAZADO', 'Rechazado'),
         ('CANCELADO', 'Cancelado'),
@@ -4499,6 +4534,13 @@ class PagoManager(models.Manager.from_queryset(ImmutablePagoQuerySet)):
         payment.save(force_insert=True, using=self.db)
         return payment
 
+    def _create_external_from_service(self, **values):
+        payment = self.model(**values)
+        payment._allow_booking_create = True
+        payment._allow_external_create = True
+        payment.save(force_insert=True, using=self.db)
+        return payment
+
     def _transition(self, *, payment_id, from_statuses, **values):
         queryset = self.get_queryset().filter(
             pk=payment_id,
@@ -4532,6 +4574,7 @@ class Pago(models.Model):
         BANK_TRANSFER = 'BANK_TRANSFER', 'Transferencia bancaria'
         EXTERNAL_CARD = 'EXTERNAL_CARD', 'Tarjeta externa'
         OTHER = 'OTHER', 'Otro'
+        MERCADO_PAGO = 'MERCADO_PAGO', 'Mercado Pago'
 
     class Purpose(models.TextChoices):
         CONFIRMATION = 'CONFIRMATION', 'Confirmación'
@@ -4620,6 +4663,24 @@ class Pago(models.Model):
     )
     terminal_reason = models.CharField(max_length=100, blank=True, default='')
     es_sena = models.BooleanField(default=False)
+    provider_code = models.CharField(max_length=20, blank=True, default='')
+    provider_payment_id = models.CharField(max_length=128, blank=True, default='')
+    provider_attempt = models.ForeignKey(
+        ProviderPaymentAttempt,
+        on_delete=models.PROTECT,
+        related_name='reconciled_payments',
+        null=True,
+        blank=True,
+    )
+    provider_event = models.ForeignKey(
+        ProviderEvent,
+        on_delete=models.PROTECT,
+        related_name='originated_payments',
+        null=True,
+        blank=True,
+    )
+    provider_occurred_at = models.DateTimeField(null=True, blank=True)
+    provider_snapshot = models.JSONField(default=dict, blank=True)
 
     history = HistoricalRecords()
     objects = PagoManager()
@@ -4665,6 +4726,13 @@ class Pago(models.Model):
                         models.Q(recorded_by__isnull=False)
                         & models.Q(idempotency_key__isnull=False)
                     )
+                    | (
+                        ~models.Q(provider_code='')
+                        & ~models.Q(provider_payment_id='')
+                        & models.Q(provider_attempt__isnull=False)
+                        & models.Q(provider_event__isnull=False)
+                        & models.Q(idempotency_key__isnull=False)
+                    )
                 ),
                 name='booking_payment_actor_and_key',
             ),
@@ -4682,6 +4750,12 @@ class Pago(models.Model):
                         reconciled_by__isnull=False,
                         terminal_reason='',
                     )
+                    | models.Q(
+                        status='RECONCILED',
+                        reconciled_at__isnull=False,
+                        reconciled_by__isnull=True,
+                        terminal_reason='',
+                    ) & ~models.Q(provider_code='')
                     | (
                         models.Q(
                             status__in=['REJECTED', 'REVERSED'],
@@ -4703,6 +4777,14 @@ class Pago(models.Model):
                     & ~models.Q(manual_reference='')
                 ),
                 name='payment_unique_manual_reference',
+            ),
+            models.UniqueConstraint(
+                fields=['provider_code', 'provider_payment_id'],
+                condition=(
+                    ~models.Q(provider_code='')
+                    & ~models.Q(provider_payment_id='')
+                ),
+                name='payment_unique_provider_identity',
             ),
         ]
         indexes = [
@@ -4736,6 +4818,22 @@ class Pago(models.Model):
         errors = {}
         has_intent = self.payment_intent_id is not None
         has_order = self.orden_id is not None
+        provider_fields = (
+            bool(self.provider_code),
+            bool(self.provider_payment_id),
+            self.provider_attempt_id is not None,
+            self.provider_event_id is not None,
+        )
+        external = all(provider_fields)
+        if any(provider_fields) and not external:
+            errors['provider_code'] = (
+                'La identidad externa debe incluir proveedor, pago, Attempt '
+                'y evento.'
+            )
+        if external and self.metodo_pago != self.Method.MERCADO_PAGO:
+            errors['metodo_pago'] = (
+                'El medio no coincide con la identidad del proveedor.'
+            )
         if has_intent == has_order:
             errors['payment_intent'] = (
                 'El Pago debe pertenecer exactamente a un Intent o una Orden.'
@@ -4755,8 +4853,8 @@ class Pago(models.Model):
             if self.currency != self.payment_intent.currency:
                 errors['currency'] = 'La moneda no coincide con el Intent.'
             if self.metodo_pago not in self.Method.values:
-                errors['metodo_pago'] = 'El medio manual no es válido.'
-            if self.recorded_by_id is None:
+                errors['metodo_pago'] = 'El medio de pago no es válido.'
+            if self.recorded_by_id is None and not external:
                 errors['recorded_by'] = 'El actor de registro es obligatorio.'
             if not self.idempotency_key:
                 errors['idempotency_key'] = (
@@ -4776,6 +4874,10 @@ class Pago(models.Model):
         ):
             raise ValidationError(
                 'Un Pago de booking sólo puede crearse mediante su servicio.'
+            )
+        if self.provider_code and not getattr(self, '_allow_external_create', False):
+            raise ValidationError(
+                'Un Pago externo sólo puede crearse mediante su reconciliador.'
             )
         self.full_clean()
         return super().save(*args, **kwargs)
@@ -4817,6 +4919,18 @@ class PaymentReconciliationCaseManager(
         case.save(force_insert=True, using=self.db)
         return case
 
+    def _link_provider_context(self, *, case_id, attempt_id, event_id):
+        queryset = self.get_queryset().filter(
+            pk=case_id,
+            provider_attempt__isnull=True,
+            provider_event__isnull=True,
+        )
+        return models.QuerySet.update(
+            queryset,
+            provider_attempt_id=attempt_id,
+            provider_event_id=event_id,
+        )
+
 
 class PaymentReconciliationCase(models.Model):
     """Excepción financiera provider-neutral pendiente de resolución manual."""
@@ -4826,6 +4940,18 @@ class PaymentReconciliationCase(models.Model):
         BOOKING_CONFIRMATION_FAILED = (
             'BOOKING_CONFIRMATION_FAILED',
             'Confirmación de agenda fallida',
+        )
+        EXTERNAL_PAYMENT_REVIEW = (
+            'EXTERNAL_PAYMENT_REVIEW',
+            'Revisión de pago externo',
+        )
+        ORDER_FULFILLMENT_FAILED = (
+            'ORDER_FULFILLMENT_FAILED',
+            'Orden no cumplible',
+        )
+        POST_PAYMENT_CHANGE = (
+            'POST_PAYMENT_CHANGE',
+            'Novedad financiera posterior',
         )
 
     class Status(models.TextChoices):
@@ -4837,11 +4963,15 @@ class PaymentReconciliationCase(models.Model):
         PaymentIntent,
         on_delete=models.PROTECT,
         related_name='reconciliation_cases',
+        null=True,
+        blank=True,
     )
     slot_hold = models.ForeignKey(
         SlotHold,
         on_delete=models.PROTECT,
         related_name='payment_reconciliation_cases',
+        null=True,
+        blank=True,
     )
     turno = models.ForeignKey(
         'Turno',
@@ -4853,6 +4983,27 @@ class PaymentReconciliationCase(models.Model):
     payments = models.ManyToManyField(
         Pago,
         related_name='reconciliation_cases',
+        blank=True,
+    )
+    order = models.ForeignKey(
+        OrdenCompra,
+        on_delete=models.PROTECT,
+        related_name='payment_reconciliation_cases',
+        null=True,
+        blank=True,
+    )
+    provider_attempt = models.ForeignKey(
+        ProviderPaymentAttempt,
+        on_delete=models.PROTECT,
+        related_name='reconciliation_cases',
+        null=True,
+        blank=True,
+    )
+    provider_event = models.ForeignKey(
+        ProviderEvent,
+        on_delete=models.PROTECT,
+        related_name='reconciliation_cases',
+        null=True,
         blank=True,
     )
     case_type = models.CharField(max_length=40, choices=Type.choices)
@@ -4893,6 +5044,27 @@ class PaymentReconciliationCase(models.Model):
                 ),
                 name='payment_reconciliation_case_status_time',
             ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        payment_intent__isnull=False,
+                        slot_hold__isnull=False,
+                        order__isnull=True,
+                    )
+                    | models.Q(
+                        payment_intent__isnull=True,
+                        slot_hold__isnull=True,
+                        order__isnull=False,
+                    )
+                ),
+                name='payment_case_exact_context',
+            ),
+        ]
+        permissions = [
+            (
+                'reconcile_external_payment',
+                'Can reconcile external payments manually',
+            ),
         ]
         indexes = [
             models.Index(
@@ -4917,6 +5089,8 @@ class PaymentReconciliationCase(models.Model):
             errors['operation_key'] = 'La operation key es obligatoria.'
         if not self.reason_code:
             errors['reason_code'] = 'La razón es obligatoria.'
+        if bool(self.payment_intent_id) == bool(self.order_id):
+            errors['payment_intent'] = 'El caso debe tener un único contexto.'
         if errors:
             raise ValidationError(errors)
 

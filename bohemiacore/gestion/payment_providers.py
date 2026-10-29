@@ -79,6 +79,11 @@ class ProviderOrderSnapshot:
     order_type: str
     country_code: str
     transaction_statuses: tuple[str, ...]
+    created_date: str = ''
+    last_updated_date: str = ''
+    payments: tuple[dict, ...] = ()
+    refunds: tuple[dict, ...] = ()
+    chargebacks: tuple[dict, ...] = ()
 
     def sanitized(self):
         return {
@@ -100,6 +105,11 @@ class ProviderOrderSnapshot:
             'type': self.order_type,
             'country_code': self.country_code,
             'transaction_statuses': list(self.transaction_statuses),
+            'created_date': self.created_date,
+            'last_updated_date': self.last_updated_date,
+            'payments': list(self.payments),
+            'refunds': list(self.refunds),
+            'chargebacks': list(self.chargebacks),
         }
 
 
@@ -163,6 +173,62 @@ class MercadoPagoAdapter:
         if isinstance(value, dict):
             return value
         return {}
+
+    @classmethod
+    def _payment_snapshots(cls, value):
+        if isinstance(value, dict):
+            value = [value]
+        if not isinstance(value, list):
+            return ()
+        snapshots = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            snapshots.append({
+                'id': str(item.get('id') or '')[:128],
+                'amount': cls._amount_text(item.get('amount')),
+                'paid_amount': cls._amount_text(item.get('paid_amount')),
+                'confirmed_amount': cls._amount_text(
+                    item.get('confirmed_amount')
+                ),
+                'status': str(item.get('status') or '')[:50],
+                'status_detail': str(item.get('status_detail') or '')[:100],
+                'created_date': str(item.get('created_date') or '')[:64],
+                'last_updated_date': str(
+                    item.get('last_updated_date') or ''
+                )[:64],
+            })
+        return tuple(snapshots)
+
+    @classmethod
+    def _refund_snapshots(cls, value):
+        if isinstance(value, dict):
+            value = [value]
+        if not isinstance(value, list):
+            return ()
+        return tuple({
+            'id': str(item.get('id') or '')[:128],
+            'transaction_id': str(item.get('transaction_id') or '')[:128],
+            'amount': cls._amount_text(item.get('amount')),
+            'status': str(item.get('status') or '')[:50],
+        } for item in value if isinstance(item, dict))
+
+    @staticmethod
+    def _chargeback_snapshots(value):
+        if isinstance(value, dict):
+            value = [value]
+        if not isinstance(value, list):
+            return ()
+        return tuple({
+            'id': str(item.get('id') or '')[:128],
+            'transaction_id': str(item.get('transaction_id') or '')[:128],
+            'status': str(item.get('status') or '')[:50],
+        } for item in value if isinstance(item, dict))
+
+    @classmethod
+    def _amount_text(cls, value):
+        amount = cls._decimal_or_none(value)
+        return str(amount) if amount is not None else ''
 
     def __init__(self):
         token = str(_setting('MERCADO_PAGO_ACCESS_TOKEN', '')).strip()
@@ -356,6 +422,17 @@ class MercadoPagoAdapter:
             for item in payment_values
             if isinstance(item, dict) and item.get('status')
         )
+        payment_snapshots = self._payment_snapshots(payment_values)
+        refund_snapshots = self._refund_snapshots(
+            transactions.get('refunds', [])
+            if isinstance(transactions, dict)
+            else []
+        )
+        chargeback_snapshots = self._chargeback_snapshots(
+            transactions.get('chargebacks', [])
+            if isinstance(transactions, dict)
+            else []
+        )
         return ProviderOrderSnapshot(
             provider_order_id=str(response.get('id') or '').strip(),
             status=str(response.get('status') or '')[:50],
@@ -378,6 +455,11 @@ class MercadoPagoAdapter:
             order_type=str(response.get('type') or '')[:30],
             country_code=str(response.get('country_code') or '')[:10],
             transaction_statuses=transaction_statuses,
+            created_date=str(response.get('created_date') or '')[:64],
+            last_updated_date=str(response.get('last_updated_date') or '')[:64],
+            payments=payment_snapshots,
+            refunds=refund_snapshots,
+            chargebacks=chargeback_snapshots,
         )
 
     def fetch_order(self, provider_order_id):
