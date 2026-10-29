@@ -1839,6 +1839,44 @@ class PaymentIntentPublicSerializer(serializers.ModelSerializer):
         return self._financial(obj).financial_threshold_reached
 
 
+class PaymentIntentOperationalSerializer(PaymentIntentPublicSerializer):
+    cliente_id = serializers.IntegerField(read_only=True)
+    cliente_nombre = serializers.CharField(
+        source='cliente.usuario.get_full_name',
+        read_only=True,
+    )
+    cliente_email = serializers.EmailField(
+        source='cliente.usuario.email',
+        read_only=True,
+    )
+    context = serializers.SerializerMethodField()
+    enabled_manual_methods = serializers.SerializerMethodField()
+    allows_partial_payments = serializers.SerializerMethodField()
+
+    class Meta(PaymentIntentPublicSerializer.Meta):
+        fields = PaymentIntentPublicSerializer.Meta.fields + (
+            'cliente_id',
+            'cliente_nombre',
+            'cliente_email',
+            'context',
+            'enabled_manual_methods',
+            'allows_partial_payments',
+        )
+        read_only_fields = fields
+
+    @staticmethod
+    def get_context(_obj):
+        return 'BOOKING'
+
+    @staticmethod
+    def get_enabled_manual_methods(obj):
+        return list(obj.policy_snapshot.get('enabled_manual_methods', []))
+
+    @staticmethod
+    def get_allows_partial_payments(_obj):
+        return True
+
+
 class TechnicalBookingRequestReevaluateSerializer(serializers.Serializer):
     servicio_ids = serializers.PrimaryKeyRelatedField(
         source='servicios',

@@ -44,6 +44,34 @@ describe('navegación de solicitudes técnicas', () => {
 });
 
 
+describe('navegación de caja presencial', () => {
+    test.each([
+        'gestion.register_payment',
+        'gestion.confirm_deposit',
+        'gestion.view_financial_reports'
+    ])('%s muestra Caja y Operaciones por capacidad efectiva', (permission) => {
+        const visible = getVisibleNavigationItems(
+            access({permissions: [permission], businessRole: 'EMPLEADO'}),
+            NAVIGATION_PLACEMENT.PRIMARY
+        );
+
+        expect(visible.map((item) => item.id)).toEqual(expect.arrayContaining([
+            'operations',
+            'in-person-payments'
+        ]));
+    });
+
+    test('rol e is_staff no son sustitutos de permisos financieros', () => {
+        const visible = getVisibleNavigationItems(
+            access({permissions: [], businessRole: 'ADMINISTRADOR'}),
+            NAVIGATION_PLACEMENT.PRIMARY
+        );
+
+        expect(visible.map((item) => item.id)).not.toContain('in-person-payments');
+    });
+});
+
+
 describe('navegación de inventario por permisos', () => {
     test.each([
         'gestion.view_stock',

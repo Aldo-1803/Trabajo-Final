@@ -66,7 +66,7 @@ import EditorContenidoEducativo from '../pages/admin/EditorContenidoEducativo';
 
 // Imports - Admin Pages (Órdenes)
 import GestionOrdenes from '../pages/admin/GestionOrdenes';
-import HistorialPagos from '../pages/admin/HistorialPagos';
+import CajaPresencial from '../pages/admin/CajaPresencial';
 
 // Imports - Admin Pages (Auditoría)
 import Auditoria from '../pages/admin/Auditoria';
@@ -92,7 +92,7 @@ export const AppRoutes = () => {
                 <Route path="/compra-fallida" element={<ProtectedRoute requiredProfile="cliente"><RetornoMercadoPago result="failure" /></ProtectedRoute>} />
 
                 {/* Session landing routes */}
-                <Route path={SESSION_ROUTES.OPERACIONES} element={<ProtectedRoute requiredAnyPermission={['gestion.view_global_agenda', 'usuarios.create_walkin_client', 'gestion.create_turno_for_client', 'gestion.register_arrival', 'gestion.reprogram_any_turno', 'gestion.cancel_any_turno']}><Operaciones /></ProtectedRoute>} />
+                <Route path={SESSION_ROUTES.OPERACIONES} element={<ProtectedRoute requiredAnyPermission={['gestion.view_global_agenda', 'usuarios.create_walkin_client', 'gestion.create_turno_for_client', 'gestion.register_arrival', 'gestion.reprogram_any_turno', 'gestion.cancel_any_turno', 'gestion.register_payment', 'gestion.confirm_deposit', 'gestion.view_financial_reports']}><Operaciones /></ProtectedRoute>} />
                 <Route path={SESSION_ROUTES.MI_AGENDA_LABORAL} element={<ProtectedRoute requiredActiveProfile="personal"><MiAgendaLaboral /></ProtectedRoute>} />
                 <Route path={SESSION_ROUTES.REVISION_TECNICA} element={<ProtectedRoute requiredPermission="gestion.review_technical_booking" requiredActiveProfile="personal"><RevisionTecnica /></ProtectedRoute>} />
                 <Route path={SESSION_ROUTES.CUENTA_SIN_ACCESO} element={<CuentaSinAcceso />} />
@@ -145,7 +145,7 @@ export const AppRoutes = () => {
 
                 {/* Admin Routes - Órdenes */}
                 <Route path={ADMIN_ROUTES.ORDENES} element={<ProtectedRoute requiredPermission="gestion.manage_stock"><GestionOrdenes /></ProtectedRoute>} />
-                <Route path={ADMIN_ROUTES.CAJA} element={<ProtectedRoute><HistorialPagos /></ProtectedRoute>} />
+                <Route path={ADMIN_ROUTES.CAJA} element={<ProtectedRoute requiredAnyPermission={['gestion.register_payment', 'gestion.confirm_deposit', 'gestion.view_financial_reports']}><CajaPresencial /></ProtectedRoute>} />
 
                 {/* Admin Routes - Auditoría */}
                 <Route path={ADMIN_ROUTES.AUDITORIA} element={<ProtectedRoute requiredPermission="gestion.view_audit"><Auditoria /></ProtectedRoute>} />

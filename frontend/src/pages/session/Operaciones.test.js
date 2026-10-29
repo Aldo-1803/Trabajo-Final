@@ -115,6 +115,22 @@ describe('Operaciones por permisos efectivos', () => {
         expect(axios.get).not.toHaveBeenCalled();
     });
 
+    test.each([
+        'gestion.register_payment',
+        'gestion.confirm_deposit',
+        'gestion.view_financial_reports'
+    ])('%s habilita Caja presencial sin depender de rol ni is_staff', (permission) => {
+        renderOperations({
+            businessRole: 'EMPLEADO',
+            permissions: [permission],
+            isStaff: false
+        });
+
+        expect(screen.getByRole('link', { name: 'Abrir caja presencial' }))
+            .toHaveAttribute('href', '/admin/caja');
+        expect(axios.get).not.toHaveBeenCalled();
+    });
+
     test('BusinessRole e is_staff no habilitan agenda sin permiso', () => {
         renderOperations({
             businessRole: 'ADMINISTRADOR',

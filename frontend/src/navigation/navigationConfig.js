@@ -24,7 +24,21 @@ export const navigationItems = [
             'gestion.create_turno_for_client',
             'gestion.register_arrival',
             'gestion.reprogram_any_turno',
-            'gestion.cancel_any_turno'
+            'gestion.cancel_any_turno',
+            'gestion.register_payment',
+            'gestion.confirm_deposit',
+            'gestion.view_financial_reports'
+        ]
+    },
+    {
+        id: 'in-person-payments',
+        label: 'Caja presencial',
+        path: ADMIN_ROUTES.CAJA,
+        placement: NAVIGATION_PLACEMENT.PRIMARY,
+        anyPermissions: [
+            'gestion.register_payment',
+            'gestion.confirm_deposit',
+            'gestion.view_financial_reports'
         ]
     },
     {

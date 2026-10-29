@@ -85,6 +85,7 @@ from .serializers import (
     SlotHoldReleaseCommandSerializer,
     PaymentIntentCancelCommandSerializer,
     PaymentIntentCreateCommandSerializer,
+    PaymentIntentOperationalSerializer,
     PaymentIntentOptionsQuerySerializer,
     PaymentIntentPublicSerializer,
     ProviderCheckoutCommandSerializer,
@@ -7121,6 +7122,44 @@ class PaymentIntentViewSet(viewsets.GenericViewSet):
     lookup_field = 'public_id'
     lookup_value_regex = '[0-9a-fA-F-]{36}'
 
+    OPERATIONAL_READ_PERMISSIONS = (
+        BusinessPermission.REGISTER_PAYMENT,
+        BusinessPermission.CONFIRM_DEPOSIT,
+        BusinessPermission.VIEW_FINANCIAL_REPORTS,
+    )
+
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return PaymentIntentOperationalSerializer
+        return PaymentIntentPublicSerializer
+
+    def _can_read_operational_obligations(self):
+        user = self.request.user
+        return bool(
+            getattr(user, 'is_active', False)
+            and any(
+                user.has_perm(permission)
+                for permission in self.OPERATIONAL_READ_PERMISSIONS
+            )
+        )
+
+    @staticmethod
+    def _operational_queryset():
+        return (
+            PaymentIntent.objects.select_related(
+                'cliente__usuario',
+                'slot_hold',
+                'policy',
+            )
+            .prefetch_related(
+                'lines',
+                'payments',
+                'reconciliation_cases',
+                'provider_attempts__provider_events',
+            )
+            .order_by('-created_at', '-pk')
+        )
+
     def get_queryset(self):
         try:
             cliente = self.request.user.cliente
@@ -7145,6 +7184,35 @@ class PaymentIntentViewSet(viewsets.GenericViewSet):
                 'database_now': database_now(),
             },
         ).data
+
+    def list(self, request, *args, **kwargs):
+        if not self._can_read_operational_obligations():
+            raise PermissionDenied(
+                'No tiene permisos para consultar obligaciones financieras.'
+            )
+        queryset = self._operational_queryset()
+        search = request.query_params.get('search', '').strip()
+        if search:
+            queryset = queryset.filter(
+                Q(cliente__usuario__email__icontains=search)
+                | Q(cliente__usuario__first_name__icontains=search)
+                | Q(cliente__usuario__last_name__icontains=search)
+            )
+        intent_status = request.query_params.get('status', '').strip()
+        if intent_status:
+            queryset = queryset.filter(status=intent_status)
+        page = self.paginate_queryset(queryset)
+        serializer = self.get_serializer(
+            page if page is not None else queryset,
+            many=True,
+            context={
+                **self.get_serializer_context(),
+                'database_now': database_now(),
+            },
+        )
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return Response(serializer.data)
 
     @staticmethod
     def _error_response(exc):

@@ -33,6 +33,11 @@ const Operaciones = () => {
     const canCancelTurno = hasPermission('gestion.cancel_any_turno');
     const canCreateWalkinClient = hasPermission('usuarios.create_walkin_client');
     const canCreateTurno = hasPermission('gestion.create_turno_for_client');
+    const canReadPayments = [
+        'gestion.register_payment',
+        'gestion.confirm_deposit',
+        'gestion.view_financial_reports',
+    ].some((permission) => hasPermission(permission));
     const hasActivePersonal = hasActiveProfile?.('personal') === true;
     const canReadOwnAgenda = !canViewAgenda && hasActivePersonal;
 
@@ -115,7 +120,7 @@ const Operaciones = () => {
                 </h1>
                 <p className="text-stone-500 mb-8">Panel operativo</p>
 
-                {!canViewAgenda && !canReadOwnAgenda && !canCreateWalkinClient && !canCreateTurno && (
+                {!canViewAgenda && !canReadOwnAgenda && !canCreateWalkinClient && !canCreateTurno && !canReadPayments && (
                     <div className="rounded-xl bg-white p-6 shadow text-stone-600">
                         No hay Turnos disponibles para operar con los permisos actuales.
                     </div>
@@ -218,6 +223,21 @@ const Operaciones = () => {
                                 className="inline-flex rounded-lg bg-rose-700 px-4 py-2 font-semibold text-white hover:bg-rose-800"
                             >
                                 Nuevo turno
+                            </Link>
+                        </section>
+                    )}
+
+                    {canReadPayments && (
+                        <section className="rounded-xl bg-white p-6 shadow">
+                            <h2 className="text-xl font-bold text-stone-700 mb-3">Caja presencial</h2>
+                            <p className="text-sm text-stone-500 mb-5">
+                                Consultá obligaciones y operá efectivo, transferencias o enlaces de pago según tus permisos.
+                            </p>
+                            <Link
+                                to="/admin/caja"
+                                className="inline-flex rounded-lg bg-sky-700 px-4 py-2 font-semibold text-white hover:bg-sky-800"
+                            >
+                                Abrir caja presencial
                             </Link>
                         </section>
                     )}

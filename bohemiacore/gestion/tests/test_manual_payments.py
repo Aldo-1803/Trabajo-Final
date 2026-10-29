@@ -556,6 +556,67 @@ class ManualPaymentPermissionAndApiTests(ManualPaymentFixtureMixin, TestCase):
             status.HTTP_404_NOT_FOUND,
         )
 
+    def test_operational_obligation_list_uses_effective_financial_permissions(self):
+        url = reverse('payment-intent-list')
+        report_user = Usuario.objects.create_user(
+            email='obligation-reader@test.com',
+            password='Payment!2026',
+        )
+        report_user.user_permissions.add(
+            Permission.objects.get(codename='view_financial_reports')
+        )
+        report_api = APIClient()
+        report_api.force_authenticate(report_user)
+
+        for permission, api in (
+            ('register_payment', self.register_api),
+            ('confirm_deposit', self.reconcile_api),
+            ('view_financial_reports', report_api),
+        ):
+            with self.subTest(permission=permission):
+                response = api.get(url)
+                self.assertEqual(response.status_code, status.HTTP_200_OK)
+                rows = response.data.get('results', response.data)
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(
+                    rows[0]['public_id'],
+                    str(self.intent.public_id),
+                )
+                self.assertEqual(rows[0]['context'], 'BOOKING')
+                self.assertEqual(rows[0]['cliente_email'], self.user.email)
+                self.assertEqual(rows[0]['balance'], Decimal('1000.00'))
+                self.assertTrue(rows[0]['allows_partial_payments'])
+                self.assertIn('CASH', rows[0]['enabled_manual_methods'])
+
+        self.assertEqual(
+            self.staff_api.get(url).status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+        self.assertEqual(
+            self.owner_api.get(url).status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+        self.assertEqual(
+            self.owner_api.get(
+                reverse('payment-intent-detail', args=[self.intent.public_id])
+            ).status_code,
+            status.HTTP_200_OK,
+        )
+
+    def test_payment_command_cannot_confirm_booking_from_frontend(self):
+        payload = self.payload(status=Pago.Status.RECONCILED, confirmed=True)
+        response = self.register_api.post(
+            self.payments_url,
+            payload,
+            format='json',
+            HTTP_IDEMPOTENCY_KEY='frontend-confirmation-denied',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(Pago.objects.filter(payment_intent=self.intent).count(), 0)
+        self.intent.refresh_from_db()
+        self.assertIsNone(self.intent.confirmed_turno_id)
+
     def test_global_reports_require_exact_permission(self):
         self.register()
         report_user = Usuario.objects.create_user(
