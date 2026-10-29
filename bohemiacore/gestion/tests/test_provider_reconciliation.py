@@ -564,7 +564,10 @@ class OrderProviderReconciliationTests(OrderInventoryFixtureMixin, TestCase):
             ).exists()
         )
 
-        fulfillment = apply_order_inventory_effect(self.order.pk)
+        fulfillment = apply_order_inventory_effect(
+            self.order.pk,
+            actor=self.stock_actor,
+        )
         self.assertTrue(fulfillment.applied)
         self.order.refresh_from_db()
         self.assertEqual(self.order.estado, 'COMPLETADO')

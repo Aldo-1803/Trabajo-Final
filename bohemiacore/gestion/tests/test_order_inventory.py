@@ -27,6 +27,7 @@ from gestion.models import (
 )
 from gestion.order_inventory_services import (
     OrderInventoryConflict,
+    OrderInventoryPermissionDenied,
     apply_order_inventory_effect,
     create_order_stock_commitments,
     release_order_stock_commitments,
@@ -162,11 +163,11 @@ class OrderInventoryServiceTests(OrderInventoryFixtureMixin, TestCase):
         order = self.make_order([
             (self.product, 1),
             (self.product, 2),
-        ])
+        ], state='PAGADO')
         create_order_stock_commitments(order.pk)
 
-        first = apply_order_inventory_effect(order.pk)
-        retry = apply_order_inventory_effect(order.pk)
+        first = apply_order_inventory_effect(order.pk, actor=self.stock_actor)
+        retry = apply_order_inventory_effect(order.pk, actor=self.stock_actor)
         order.refresh_from_db()
         self.product.refresh_from_db()
         commitment = CompromisoStock.objects.get(orden=order)
@@ -258,6 +259,183 @@ class OrderInventoryServiceTests(OrderInventoryFixtureMixin, TestCase):
             migration.preflight_legacy_commitments(apps, schema_editor)
 
 
+class OrderDeliveryAuthorizationTests(OrderInventoryFixtureMixin, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.api = APIClient()
+
+    def prepared_order(self, *, state, suffix):
+        self.receive(self.product, 2, suffix)
+        order = self.make_order(
+            [(self.product, 1)],
+            state=state,
+            code=f'F1-{suffix}',
+        )
+        create_order_stock_commitments(order.pk)
+        return order
+
+    def assert_no_delivery_effect(self, order, *, state, committed):
+        order.refresh_from_db()
+        self.product.refresh_from_db()
+        commitment = CompromisoStock.objects.get(orden=order)
+        self.assertEqual(order.estado, state)
+        self.assertEqual(commitment.estado, CompromisoStock.State.ACTIVE)
+        self.assertEqual(self.product.stock_real, 2)
+        self.assertEqual(self.product.stock_comprometido, committed)
+        self.assertFalse(
+            MovimientoStock.objects.filter(
+                tipo=MovimientoStock.Type.ORDER_SALE_OUT,
+                reference_id=str(order.pk),
+            ).exists()
+        )
+
+    def test_client_cannot_deliver_unpaid_order_and_stock_is_intact(self):
+        order = self.prepared_order(state='PENDIENTE', suffix='CLIENT-UNPAID')
+        self.api.force_authenticate(self.user)
+
+        response = self.api.post(
+            reverse('orden-compra-confirmar-entrega', args=[order.pk]),
+            {},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assert_no_delivery_effect(order, state='PENDIENTE', committed=1)
+
+    def test_client_cannot_deliver_paid_order_and_stock_is_intact(self):
+        order = self.prepared_order(state='PAGADO', suffix='CLIENT-PAID')
+        self.api.force_authenticate(self.user)
+
+        response = self.api.post(
+            reverse('orden-compra-confirmar-entrega', args=[order.pk]),
+            {},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assert_no_delivery_effect(order, state='PAGADO', committed=1)
+
+    def test_staff_flag_without_effective_permission_cannot_deliver(self):
+        order = self.prepared_order(state='PAGADO', suffix='STAFF-FLAG')
+        staff_only = Usuario.objects.create_user(
+            email='order-staff-flag@test.com',
+            is_staff=True,
+        )
+        self.api.force_authenticate(staff_only)
+
+        response = self.api.post(
+            reverse('orden-compra-confirmar-entrega', args=[order.pk]),
+            {},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assert_no_delivery_effect(order, state='PAGADO', committed=1)
+
+    def test_domain_service_rejects_actor_without_effective_permission(self):
+        order = self.prepared_order(state='PAGADO', suffix='SERVICE-PERM')
+
+        with self.assertRaises(OrderInventoryPermissionDenied):
+            apply_order_inventory_effect(order.pk, actor=self.user)
+
+        self.assert_no_delivery_effect(order, state='PAGADO', committed=1)
+
+    def test_authorized_person_cannot_deliver_unpaid_order(self):
+        order = self.prepared_order(state='ESPERANDO_PAGO', suffix='STAFF-UNPAID')
+        self.api.force_authenticate(self.stock_actor)
+
+        response = self.api.post(
+            reverse('orden-compra-confirmar-entrega', args=[order.pk]),
+            {},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(response.data['code'], 'ORDER_NOT_PAID')
+        self.assert_no_delivery_effect(order, state='ESPERANDO_PAGO', committed=1)
+
+    def test_authorized_person_delivers_paid_order_and_retry_is_idempotent(self):
+        order = self.prepared_order(state='PAGADO', suffix='STAFF-PAID')
+        self.api.force_authenticate(self.stock_actor)
+        url = reverse('orden-compra-confirmar-entrega', args=[order.pk])
+
+        first = self.api.post(url, {}, format='json')
+        retry = self.api.post(url, {}, format='json')
+
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+        self.assertEqual(retry.status_code, status.HTTP_200_OK)
+        order.refresh_from_db()
+        self.product.refresh_from_db()
+        commitment = CompromisoStock.objects.get(orden=order)
+        self.assertEqual(order.estado, 'COMPLETADO')
+        self.assertEqual(commitment.estado, CompromisoStock.State.CONSUMED)
+        self.assertEqual(self.product.stock_real, 1)
+        self.assertEqual(self.product.stock_comprometido, 0)
+        self.assertEqual(
+            MovimientoStock.objects.filter(
+                tipo=MovimientoStock.Type.ORDER_SALE_OUT,
+                reference_id=str(order.pk),
+            ).count(),
+            1,
+        )
+
+    def test_authorized_person_cannot_deliver_cancelled_order(self):
+        order = self.prepared_order(state='PAGADO', suffix='CANCELLED')
+        release_order_stock_commitments(order.pk)
+        self.api.force_authenticate(self.stock_actor)
+
+        response = self.api.post(
+            reverse('orden-compra-confirmar-entrega', args=[order.pk]),
+            {},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(response.data['code'], 'ORDER_NOT_PAID')
+        order.refresh_from_db()
+        self.product.refresh_from_db()
+        commitment = CompromisoStock.objects.get(orden=order)
+        self.assertEqual(order.estado, 'CANCELADO')
+        self.assertEqual(commitment.estado, CompromisoStock.State.RELEASED)
+        self.assertEqual(self.product.stock_real, 2)
+        self.assertEqual(self.product.stock_comprometido, 0)
+        self.assertFalse(
+            MovimientoStock.objects.filter(
+                tipo=MovimientoStock.Type.ORDER_SALE_OUT,
+                reference_id=str(order.pk),
+            ).exists()
+        )
+
+    def test_client_cannot_use_pending_order_delivery_aliases(self):
+        order = self.prepared_order(state='PAGADO', suffix='PENDING-ALIASES')
+        pending = OrdenPendiente.objects.create(
+            cliente=self.client_profile,
+            orden_compra=order,
+            estado='CONFIRMADA',
+            items_json=[{
+                'producto_id': self.product.pk,
+                'cantidad': 1,
+                'precio': '100.00',
+            }],
+            monto_total=Decimal('100.00'),
+        )
+        self.api.force_authenticate(self.user)
+
+        for route in (
+            'orden-pendiente-confirmar-pago',
+            'orden-pendiente-confirmar-entrega',
+        ):
+            with self.subTest(route=route):
+                response = self.api.post(
+                    reverse(route, args=[pending.pk]),
+                    {},
+                    format='json',
+                )
+                self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+        self.assert_no_delivery_effect(order, state='PAGADO', committed=1)
+
+
 class OrderInventoryLegacyEndpointTests(OrderInventoryFixtureMixin, TestCase):
     def setUp(self):
         super().setUp()
@@ -281,6 +459,9 @@ class OrderInventoryLegacyEndpointTests(OrderInventoryFixtureMixin, TestCase):
         order = OrdenCompra.objects.get(pk=finalized.data['orden_id'])
         self.product.refresh_from_db()
         self.assertEqual(self.product.stock_comprometido, 2)
+        order.estado = 'PAGADO'
+        order.save(update_fields=['estado'])
+        self.api.force_authenticate(self.stock_actor)
 
         url = reverse('orden-compra-confirmar-entrega', args=[order.pk])
         first = self.api.post(url, {}, format='json')
@@ -384,6 +565,8 @@ class OrderInventoryLegacyEndpointTests(OrderInventoryFixtureMixin, TestCase):
         self.assertEqual(registered.status_code, status.HTTP_201_CREATED)
         pending = OrdenPendiente.objects.get(pk=registered.data['orden_id'])
         self.assertIsNotNone(pending.orden_compra_id)
+        OrdenCompra.objects.filter(pk=pending.orden_compra_id).update(estado='PAGADO')
+        self.api.force_authenticate(self.stock_actor)
 
         response = self.api.post(
             reverse('orden-pendiente-confirmar-pago', args=[pending.pk]),
@@ -408,6 +591,7 @@ class OrderInventoryLegacyEndpointTests(OrderInventoryFixtureMixin, TestCase):
         self.receive(self.product, 3, 'pending-delivery-cancel')
         delivered_order = self.make_order(
             [(self.product, 1)],
+            state='PAGADO',
             code='D2-PENDING-DELIVERY',
         )
         create_order_stock_commitments(delivered_order.pk)
@@ -422,6 +606,7 @@ class OrderInventoryLegacyEndpointTests(OrderInventoryFixtureMixin, TestCase):
             }],
             monto_total=Decimal('100.00'),
         )
+        self.api.force_authenticate(self.stock_actor)
         delivered = self.api.post(
             reverse(
                 'orden-pendiente-confirmar-entrega',
@@ -431,6 +616,7 @@ class OrderInventoryLegacyEndpointTests(OrderInventoryFixtureMixin, TestCase):
             format='json',
         )
         self.assertEqual(delivered.status_code, status.HTTP_200_OK)
+        self.api.force_authenticate(self.user)
 
         cancelled_order = self.make_order(
             [(self.product, 1)],
@@ -466,7 +652,7 @@ class OrderInventoryLegacyEndpointTests(OrderInventoryFixtureMixin, TestCase):
             1,
         )
 
-    def test_unlinked_legacy_pending_order_is_bridged_just_in_time(self):
+    def test_unlinked_legacy_pending_order_cannot_bypass_paid_state(self):
         self.receive(self.product, 2, 'legacy-pending-jit')
         pending = OrdenPendiente.objects.create(
             cliente=self.client_profile,
@@ -479,23 +665,25 @@ class OrderInventoryLegacyEndpointTests(OrderInventoryFixtureMixin, TestCase):
             }],
             monto_total=Decimal('100.00'),
         )
+        self.api.force_authenticate(self.stock_actor)
         response = self.api.post(
             reverse('orden-pendiente-confirmar-entrega', args=[pending.pk]),
             {},
             format='json',
         )
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(response.data['code'], 'ORDER_NOT_PAID')
         pending.refresh_from_db()
         self.product.refresh_from_db()
-        self.assertIsNotNone(pending.orden_compra_id)
-        self.assertEqual(pending.estado, 'COMPLETADA')
-        self.assertEqual(self.product.stock_real, 1)
+        self.assertIsNone(pending.orden_compra_id)
+        self.assertEqual(pending.estado, 'PENDIENTE')
+        self.assertEqual(self.product.stock_real, 2)
         self.assertEqual(self.product.stock_comprometido, 0)
-        self.assertEqual(
-            CompromisoStock.objects.get(
-                orden_id=pending.orden_compra_id
-            ).estado,
-            CompromisoStock.State.CONSUMED,
+        self.assertFalse(CompromisoStock.objects.exists())
+        self.assertFalse(
+            MovimientoStock.objects.filter(
+                tipo=MovimientoStock.Type.ORDER_SALE_OUT
+            ).exists()
         )
 
     def test_legacy_webhook_cannot_approve_or_consume_stock(self):

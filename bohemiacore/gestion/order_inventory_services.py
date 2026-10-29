@@ -6,6 +6,8 @@ from django.db.models import Sum
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
+from usuarios.roles import BusinessPermission
+
 from .inventory_services import StockReference, apply_stock_deltas
 from .models import (
     CompromisoStock,
@@ -20,6 +22,8 @@ from .models import (
 ORDER_INVENTORY_REASON = 'ORDER_FULFILLMENT'
 ORDER_COMMITMENT_REASON = 'ORDER_RESERVATION'
 ORDER_INVENTORY_VERSION = 'v1'
+ORDER_DELIVERABLE_STATE = 'PAGADO'
+ORDER_DELIVERED_STATE = 'COMPLETADO'
 
 
 class OrderInventoryError(Exception):
@@ -43,6 +47,10 @@ class OrderInventoryNotFound(OrderInventoryError):
     default_code = 'ORDER_NOT_FOUND'
 
 
+class OrderInventoryPermissionDenied(OrderInventoryError):
+    default_code = 'ORDER_DELIVERY_PERMISSION_DENIED'
+
+
 @dataclass(frozen=True)
 class OrderInventoryEffectResult:
     order: OrdenCompra
@@ -64,6 +72,17 @@ def _lock_order(order_id):
         return OrdenCompra.objects.select_for_update().get(pk=order_id)
     except OrdenCompra.DoesNotExist:
         raise OrderInventoryNotFound('La OrdenCompra no existe.')
+
+
+def _require_delivery_authority(actor):
+    if not (
+        getattr(actor, 'is_authenticated', False)
+        and getattr(actor, 'is_active', False)
+        and actor.has_perm(BusinessPermission.MANAGE_STOCK)
+    ):
+        raise OrderInventoryPermissionDenied(
+            'No tiene permisos para confirmar entregas de órdenes.'
+        )
 
 
 def _consolidated_items(order):
@@ -231,9 +250,15 @@ def _set_product_commitment_projection(product, value):
 
 
 @transaction.atomic
-def apply_order_inventory_effect(order_id):
+def apply_order_inventory_effect(order_id, *, actor):
     """Aplica una única salida física por Producto lógico de OrdenCompra."""
+    _require_delivery_authority(actor)
     order = _lock_order(order_id)
+    if order.estado not in {ORDER_DELIVERABLE_STATE, ORDER_DELIVERED_STATE}:
+        raise OrderInventoryConflict(
+            'Sólo una orden pagada puede entregarse.',
+            code='ORDER_NOT_PAID',
+        )
     quantities = _consolidated_items(order)
     products = _lock_products(quantities)
     commitments = _lock_commitments(order.pk)
@@ -244,15 +269,12 @@ def apply_order_inventory_effect(order_id):
         .order_by('pk')
     )
 
-    if commitments:
-        _validate_existing_commitments(order, quantities, commitments)
-    else:
-        if order.estado in {'CANCELADO', 'RECHAZADO'}:
-            raise OrderInventoryConflict(
-                'Una orden cancelada o rechazada no puede consumir inventario.',
-                code='ORDER_TERMINAL_FOR_INVENTORY',
-            )
-        commitments = _create_commitments_locked(order, quantities, products)
+    if not commitments:
+        raise OrderInventoryConflict(
+            'La orden pagada no tiene compromisos de stock entregables.',
+            code='ORDER_COMMITMENTS_REQUIRED',
+        )
+    _validate_existing_commitments(order, quantities, commitments)
 
     states = {commitment.estado for commitment in commitments}
     if states == {CompromisoStock.State.RELEASED}:
@@ -284,14 +306,16 @@ def apply_order_inventory_effect(order_id):
         for product_id, quantity in quantities.items()
     ]
     if states == {CompromisoStock.State.CONSUMED}:
+        if order.estado != ORDER_DELIVERED_STATE:
+            raise OrderInventoryConflict(
+                'La orden tiene compromisos consumidos sin estar completada.',
+                code='CONSUMED_COMMITMENTS_WITHOUT_COMPLETED_ORDER',
+            )
         if set(existing_by_key) != set(keys):
             raise OrderInventoryConflict(
                 'Hay compromisos consumidos sin su movimiento físico.',
                 code='CONSUMED_COMMITMENT_WITHOUT_MOVEMENT',
             )
-        if order.estado != 'COMPLETADO':
-            OrdenCompra.objects.filter(pk=order.pk).update(estado='COMPLETADO')
-            order.estado = 'COMPLETADO'
         ordered = tuple(apply_stock_deltas(commands))
         return OrderInventoryEffectResult(
             order=order,
@@ -300,10 +324,15 @@ def apply_order_inventory_effect(order_id):
             applied=False,
         )
 
-    if order.estado in {'CANCELADO', 'RECHAZADO'}:
+    if order.estado != ORDER_DELIVERABLE_STATE:
         raise OrderInventoryConflict(
-            'Una orden cancelada o rechazada no puede consumir inventario.',
-            code='ORDER_TERMINAL_FOR_INVENTORY',
+            'Una orden completada no puede iniciar un nuevo efecto físico.',
+            code='COMPLETED_ORDER_WITHOUT_CONSUMED_COMMITMENTS',
+        )
+    if existing_by_key:
+        raise OrderInventoryConflict(
+            'La orden tiene movimientos físicos con compromisos aún activos.',
+            code='ORDER_MOVEMENT_WITH_ACTIVE_COMMITMENT',
         )
 
     for product_id, quantity in quantities.items():
@@ -327,8 +356,8 @@ def apply_order_inventory_effect(order_id):
         commitment.consumed_at = now
         commitment.released_at = None
 
-    OrdenCompra.objects.filter(pk=order.pk).update(estado='COMPLETADO')
-    order.estado = 'COMPLETADO'
+    OrdenCompra.objects.filter(pk=order.pk).update(estado=ORDER_DELIVERED_STATE)
+    order.estado = ORDER_DELIVERED_STATE
     return OrderInventoryEffectResult(
         order=order,
         commitments=tuple(commitments),
@@ -456,7 +485,8 @@ def _ensure_pending_bridge_locked(pending_order):
 
 
 @transaction.atomic
-def apply_pending_order_inventory_effect(pending_order_id):
+def apply_pending_order_inventory_effect(pending_order_id, *, actor):
+    _require_delivery_authority(actor)
     try:
         pending_order = (
             OrdenPendiente.objects.select_for_update()
@@ -478,7 +508,7 @@ def apply_pending_order_inventory_effect(pending_order_id):
             code='LEGACY_PENDING_ORDER_ALREADY_COMPLETED',
         )
     order_id = _ensure_pending_bridge_locked(pending_order)
-    result = apply_order_inventory_effect(order_id)
+    result = apply_order_inventory_effect(order_id, actor=actor)
     completed_at = pending_order.fecha_completacion or timezone.now()
     OrdenPendiente.objects.filter(pk=pending_order.pk).update(
         estado='COMPLETADA',

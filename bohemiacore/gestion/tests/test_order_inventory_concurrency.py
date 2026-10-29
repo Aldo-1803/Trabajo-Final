@@ -83,11 +83,11 @@ class OrderInventoryConcurrencyTests(TransactionTestCase):
             idempotency_key=f'd2-race-opening-{suffix}',
         )
 
-    def make_order(self, lines, suffix):
+    def make_order(self, lines, suffix, *, state='PENDIENTE'):
         order = OrdenCompra.objects.create(
             codigo=f'D2-RACE-{suffix}',
             cliente=self.client_profile,
-            estado='PENDIENTE',
+            estado=state,
             total=sum(product.precio * quantity for product, quantity in lines),
         )
         for product, quantity in lines:
@@ -133,11 +133,25 @@ class OrderInventoryConcurrencyTests(TransactionTestCase):
 
     def test_two_confirmations_same_order_create_one_movement(self):
         self.receive(self.first_product, 1, 'double-confirm')
-        order = self.make_order([(self.first_product, 1)], 'DOUBLE')
+        order = self.make_order(
+            [(self.first_product, 1)],
+            'DOUBLE',
+            state='PAGADO',
+        )
         create_order_stock_commitments(order.pk)
         results = self._run_two(
-            self.operation(lambda: apply_order_inventory_effect(order.pk).movements[0].pk),
-            self.operation(lambda: apply_order_inventory_effect(order.pk).movements[0].pk),
+            self.operation(
+                lambda: apply_order_inventory_effect(
+                    order.pk,
+                    actor=self.actor,
+                ).movements[0].pk
+            ),
+            self.operation(
+                lambda: apply_order_inventory_effect(
+                    order.pk,
+                    actor=self.actor,
+                ).movements[0].pk
+            ),
         )
         self.assertTrue(all(code == 'ok' for code, _ in results))
         self.assertEqual(results[0][1], results[1][1])
@@ -150,7 +164,11 @@ class OrderInventoryConcurrencyTests(TransactionTestCase):
 
     def test_confirm_vs_cancel_pending_contract_has_one_terminal_winner(self):
         self.receive(self.first_product, 1, 'pending-race')
-        order = self.make_order([(self.first_product, 1)], 'PENDING')
+        order = self.make_order(
+            [(self.first_product, 1)],
+            'PENDING',
+            state='PAGADO',
+        )
         create_order_stock_commitments(order.pk)
         pending = OrdenPendiente.objects.create(
             cliente=self.client_profile,
@@ -165,7 +183,10 @@ class OrderInventoryConcurrencyTests(TransactionTestCase):
         )
         results = self._run_two(
             self.operation(
-                lambda: apply_pending_order_inventory_effect(pending.pk)[0].estado
+                lambda: apply_pending_order_inventory_effect(
+                    pending.pk,
+                    actor=self.actor,
+                )[0].estado
             ),
             self.operation(
                 lambda: release_pending_order_stock_commitments(pending.pk).estado
@@ -186,10 +207,19 @@ class OrderInventoryConcurrencyTests(TransactionTestCase):
 
     def test_release_vs_consume_only_one_transition_wins(self):
         self.receive(self.first_product, 1, 'release-consume')
-        order = self.make_order([(self.first_product, 1)], 'REL-CONS')
+        order = self.make_order(
+            [(self.first_product, 1)],
+            'REL-CONS',
+            state='PAGADO',
+        )
         create_order_stock_commitments(order.pk)
         results = self._run_two(
-            self.operation(lambda: apply_order_inventory_effect(order.pk).order.estado),
+            self.operation(
+                lambda: apply_order_inventory_effect(
+                    order.pk,
+                    actor=self.actor,
+                ).order.estado
+            ),
             self.operation(
                 lambda: release_order_stock_commitments(order.pk)[0].estado
             ),
@@ -226,11 +256,25 @@ class OrderInventoryConcurrencyTests(TransactionTestCase):
 
     def test_same_deterministic_key_under_concurrency_has_one_effect(self):
         self.receive(self.first_product, 2, 'same-key')
-        order = self.make_order([(self.first_product, 1)], 'SAME-KEY')
+        order = self.make_order(
+            [(self.first_product, 1)],
+            'SAME-KEY',
+            state='PAGADO',
+        )
         create_order_stock_commitments(order.pk)
         results = self._run_two(
-            self.operation(lambda: apply_order_inventory_effect(order.pk).movements[0].idempotency_key),
-            self.operation(lambda: apply_order_inventory_effect(order.pk).movements[0].idempotency_key),
+            self.operation(
+                lambda: apply_order_inventory_effect(
+                    order.pk,
+                    actor=self.actor,
+                ).movements[0].idempotency_key
+            ),
+            self.operation(
+                lambda: apply_order_inventory_effect(
+                    order.pk,
+                    actor=self.actor,
+                ).movements[0].idempotency_key
+            ),
         )
         self.assertTrue(all(code == 'ok' for code, _ in results))
         self.assertEqual(results[0][1], results[1][1])

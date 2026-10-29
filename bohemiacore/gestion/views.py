@@ -6349,7 +6349,7 @@ class OrdenPendienteViewSet(viewsets.ModelViewSet):
         Los clientes ven solo sus propias órdenes.
         Los admins ven todas.
         """
-        if self.request.user.is_staff:
+        if self.request.user.has_perm(BusinessPermission.MANAGE_STOCK):
             return OrdenPendiente.objects.all()
         
         try:
@@ -6358,7 +6358,11 @@ class OrdenPendienteViewSet(viewsets.ModelViewSet):
         except Cliente.DoesNotExist:
             return OrdenPendiente.objects.none()
     
-    @action(detail=True, methods=['post'])
+    @action(
+        detail=True,
+        methods=['post'],
+        permission_classes=[IsAuthenticated, CanManageStock],
+    )
     def confirmar_pago(self, request, pk=None):
         """
         POST /api/gestion/ordenes-pendientes/{id}/confirmar_pago/
@@ -6368,7 +6372,10 @@ class OrdenPendienteViewSet(viewsets.ModelViewSet):
         """
         try:
             visible_order = self.get_object()
-            orden, _result = apply_pending_order_inventory_effect(visible_order.pk)
+            orden, _result = apply_pending_order_inventory_effect(
+                visible_order.pk,
+                actor=request.user,
+            )
             return Response(
                 {
                     'status': 'Pago confirmado',
@@ -6392,7 +6399,11 @@ class OrdenPendienteViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
-    @action(detail=True, methods=['post'])
+    @action(
+        detail=True,
+        methods=['post'],
+        permission_classes=[IsAuthenticated, CanManageStock],
+    )
     def confirmar_entrega(self, request, pk=None):
         """
         POST /api/gestion/ordenes-pendientes/{id}/confirmar_entrega/
@@ -6402,7 +6413,10 @@ class OrdenPendienteViewSet(viewsets.ModelViewSet):
         """
         try:
             visible_order = self.get_object()
-            orden, _result = apply_pending_order_inventory_effect(visible_order.pk)
+            orden, _result = apply_pending_order_inventory_effect(
+                visible_order.pk,
+                actor=request.user,
+            )
             return Response(
                 {
                     'status': 'Entrega confirmada',
@@ -6498,7 +6512,7 @@ class OrdenCompraViewSet(viewsets.ModelViewSet):
         Los clientes ven solo sus propias órdenes.
         Los admins ven todas.
         """
-        if self.request.user.is_staff:
+        if self.request.user.has_perm(BusinessPermission.MANAGE_STOCK):
             return OrdenCompra.objects.all()
         
         try:
@@ -6570,7 +6584,11 @@ class OrdenCompraViewSet(viewsets.ModelViewSet):
             status=status.HTTP_201_CREATED
         )
     
-    @action(detail=True, methods=['post'])
+    @action(
+        detail=True,
+        methods=['post'],
+        permission_classes=[IsAuthenticated, CanManageStock],
+    )
     def confirmar_entrega(self, request, pk=None):
         """
         POST /api/gestion/ordenes-compra/{id}/confirmar_entrega/
@@ -6580,7 +6598,10 @@ class OrdenCompraViewSet(viewsets.ModelViewSet):
         """
         try:
             visible_order = self.get_object()
-            result = apply_order_inventory_effect(visible_order.pk)
+            result = apply_order_inventory_effect(
+                visible_order.pk,
+                actor=request.user,
+            )
             orden = result.order
             
             # Serializar la orden actualizada
