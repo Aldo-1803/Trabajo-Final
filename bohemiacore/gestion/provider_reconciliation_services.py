@@ -440,7 +440,8 @@ def _finish_event(
 ):
     now = database_now()
     event.reconciliation_status = status
-    event.reconciliation_attempts += 1
+    if event.claim_token is None:
+        event.reconciliation_attempts += 1
     event.reconciled_at = now
     event.reconciliation_code = code[:50]
     event.business_result = {
@@ -551,6 +552,50 @@ def _mark_ignored(event, attempt, code, effect):
         changed=True,
         decision='NO_FINANCIAL_EFFECT',
         effect=effect,
+    )
+
+
+@transaction.atomic
+def mark_verified_provider_event_for_review(event_id, *, reason_code, detail):
+    """Persiste como revisión un error financiero tipado y no recuperable."""
+    try:
+        reference = ProviderEvent.objects.only('pk', 'attempt_id').get(pk=event_id)
+    except ProviderEvent.DoesNotExist as exc:
+        raise ProviderReconciliationNotFound() from exc
+    if reference.attempt_id is None:
+        raise ProviderReconciliationConflict(
+            'PROVIDER_ATTEMPT_NOT_LINKED',
+            'El evento no está asociado a una obligación verificable.',
+        )
+    attempt_reference = ProviderPaymentAttempt.objects.only(
+        'pk',
+        'context',
+    ).get(pk=reference.attempt_id)
+    if attempt_reference.context == ProviderPaymentAttempt.Context.BOOKING:
+        _graph, attempt = _lock_booking_context(attempt_reference.pk)
+    elif attempt_reference.context == ProviderPaymentAttempt.Context.ORDER:
+        _order, _commitments, attempt = _lock_order_context(
+            attempt_reference.pk
+        )
+    else:
+        raise ProviderReconciliationConflict(
+            'PROVIDER_CONTEXT_UNSUPPORTED',
+            'El contexto del Attempt no está soportado.',
+        )
+    event = _locked_event(reference.pk)
+    if event.reconciliation_status != ProviderEvent.ReconciliationStatus.NOT_EVALUATED:
+        return _idempotent_result(event)
+    if event.status != ProviderEvent.Status.VERIFIED:
+        raise ProviderReconciliationConflict(
+            'PROVIDER_EVENT_NOT_VERIFIED',
+            'Sólo se concilian eventos autenticados y verificados.',
+        )
+    return _review_result(
+        event=event,
+        attempt=attempt,
+        payments=tuple(event.financial_payments.order_by('pk')),
+        reason_code=str(reason_code)[:50] or 'RECONCILIATION_REVIEW_REQUIRED',
+        detail=str(detail)[:200],
     )
 
 
