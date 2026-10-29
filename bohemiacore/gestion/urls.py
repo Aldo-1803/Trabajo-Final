@@ -18,6 +18,7 @@ from .views import (
     #PasoRutinaViewSet,
 )
 from .views_auditoria import AuditoriaViewSet, HistorialAuditoriaViewSet
+from .financial_case_views import PaymentReconciliationCaseViewSet
 from .stats_views import DashboardStatsViewSet
 
 
@@ -111,6 +112,11 @@ router.register(r'ordenes-pendientes', OrdenPendienteViewSet, basename='orden-pe
 router.register(r'ordenes-compra', OrdenCompraViewSet, basename='orden-compra')
 router.register(r'pagos', PagoViewSet, basename='pagos')
 router.register(r'payments', PagoViewSet, basename='payment')
+router.register(
+    r'payment-reconciliation-cases',
+    PaymentReconciliationCaseViewSet,
+    basename='payment-reconciliation-case',
+)
 router.register(r'stats', DashboardStatsViewSet, basename='dashboard-stats')
 # --- AUDITORÍA ---
 router.register(r'auditoria', AuditoriaViewSet, basename='auditoria')

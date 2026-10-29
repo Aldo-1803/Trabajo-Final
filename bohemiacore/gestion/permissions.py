@@ -115,6 +115,19 @@ class CanViewFinancialReports(BasePermission):
         )
 
 
+class CanReconcileExternalPayment(BasePermission):
+    message = 'No tiene permisos para consultar incidencias financieras.'
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            getattr(user, 'is_active', False)
+            and user.has_perm(
+                BusinessPermission.RECONCILE_EXTERNAL_PAYMENT
+            )
+        )
+
+
 class CanViewStock(BasePermission):
     message = 'No tiene permisos para consultar stock interno.'
 
