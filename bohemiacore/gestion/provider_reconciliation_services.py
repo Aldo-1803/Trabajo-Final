@@ -379,7 +379,21 @@ def _create_case(
     )
     existing = PaymentReconciliationCase.objects.filter(operation_key=key).first()
     if existing is not None:
-        return existing, False
+        if existing.status == PaymentReconciliationCase.Status.OPEN:
+            return existing, False
+        key = _operation_key(
+            'provider-case-after-closure',
+            attempt.provider,
+            attempt.pk,
+            reason_code,
+            fingerprint,
+            event.event_id,
+        )
+        repeated = PaymentReconciliationCase.objects.filter(
+            operation_key=key
+        ).first()
+        if repeated is not None:
+            return repeated, False
     case = PaymentReconciliationCase.objects._create_from_service(
         payment_intent_id=attempt.payment_intent_id,
         slot_hold_id=(

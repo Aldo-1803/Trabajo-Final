@@ -11,11 +11,13 @@ from usuarios.roles import BusinessPermission
 from .inventory_services import StockReference, apply_stock_deltas
 from .models import (
     CompromisoStock,
+    FinancialAdjustment,
     MovimientoStock,
     OrdenCompra,
     OrdenItem,
     OrdenPendiente,
     Pago,
+    PaymentReconciliationCase,
     Producto,
 )
 
@@ -25,6 +27,7 @@ ORDER_COMMITMENT_REASON = 'ORDER_RESERVATION'
 ORDER_INVENTORY_VERSION = 'v1'
 ORDER_DELIVERABLE_STATE = 'PAGADO'
 ORDER_DELIVERED_STATE = 'COMPLETADO'
+_FINANCIAL_RELEASE_AUTHORITY = object()
 
 
 class OrderInventoryError(Exception):
@@ -327,6 +330,40 @@ def apply_order_inventory_effect(order_id, *, actor):
     """Aplica una única salida física por Producto lógico de OrdenCompra."""
     _require_delivery_authority(actor)
     order = _lock_order(order_id)
+    payments = tuple(
+        Pago.objects.select_for_update()
+        .filter(orden=order)
+        .order_by('pk')
+    )
+    payment_ids = [payment.pk for payment in payments]
+    adjustments = tuple(
+        FinancialAdjustment.objects.select_for_update()
+        .filter(payment_id__in=payment_ids)
+        .order_by('pk')
+    )
+    financial_review = PaymentReconciliationCase.objects.select_for_update().filter(
+        order=order,
+        status=PaymentReconciliationCase.Status.OPEN,
+    ).exists()
+    confirmed_debits = sum(
+        (
+            adjustment.amount for adjustment in adjustments
+            if adjustment.effect == FinancialAdjustment.Effect.DEBIT
+        ),
+        Decimal('0.00'),
+    )
+    confirmed_credits = sum(
+        (
+            adjustment.amount for adjustment in adjustments
+            if adjustment.effect == FinancialAdjustment.Effect.CREDIT
+        ),
+        Decimal('0.00'),
+    )
+    if financial_review or confirmed_debits > confirmed_credits:
+        raise OrderInventoryConflict(
+            'La orden tiene una revisión financiera que impide su entrega.',
+            code='ORDER_FINANCIAL_REVIEW_BLOCKS_DELIVERY',
+        )
     if order.estado not in {ORDER_DELIVERABLE_STATE, ORDER_DELIVERED_STATE}:
         raise OrderInventoryConflict(
             'Sólo una orden pagada puede entregarse.',
@@ -445,6 +482,7 @@ def release_order_stock_commitments(
     *,
     actor,
     final_state='CANCELADO',
+    _financial_authority=None,
 ):
     if final_state not in {'CANCELADO', 'RECHAZADO'}:
         raise OrderInventoryInvalid(
@@ -452,8 +490,24 @@ def release_order_stock_commitments(
             code='INVALID_RELEASE_ORDER_STATE',
         )
     order = _lock_order(order_id)
-    _require_cancellation_authority(order, actor)
-    _assert_order_cancellable(order)
+    if _financial_authority is _FINANCIAL_RELEASE_AUTHORITY:
+        if not (
+            getattr(actor, 'is_authenticated', False)
+            and getattr(actor, 'is_active', False)
+            and actor.has_perm(BusinessPermission.RECONCILE_EXTERNAL_PAYMENT)
+        ):
+            raise OrderInventoryPermissionDenied(
+                'No tiene autoridad para aplicar la resolución financiera.',
+                code='FINANCIAL_RESOLUTION_PERMISSION_DENIED',
+            )
+        if order.estado not in {ORDER_DELIVERABLE_STATE, final_state}:
+            raise OrderInventoryConflict(
+                'La orden ya no admite cancelación post-financiera.',
+                code='ORDER_STATE_CHANGED_BEFORE_FINANCIAL_RELEASE',
+            )
+    else:
+        _require_cancellation_authority(order, actor)
+        _assert_order_cancellable(order)
     quantities = _consolidated_items(order)
     products = _lock_products(quantities)
     commitments = _lock_commitments(order.pk)
@@ -507,6 +561,21 @@ def release_order_stock_commitments(
     OrdenCompra.objects.filter(pk=order.pk).update(estado=final_state)
     order.estado = final_state
     return commitments
+
+
+def release_order_after_confirmed_financial_resolution(
+    order_id,
+    *,
+    actor,
+    final_state='CANCELADO',
+):
+    """Autoridad canónica exclusiva para F7.5; preserva el bloqueo F5."""
+    return release_order_stock_commitments(
+        order_id,
+        actor=actor,
+        final_state=final_state,
+        _financial_authority=_FINANCIAL_RELEASE_AUTHORITY,
+    )
 
 
 def _pending_item_values(pending_order):

@@ -9,6 +9,8 @@ from rest_framework.permissions import IsAuthenticated
 
 from .financial_case_filters import PaymentReconciliationCaseFilter
 from .financial_case_serializers import (
+    FinancialCaseClosureCommandSerializer,
+    FinancialCaseClosureSerializer,
     FinancialRefundExecutionCommandSerializer,
     FinancialRefundOperationSerializer,
     FinancialResolutionDecisionCommandSerializer,
@@ -20,6 +22,7 @@ from .financial_case_serializers import (
     PaymentReconciliationCaseDetailSerializer,
     PaymentReconciliationCaseListSerializer,
 )
+from .financial_case_closure_services import close_financial_case
 from .financial_resolution_services import (
     FinancialResolutionConflict,
     FinancialResolutionInvalid,
@@ -67,6 +70,8 @@ class PaymentReconciliationCaseViewSet(viewsets.ReadOnlyModelViewSet):
             'provider_event',
             'resolution_request__requested_by',
             'resolution_request__turno',
+            'closure__decision',
+            'closure__closed_by',
         )
         .prefetch_related(
             'payments__financial_adjustments__refund_operation',
@@ -309,6 +314,38 @@ class PaymentReconciliationCaseViewSet(viewsets.ReadOnlyModelViewSet):
                 status.HTTP_200_OK
                 if result.uniquely_recovered
                 else status.HTTP_202_ACCEPTED
+            ),
+        )
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='close-financial-case',
+        permission_classes=[IsAuthenticated, CanReconcileExternalPayment],
+    )
+    def close_financial_case(self, request, public_id=None):
+        command = FinancialCaseClosureCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        try:
+            result = close_financial_case(
+                case_public_id=public_id,
+                actor=request.user,
+                rationale=command.validated_data['rationale'],
+                result=command.validated_data['result'],
+                idempotency_key=self._idempotency_key(request),
+            )
+        except (
+            FinancialResolutionInvalid,
+            FinancialResolutionConflict,
+            FinancialResolutionNotFound,
+            FinancialResolutionPermissionDenied,
+        ) as exc:
+            return self._error_response(exc)
+        return Response(
+            FinancialCaseClosureSerializer(result.closure).data,
+            status=(
+                status.HTTP_201_CREATED if result.changed
+                else status.HTTP_200_OK
             ),
         )
 

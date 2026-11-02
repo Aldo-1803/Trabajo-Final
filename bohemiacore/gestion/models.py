@@ -4931,6 +4931,18 @@ class PaymentReconciliationCaseManager(
             provider_event_id=event_id,
         )
 
+    def _resolve_from_service(self, *, case_id, resolved_at):
+        queryset = self.get_queryset().filter(
+            pk=case_id,
+            status='OPEN',
+            resolved_at__isnull=True,
+        )
+        return models.QuerySet.update(
+            queryset,
+            status='RESOLVED',
+            resolved_at=resolved_at,
+        )
+
 
 class PaymentReconciliationCase(models.Model):
     """Excepción financiera provider-neutral pendiente de resolución manual."""
@@ -5927,6 +5939,7 @@ class FinancialResolutionEvent(models.Model):
             'Evidencia adicional requerida',
         )
         DECISION_RECORDED = 'DECISION_RECORDED', 'Decisión registrada'
+        CASE_CLOSED = 'CASE_CLOSED', 'Caso cerrado verificablemente'
 
     public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     resolution_request = models.ForeignKey(
@@ -5934,10 +5947,10 @@ class FinancialResolutionEvent(models.Model):
         on_delete=models.PROTECT,
         related_name='events',
     )
-    decision = models.OneToOneField(
+    decision = models.ForeignKey(
         FinancialResolutionDecision,
         on_delete=models.PROTECT,
-        related_name='event',
+        related_name='events',
         null=True,
         blank=True,
     )
@@ -5968,6 +5981,7 @@ class FinancialResolutionEvent(models.Model):
                             event_type__in=[
                                 'MORE_EVIDENCE_REQUIRED',
                                 'DECISION_RECORDED',
+                                'CASE_CLOSED',
                             ]
                         )
                         & models.Q(decision__isnull=False)
@@ -6022,6 +6036,115 @@ class FinancialResolutionEvent(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValidationError('Un evento financiero no puede eliminarse.')
+
+
+class ImmutableFinancialCaseClosureQuerySet(models.QuerySet):
+    immutable_error = 'Los cierres financieros son inmutables.'
+
+    def update(self, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+    def delete(self):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_create(self, objs, *args, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+
+class FinancialCaseClosureManager(
+    models.Manager.from_queryset(ImmutableFinancialCaseClosureQuerySet)
+):
+    def _create_from_service(self, **values):
+        closure = self.model(**values)
+        closure._allow_service_create = True
+        closure.save(force_insert=True, using=self.db)
+        return closure
+
+
+class FinancialCaseClosure(models.Model):
+    class Result(models.TextChoices):
+        REFUND_CONFIRMED = 'REFUND_CONFIRMED', 'Devolución confirmada'
+        REFUND_DENIED = 'REFUND_DENIED', 'Devolución denegada'
+        NO_FINANCIAL_CHANGE = 'NO_FINANCIAL_CHANGE', 'Sin cambio financiero'
+        EXTERNAL_ADJUSTMENT_ACKNOWLEDGED = (
+            'EXTERNAL_ADJUSTMENT_ACKNOWLEDGED',
+            'Ajuste externo reconocido',
+        )
+        PHYSICAL_RETURN_DEFERRED = (
+            'PHYSICAL_RETURN_DEFERRED',
+            'Devolución física diferida',
+        )
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    case = models.OneToOneField(
+        PaymentReconciliationCase,
+        on_delete=models.PROTECT,
+        related_name='closure',
+    )
+    decision = models.ForeignKey(
+        FinancialResolutionDecision,
+        on_delete=models.PROTECT,
+        related_name='case_closures',
+    )
+    closed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='financial_case_closures',
+    )
+    rationale = models.TextField()
+    result = models.CharField(max_length=50, choices=Result.choices)
+    commercial_effect = models.CharField(max_length=50)
+    idempotency_key = models.CharField(max_length=128)
+    closure_fingerprint = models.CharField(max_length=64)
+    evidence = models.JSONField(default=dict)
+    closed_at = models.DateTimeField(default=timezone.now, editable=False)
+    objects = FinancialCaseClosureManager()
+
+    class Meta:
+        base_manager_name = 'objects'
+        default_manager_name = 'objects'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['closed_by', 'idempotency_key'],
+                name='financial_closure_actor_key_unique',
+            ),
+        ]
+
+    def clean(self):
+        errors = {}
+        if self.decision_id and self.case_id:
+            if self.decision.resolution_request.case_id != self.case_id:
+                errors['decision'] = 'La decisión no pertenece al caso.'
+        if not self.rationale or not self.rationale.strip():
+            errors['rationale'] = 'El fundamento es obligatorio.'
+        if not self.result or not self.result.strip():
+            errors['result'] = 'El resultado es obligatorio.'
+        elif self.result not in self.Result.values:
+            errors['result'] = 'El resultado no es válido.'
+        if not self.idempotency_key or not self.idempotency_key.strip():
+            errors['idempotency_key'] = 'La clave idempotente es obligatoria.'
+        if len(self.closure_fingerprint) != 64:
+            errors['closure_fingerprint'] = 'El fingerprint no es válido.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if self._state.adding and not getattr(
+            self,
+            '_allow_service_create',
+            False,
+        ):
+            raise ValidationError('Un cierre sólo puede crearse por su servicio.')
+        if not self._state.adding:
+            raise ValidationError('Un cierre financiero no puede modificarse.')
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Un cierre financiero no puede eliminarse.')
 
 
 class OrdenItem(models.Model):

@@ -6,6 +6,7 @@ from rest_framework import serializers
 from .models import (
     PAYMENT_CURRENCY_CHOICES,
     FinancialAdjustment,
+    FinancialCaseClosure,
     FinancialRefundOperation,
     FinancialRefundOperationEvent,
     FinancialResolutionDecision,
@@ -359,6 +360,40 @@ class FinancialRefundExecutionCommandSerializer(serializers.Serializer):
         return attrs
 
 
+class FinancialCaseClosureCommandSerializer(serializers.Serializer):
+    rationale = serializers.CharField(max_length=2000, trim_whitespace=True)
+    result = serializers.ChoiceField(choices=FinancialCaseClosure.Result.choices)
+
+    def validate(self, attrs):
+        unexpected = set(self.initial_data) - {'rationale', 'result'}
+        if unexpected:
+            raise serializers.ValidationError({
+                'campos_no_permitidos': sorted(unexpected),
+            })
+        return attrs
+
+
+class FinancialCaseClosureSerializer(serializers.ModelSerializer):
+    closed_by = serializers.EmailField(source='closed_by.email', read_only=True)
+    decision_public_id = serializers.UUIDField(
+        source='decision.public_id', read_only=True
+    )
+
+    class Meta:
+        model = FinancialCaseClosure
+        fields = (
+            'public_id',
+            'decision_public_id',
+            'closed_by',
+            'rationale',
+            'result',
+            'commercial_effect',
+            'evidence',
+            'closed_at',
+        )
+        read_only_fields = fields
+
+
 class FinancialRefundOperationEventSerializer(serializers.ModelSerializer):
     actor = serializers.EmailField(source='actor.email', read_only=True)
 
@@ -631,6 +666,7 @@ class PaymentReconciliationCaseDetailSerializer(
     resolution_request = FinancialResolutionRequestInternalSerializer(
         read_only=True,
     )
+    closure = FinancialCaseClosureSerializer(read_only=True)
 
     class Meta(PaymentReconciliationCaseListSerializer.Meta):
         fields = PaymentReconciliationCaseListSerializer.Meta.fields + (
@@ -641,5 +677,6 @@ class PaymentReconciliationCaseDetailSerializer(
             'provider_attempt',
             'provider_event',
             'resolution_request',
+            'closure',
         )
         read_only_fields = fields
