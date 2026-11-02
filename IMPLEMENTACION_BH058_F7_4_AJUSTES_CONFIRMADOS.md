@@ -1,6 +1,6 @@
 # BH-058 F7.4 — Ajustes financieros confirmados
 
-**Fecha:** 2026-11-02  
+**Fecha:** 2026-11-02
 **Alcance:** exclusivamente F7.4; no incluye cierre de casos ni efectos
 comerciales de F7.5.
 
