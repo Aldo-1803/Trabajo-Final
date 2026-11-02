@@ -13,6 +13,7 @@ from gestion.payment_providers import (
     PaymentProviderOutcomeUnknown,
     PaymentProviderRejected,
     PaymentProviderTemporaryError,
+    RefundRequest,
 )
 
 
@@ -169,3 +170,80 @@ class MercadoPagoAdapterTests(SimpleTestCase):
         fetch.return_value = {'status': 404, 'response': {}}
         with self.assertRaises(PaymentProviderRejected):
             MercadoPagoAdapter().fetch_provider_order('01JMP-ORDER')
+
+    @staticmethod
+    def refund_request():
+        return RefundRequest(
+            provider_order_id='ORD-F73',
+            provider_transaction_id='PAY-F73',
+            idempotency_key='bh-f73-stable-key',
+            amount='25.00',
+            currency='ARS',
+        )
+
+    @patch('gestion.payment_providers.mercadopago.SDK')
+    def test_refund_uses_orders_api_stable_key_and_sanitizes_response(self, sdk_class):
+        sdk_class.return_value.order.return_value.refund.return_value = {
+            'status': 201,
+            'response': {
+                'id': 'ORD-F73',
+                'status': 'processed',
+                'status_detail': 'partially_refunded',
+                'payer': {'email': 'must-not-be-persisted@test.com'},
+                'transactions': {'refunds': [{
+                    'id': 'REF-F73',
+                    'transaction_id': 'PAY-F73',
+                    'reference_id': 'SAFE-REFERENCE',
+                    'amount': '25.00',
+                    'status': 'processed',
+                    'card': {'token': 'must-not-be-persisted'},
+                }]},
+            },
+        }
+
+        submitted = MercadoPagoAdapter().submit_refund(self.refund_request())
+
+        refund = sdk_class.return_value.order.return_value.refund
+        payload = refund.call_args.args[1]
+        options = refund.call_args.kwargs['request_options']
+        self.assertEqual(payload, {
+            'transactions': [{'id': 'PAY-F73', 'amount': '25.00'}],
+        })
+        self.assertEqual(
+            options.custom_headers['X-Idempotency-Key'],
+            'bh-f73-stable-key',
+        )
+        self.assertEqual(options.max_retries, 0)
+        self.assertEqual(submitted.provider_refund_id, 'REF-F73')
+        self.assertNotIn('payer', submitted.evidence)
+        self.assertNotIn('card', submitted.evidence['refund'])
+
+    @patch('gestion.payment_providers.mercadopago.SDK')
+    def test_refund_timeout_and_idempotency_ambiguity_are_unknown(self, sdk_class):
+        refund = sdk_class.return_value.order.return_value.refund
+        refund.side_effect = requests.Timeout()
+        with self.assertRaises(PaymentProviderOutcomeUnknown):
+            MercadoPagoAdapter().submit_refund(self.refund_request())
+
+        refund.side_effect = None
+        refund.return_value = {
+            'status': 201,
+            'response': {
+                'id': 'ORD-F73',
+                'transactions': {'refunds': [{
+                    'id': 'REF-F73',
+                    'transaction_id': 'PAY-F73',
+                    'amount': 'not-an-amount',
+                    'status': 'processed',
+                }]},
+            },
+        }
+        with self.assertRaises(PaymentProviderOutcomeUnknown):
+            MercadoPagoAdapter().submit_refund(self.refund_request())
+
+        refund.return_value = {
+            'status': 409,
+            'response': {'code': 'idempotency_key_already_used'},
+        }
+        with self.assertRaises(PaymentProviderOutcomeUnknown):
+            MercadoPagoAdapter().submit_refund(self.refund_request())

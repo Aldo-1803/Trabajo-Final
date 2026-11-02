@@ -9,6 +9,8 @@ from rest_framework.permissions import IsAuthenticated
 
 from .financial_case_filters import PaymentReconciliationCaseFilter
 from .financial_case_serializers import (
+    FinancialRefundExecutionCommandSerializer,
+    FinancialRefundOperationSerializer,
     FinancialResolutionDecisionCommandSerializer,
     FinancialResolutionDecisionInternalSerializer,
     FinancialResolutionRequestCommandSerializer,
@@ -30,6 +32,11 @@ from .financial_resolution_services import (
 )
 from .models import PaymentReconciliationCase
 from .permissions import CanReconcileExternalPayment
+from .refund_execution_services import (
+    execute_authorized_refund,
+    get_refund_operation,
+    recover_refund_operation,
+)
 
 
 class PaymentReconciliationCasePagination(PageNumberPagination):
@@ -202,6 +209,105 @@ class PaymentReconciliationCaseViewSet(viewsets.ReadOnlyModelViewSet):
                 status.HTTP_201_CREATED
                 if result.created
                 else status.HTTP_200_OK
+            ),
+        )
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='execute-authorized-refund',
+        permission_classes=[IsAuthenticated, CanReconcileExternalPayment],
+    )
+    def execute_authorized_refund(self, request, public_id=None):
+        command = FinancialRefundExecutionCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        try:
+            result = execute_authorized_refund(
+                case_public_id=public_id,
+                actor=request.user,
+                payment_public_id=command.validated_data['payment_public_id'],
+                idempotency_key=self._idempotency_key(request),
+            )
+        except (
+            FinancialResolutionInvalid,
+            FinancialResolutionConflict,
+            FinancialResolutionNotFound,
+            FinancialResolutionPermissionDenied,
+        ) as exc:
+            return self._error_response(exc)
+        operation = result.operation
+        operation = type(operation).objects.select_related(
+            'decision',
+            'payment',
+            'created_by',
+        ).prefetch_related('events__actor').get(pk=operation.pk)
+        response_status = (
+            status.HTTP_202_ACCEPTED
+            if result.provider_called
+            and operation.status in {'SUBMITTED', 'UNKNOWN'}
+            else status.HTTP_200_OK
+        )
+        return Response(
+            FinancialRefundOperationSerializer(operation).data,
+            status=response_status,
+        )
+
+    @action(
+        detail=True,
+        methods=['get'],
+        url_path='refund-operation',
+        permission_classes=[IsAuthenticated, CanReconcileExternalPayment],
+    )
+    def refund_operation(self, request, public_id=None):
+        try:
+            operation = get_refund_operation(
+                case_public_id=public_id,
+                actor=request.user,
+            )
+        except (
+            FinancialResolutionInvalid,
+            FinancialResolutionConflict,
+            FinancialResolutionNotFound,
+            FinancialResolutionPermissionDenied,
+        ) as exc:
+            return self._error_response(exc)
+        return Response(FinancialRefundOperationSerializer(operation).data)
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='recover-refund-operation',
+        permission_classes=[IsAuthenticated, CanReconcileExternalPayment],
+    )
+    def recover_refund_operation(self, request, public_id=None):
+        if request.data:
+            return Response(
+                {'campos_no_permitidos': sorted(request.data)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            result = recover_refund_operation(
+                case_public_id=public_id,
+                actor=request.user,
+            )
+        except (
+            FinancialResolutionInvalid,
+            FinancialResolutionConflict,
+            FinancialResolutionNotFound,
+            FinancialResolutionPermissionDenied,
+        ) as exc:
+            return self._error_response(exc)
+        operation = type(result.operation).objects.select_related(
+            'decision',
+            'payment',
+            'created_by',
+        ).prefetch_related('events__actor').get(pk=result.operation.pk)
+        return Response(
+            FinancialRefundOperationSerializer(operation).data,
+            status=(
+                status.HTTP_200_OK
+                if result.uniquely_recovered
+                else status.HTTP_202_ACCEPTED
             ),
         )
 

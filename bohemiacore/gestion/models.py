@@ -5465,6 +5465,254 @@ class FinancialResolutionDecision(models.Model):
         raise ValidationError('Una decisión financiera no puede eliminarse.')
 
 
+class ImmutableFinancialRefundOperationQuerySet(models.QuerySet):
+    immutable_error = 'Las operaciones de refund sólo cambian mediante su servicio.'
+
+    def update(self, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+    def delete(self):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_create(self, objs, *args, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+
+class FinancialRefundOperationManager(
+    models.Manager.from_queryset(ImmutableFinancialRefundOperationQuerySet)
+):
+    def _create_from_service(self, **values):
+        operation = self.model(**values)
+        operation._allow_service_create = True
+        operation.save(force_insert=True, using=self.db)
+        return operation
+
+    def _transition(self, *, operation_id, from_statuses, **values):
+        queryset = self.get_queryset().filter(
+            pk=operation_id,
+            status__in=from_statuses,
+        )
+        return models.QuerySet.update(queryset, **values)
+
+
+class FinancialRefundOperation(models.Model):
+    """Orden durable de devolución; no constituye confirmación financiera."""
+
+    class Provider(models.TextChoices):
+        MERCADO_PAGO = 'MERCADO_PAGO', 'Mercado Pago'
+
+    class Status(models.TextChoices):
+        PENDING = 'PENDING', 'Pendiente'
+        SUBMITTED = 'SUBMITTED', 'Enviada'
+        CONFIRMED = 'CONFIRMED', 'Confirmada externamente'
+        FAILED = 'FAILED', 'Fallida'
+        UNKNOWN = 'UNKNOWN', 'Resultado desconocido'
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    decision = models.OneToOneField(
+        FinancialResolutionDecision,
+        on_delete=models.PROTECT,
+        related_name='refund_operation',
+    )
+    payment = models.ForeignKey(
+        Pago,
+        on_delete=models.PROTECT,
+        related_name='refund_operations',
+    )
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    currency = models.CharField(max_length=3, choices=PAYMENT_CURRENCY_CHOICES)
+    payment_method = models.CharField(max_length=20)
+    provider = models.CharField(max_length=20, choices=Provider.choices)
+    status = models.CharField(
+        max_length=12,
+        choices=Status.choices,
+        default=Status.PENDING,
+    )
+    client_idempotency_key = models.CharField(max_length=128)
+    provider_idempotency_key = models.CharField(max_length=128, unique=True)
+    request_fingerprint = models.CharField(max_length=64)
+    provider_order_id = models.CharField(max_length=128)
+    provider_transaction_id = models.CharField(max_length=128)
+    external_refund_id = models.CharField(max_length=128, blank=True, default='')
+    provider_status = models.CharField(max_length=50, blank=True, default='')
+    provider_status_detail = models.CharField(max_length=100, blank=True, default='')
+    baseline_refund_ids = models.JSONField(default=list, blank=True)
+    latest_evidence = models.JSONField(default=dict, blank=True)
+    error_code = models.CharField(max_length=50, blank=True, default='')
+    error_detail = models.CharField(max_length=200, blank=True, default='')
+    provider_call_count = models.PositiveSmallIntegerField(default=0)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='financial_refund_operations_created',
+    )
+    created_at = models.DateTimeField(default=timezone.now, editable=False)
+    submission_started_at = models.DateTimeField(null=True, blank=True)
+    response_received_at = models.DateTimeField(null=True, blank=True)
+    last_recovery_at = models.DateTimeField(null=True, blank=True)
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    objects = FinancialRefundOperationManager()
+
+    class Meta:
+        ordering = ['-created_at', '-pk']
+        base_manager_name = 'objects'
+        default_manager_name = 'objects'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['created_by', 'client_idempotency_key'],
+                name='financial_refund_actor_key_unique',
+            ),
+            models.UniqueConstraint(
+                fields=['provider', 'external_refund_id'],
+                condition=~models.Q(external_refund_id=''),
+                name='financial_refund_external_identity_unique',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(amount__gt=0),
+                name='financial_refund_positive_amount',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(status='CONFIRMED', confirmed_at__isnull=False)
+                    | (~models.Q(status='CONFIRMED') & models.Q(confirmed_at__isnull=True))
+                ),
+                name='financial_refund_confirmation_coherent',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['status', 'created_at'],
+                name='financial_refund_status_idx',
+            ),
+            models.Index(
+                fields=['provider', 'provider_order_id'],
+                name='financial_refund_order_idx',
+            ),
+        ]
+
+    def clean(self):
+        errors = {}
+        if self.decision_id and (
+            self.decision.action
+            != FinancialResolutionDecision.Action.APPROVE_REFUND
+        ):
+            errors['decision'] = 'La operación requiere una aprobación de refund.'
+        if self.decision_id and (
+            self.amount != self.decision.authorized_amount
+            or self.currency != self.decision.currency
+        ):
+            errors['amount'] = 'Importe y moneda deben coincidir con la decisión.'
+        if self.payment_id and (
+            self.payment_method != self.payment.metodo_pago
+            or self.currency != self.payment.currency
+        ):
+            errors['payment'] = 'El Pago no coincide con la operación.'
+        if len(self.request_fingerprint) != 64:
+            errors['request_fingerprint'] = 'El fingerprint no es válido.'
+        if not self.provider_idempotency_key:
+            errors['provider_idempotency_key'] = 'La identidad externa es obligatoria.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if self._state.adding and not getattr(
+            self,
+            '_allow_service_create',
+            False,
+        ):
+            raise ValidationError(
+                'Una operación de refund sólo puede crearla su servicio.'
+            )
+        if not self._state.adding:
+            raise ValidationError(
+                'Una operación de refund persistida sólo cambia mediante servicios.'
+            )
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Una operación de refund no puede eliminarse.')
+
+
+class ImmutableFinancialRefundEventQuerySet(models.QuerySet):
+    immutable_error = 'La evidencia de refund es inmutable.'
+
+    def update(self, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+    def delete(self):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_create(self, objs, *args, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+
+class FinancialRefundOperationEventManager(
+    models.Manager.from_queryset(ImmutableFinancialRefundEventQuerySet)
+):
+    def _create_from_service(self, **values):
+        event = self.model(**values)
+        event._allow_service_create = True
+        event.save(force_insert=True, using=self.db)
+        return event
+
+
+class FinancialRefundOperationEvent(models.Model):
+    class Type(models.TextChoices):
+        CREATED = 'CREATED', 'Creada'
+        SUBMISSION_STARTED = 'SUBMISSION_STARTED', 'Envío iniciado'
+        SUBMITTED = 'SUBMITTED', 'Respuesta recibida'
+        FAILED = 'FAILED', 'Fallo definitivo'
+        UNKNOWN = 'UNKNOWN', 'Resultado desconocido'
+        RECOVERY_OBSERVED = 'RECOVERY_OBSERVED', 'Recuperación consultada'
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    operation = models.ForeignKey(
+        FinancialRefundOperation,
+        on_delete=models.PROTECT,
+        related_name='events',
+    )
+    event_type = models.CharField(max_length=24, choices=Type.choices)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='financial_refund_operation_events',
+    )
+    operation_key = models.CharField(max_length=180, unique=True)
+    payload = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(default=timezone.now, editable=False)
+    objects = FinancialRefundOperationEventManager()
+
+    class Meta:
+        ordering = ['created_at', 'pk']
+        base_manager_name = 'objects'
+        default_manager_name = 'objects'
+
+    def save(self, *args, **kwargs):
+        if self._state.adding and not getattr(
+            self,
+            '_allow_service_create',
+            False,
+        ):
+            raise ValidationError(
+                'La evidencia de refund sólo puede crearla su servicio.'
+            )
+        if not self._state.adding:
+            raise ValidationError('La evidencia de refund es inmutable.')
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('La evidencia de refund no puede eliminarse.')
+
+
 class ImmutableFinancialResolutionEventQuerySet(models.QuerySet):
     immutable_error = 'Los eventos de resolución financiera son inmutables.'
 

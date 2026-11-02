@@ -65,6 +65,26 @@ class CheckoutCreated:
 
 
 @dataclass(frozen=True)
+class RefundRequest:
+    provider_order_id: str
+    provider_transaction_id: str
+    idempotency_key: str
+    amount: str
+    currency: str
+
+
+@dataclass(frozen=True)
+class RefundSubmitted:
+    provider_order_id: str
+    provider_refund_id: str
+    provider_transaction_id: str
+    amount: Decimal
+    provider_status: str
+    provider_status_detail: str
+    evidence: dict
+
+
+@dataclass(frozen=True)
 class ProviderOrderSnapshot:
     provider_order_id: str
     status: str
@@ -118,6 +138,9 @@ class PaymentProvider(Protocol):
         ...
 
     def fetch_provider_order(self, order_id: str) -> ProviderOrderSnapshot:
+        ...
+
+    def submit_refund(self, request: RefundRequest) -> RefundSubmitted:
         ...
 
 
@@ -209,6 +232,7 @@ class MercadoPagoAdapter:
         return tuple({
             'id': str(item.get('id') or '')[:128],
             'transaction_id': str(item.get('transaction_id') or '')[:128],
+            'reference_id': str(item.get('reference_id') or '')[:128],
             'amount': cls._amount_text(item.get('amount')),
             'status': str(item.get('status') or '')[:50],
         } for item in value if isinstance(item, dict))
@@ -354,6 +378,155 @@ class MercadoPagoAdapter:
             checkout_url=self._checkout_url(response.get('checkout_url')),
             provider_status=str(response.get('status') or ''),
             expires_at=self._provider_expiry(response.get('expiration_time')),
+        )
+
+    @staticmethod
+    def _provider_error_code(response):
+        if not isinstance(response, dict):
+            return ''
+        direct = response.get('code') or response.get('error')
+        if direct:
+            return str(direct)[:80]
+        errors = response.get('errors') or response.get('cause') or []
+        if isinstance(errors, dict):
+            errors = [errors]
+        if isinstance(errors, list):
+            for item in errors:
+                if isinstance(item, dict) and (item.get('code') or item.get('error')):
+                    return str(item.get('code') or item.get('error'))[:80]
+        return ''
+
+    @staticmethod
+    def _valid_provider_identifier(value, label):
+        value = str(value or '').strip()
+        if not value or len(value) > 128:
+            raise PaymentProviderResponseInvalid(
+                f'El identificador de {label} no es válido.'
+            )
+        return value
+
+    def submit_refund(self, request):
+        """Envía un refund de Orders API; la respuesta sólo acredita envío."""
+        order_id = self._valid_provider_identifier(
+            request.provider_order_id,
+            'Order',
+        )
+        transaction_id = self._valid_provider_identifier(
+            request.provider_transaction_id,
+            'transacción',
+        )
+        key = str(request.idempotency_key or '').strip()
+        if not key or len(key) > 128:
+            raise PaymentProviderConfigurationError(
+                'La identidad idempotente del refund no es válida.'
+            )
+        if request.currency != configured_checkout_currency():
+            raise PaymentProviderConfigurationError(
+                'La moneda del refund no coincide con la cuenta configurada.'
+            )
+        amount = self._decimal_or_none(request.amount)
+        if amount is None or amount <= 0:
+            raise PaymentProviderConfigurationError(
+                'El importe del refund no es válido.'
+            )
+        payload = {
+            'transactions': [{
+                'id': transaction_id,
+                'amount': format(amount.quantize(Decimal('0.01')), 'f'),
+            }],
+        }
+        options = RequestOptions(
+            access_token=self.request_options.access_token,
+            connection_timeout=self.request_options.connection_timeout,
+            custom_headers={'X-Idempotency-Key': key},
+            max_retries=0,
+        )
+        try:
+            result = self.sdk.order().refund(
+                order_id,
+                payload,
+                request_options=options,
+            )
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            raise PaymentProviderOutcomeUnknown(
+                'Mercado Pago no confirmó el resultado del refund.'
+            ) from exc
+        except Exception as exc:
+            raise PaymentProviderOutcomeUnknown(
+                'Mercado Pago no confirmó el resultado del refund.'
+            ) from exc
+
+        http_status, response = self._response_parts(result)
+        try:
+            http_status = int(http_status)
+        except (TypeError, ValueError) as exc:
+            raise PaymentProviderOutcomeUnknown(
+                'Mercado Pago devolvió un resultado ambiguo para el refund.'
+            ) from exc
+        error_code = self._provider_error_code(response)
+        ambiguous_codes = {
+            'idempotency_key_already_used',
+            'idempotency_validation_failed',
+            'order_refund_already_in_process',
+        }
+        if (
+            http_status in self.UNKNOWN_HTTP_STATUSES
+            or http_status == 409
+            or http_status >= 500
+            or error_code in ambiguous_codes
+        ):
+            raise PaymentProviderOutcomeUnknown(
+                'Mercado Pago no confirmó el resultado del refund.'
+            )
+        if http_status not in {200, 201}:
+            raise PaymentProviderRejected(
+                f'Mercado Pago rechazó el refund (HTTP {http_status}).'
+            )
+        if not isinstance(response, dict):
+            raise PaymentProviderOutcomeUnknown(
+                'Mercado Pago devolvió un resultado ambiguo para el refund.'
+            )
+        response_order_id = str(response.get('id') or '').strip()
+        if response_order_id != order_id:
+            raise PaymentProviderOutcomeUnknown(
+                'La respuesta del refund no coincide con la Order solicitada.'
+            )
+        try:
+            transactions = response.get('transactions') or {}
+            refunds = self._refund_snapshots(
+                transactions.get('refunds', [])
+                if isinstance(transactions, dict)
+                else []
+            )
+            matches = [
+                refund for refund in refunds
+                if refund['transaction_id'] == transaction_id
+                and self._decimal_or_none(refund['amount']) == amount
+                and refund['id']
+            ]
+        except PaymentProviderResponseInvalid as exc:
+            raise PaymentProviderOutcomeUnknown(
+                'Mercado Pago devolvió un resultado ambiguo para el refund.'
+            ) from exc
+        if len(matches) != 1:
+            raise PaymentProviderOutcomeUnknown(
+                'La respuesta no identifica un refund único verificable.'
+            )
+        refund = matches[0]
+        evidence = {
+            'order_id': response_order_id,
+            'order_status': str(response.get('status') or '')[:50],
+            'order_status_detail': str(response.get('status_detail') or '')[:100],
+            'refund': refund,
+        }
+        return RefundSubmitted(
+            provider_order_id=response_order_id,
+            provider_refund_id=refund['id'],
+            provider_transaction_id=refund['transaction_id'],
+            amount=amount,
+            provider_status=refund['status'],
+            provider_status_detail=evidence['order_status_detail'],
+            evidence=evidence,
         )
 
     def fetch_provider_order(self, order_id):

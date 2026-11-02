@@ -5,6 +5,8 @@ from rest_framework import serializers
 
 from .models import (
     PAYMENT_CURRENCY_CHOICES,
+    FinancialRefundOperation,
+    FinancialRefundOperationEvent,
     FinancialResolutionDecision,
     FinancialResolutionEvent,
     FinancialResolutionRequest,
@@ -287,6 +289,76 @@ class FinancialResolutionDecisionInternalSerializer(serializers.ModelSerializer)
             'decided_at',
         )
         read_only_fields = fields
+
+
+class FinancialRefundExecutionCommandSerializer(serializers.Serializer):
+    payment_public_id = serializers.UUIDField()
+
+    def validate(self, attrs):
+        unexpected = set(self.initial_data) - {'payment_public_id'}
+        if unexpected:
+            raise serializers.ValidationError({
+                'campos_no_permitidos': sorted(unexpected),
+            })
+        return attrs
+
+
+class FinancialRefundOperationEventSerializer(serializers.ModelSerializer):
+    actor = serializers.EmailField(source='actor.email', read_only=True)
+
+    class Meta:
+        model = FinancialRefundOperationEvent
+        fields = ('public_id', 'event_type', 'actor', 'payload', 'created_at')
+        read_only_fields = fields
+
+
+class FinancialRefundOperationSerializer(serializers.ModelSerializer):
+    decision_public_id = serializers.UUIDField(
+        source='decision.public_id',
+        read_only=True,
+    )
+    payment_public_id = serializers.UUIDField(
+        source='payment.public_id',
+        read_only=True,
+    )
+    created_by = serializers.EmailField(source='created_by.email', read_only=True)
+    events = FinancialRefundOperationEventSerializer(many=True, read_only=True)
+    financial_confirmation = serializers.SerializerMethodField()
+
+    class Meta:
+        model = FinancialRefundOperation
+        fields = (
+            'public_id',
+            'decision_public_id',
+            'payment_public_id',
+            'amount',
+            'currency',
+            'payment_method',
+            'provider',
+            'status',
+            'provider_order_id',
+            'provider_transaction_id',
+            'external_refund_id',
+            'provider_status',
+            'provider_status_detail',
+            'latest_evidence',
+            'error_code',
+            'error_detail',
+            'provider_call_count',
+            'created_by',
+            'created_at',
+            'submission_started_at',
+            'response_received_at',
+            'last_recovery_at',
+            'confirmed_at',
+            'financial_confirmation',
+            'events',
+        )
+        read_only_fields = fields
+
+    @staticmethod
+    def get_financial_confirmation(obj):
+        return obj.status == FinancialRefundOperation.Status.CONFIRMED
 
 
 class FinancialResolutionEventInternalSerializer(serializers.ModelSerializer):
