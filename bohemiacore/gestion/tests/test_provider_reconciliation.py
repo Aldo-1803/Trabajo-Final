@@ -11,6 +11,7 @@ from django.utils.dateparse import parse_datetime
 from gestion.models import (
     Auditoria,
     CompromisoStock,
+    FinancialAdjustment,
     MovimientoStock,
     OrdenCompra,
     Pago,
@@ -21,6 +22,7 @@ from gestion.models import (
     SlotHold,
     Turno,
 )
+from gestion.financial_adjustment_services import project_order_finances
 from gestion.order_inventory_services import (
     apply_order_inventory_effect,
     create_order_stock_commitments,
@@ -571,6 +573,46 @@ class OrderProviderReconciliationTests(OrderInventoryFixtureMixin, TestCase):
         self.assertTrue(fulfillment.applied)
         self.order.refresh_from_db()
         self.assertEqual(self.order.estado, 'COMPLETADO')
+
+    def test_confirmed_order_refund_projects_net_without_stock_or_state_effect(self):
+        origin = self.event(event_id='order-payment-before-refund')
+        reconcile_verified_provider_event(origin.pk)
+        self.product.refresh_from_db()
+        before_stock = (
+            self.product.stock_real,
+            self.product.stock_comprometido,
+        )
+        updated_at = timezone.now() + timedelta(seconds=1)
+        event = self.event(
+            event_id='order-confirmed-refund',
+            status='refunded',
+            last_updated_date=updated_at.isoformat(),
+            refunds=[{
+                'id': 'REF-ORDER-PARTIAL',
+                'transaction_id': 'PAY-ORDER',
+                'amount': '25.00',
+                'status': 'processed',
+            }],
+        )
+
+        result = reconcile_verified_provider_event(event.pk)
+        self.order.refresh_from_db()
+        self.product.refresh_from_db()
+        projection = project_order_finances(self.order)['ARS']
+
+        self.assertEqual(
+            result.effect,
+            'CONFIRMED_ADJUSTMENT_RECORDED_NO_BUSINESS_EFFECT',
+        )
+        self.assertEqual(FinancialAdjustment.objects.count(), 1)
+        self.assertEqual(projection['gross_reconciled'], Decimal('100.00'))
+        self.assertEqual(projection['confirmed_adjustments'], Decimal('25.00'))
+        self.assertEqual(projection['net_reconciled'], Decimal('75.00'))
+        self.assertEqual(self.order.estado, 'PAGADO')
+        self.assertEqual(
+            (self.product.stock_real, self.product.stock_comprometido),
+            before_stock,
+        )
 
     def test_unfulfillable_order_preserves_payment_and_opens_case(self):
         release_order_stock_commitments(

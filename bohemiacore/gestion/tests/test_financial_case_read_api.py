@@ -228,6 +228,18 @@ class FinancialCaseReadApiTests(ManualPaymentFixtureMixin, TestCase):
             results[0]['financial_summary']['payment_public_ids'],
             [str(self.booking_payment.public_id)],
         )
+        self.assertEqual(
+            results[0]['financial_summary']['gross_reconciled'],
+            '10.00',
+        )
+        self.assertEqual(
+            results[0]['financial_summary']['confirmed_adjustments'],
+            '0.00',
+        )
+        self.assertEqual(
+            results[0]['financial_summary']['net_reconciled'],
+            '10.00',
+        )
 
     def test_authorized_detail_exposes_safe_related_references(self):
         self.authenticate()
@@ -253,6 +265,13 @@ class FinancialCaseReadApiTests(ManualPaymentFixtureMixin, TestCase):
             response.data['payments'][0]['public_id'],
             str(self.booking_payment.public_id),
         )
+        self.assertEqual(
+            response.data['payments'][0]['financial_projection'][
+                'refund_pending'
+            ],
+            '0.00',
+        )
+        self.assertEqual(response.data['payments'][0]['adjustments'], [])
 
         order_response = self.api.get(self.detail_url(self.order_case))
         self.assertEqual(order_response.status_code, status.HTTP_200_OK)

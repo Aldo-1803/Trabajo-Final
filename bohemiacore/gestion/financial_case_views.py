@@ -69,7 +69,8 @@ class PaymentReconciliationCaseViewSet(viewsets.ReadOnlyModelViewSet):
             'resolution_request__turno',
         )
         .prefetch_related(
-            'payments',
+            'payments__financial_adjustments__refund_operation',
+            'payments__refund_operations',
             'resolution_request__decisions__decided_by',
             'resolution_request__events__actor',
         )

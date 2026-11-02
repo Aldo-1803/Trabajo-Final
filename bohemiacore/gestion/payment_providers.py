@@ -234,11 +234,23 @@ class MercadoPagoAdapter:
             'transaction_id': str(item.get('transaction_id') or '')[:128],
             'reference_id': str(item.get('reference_id') or '')[:128],
             'amount': cls._amount_text(item.get('amount')),
+            'currency': str(
+                item.get('currency') or item.get('currency_id') or ''
+            ).strip().upper()[:3],
             'status': str(item.get('status') or '')[:50],
+            'status_detail': str(item.get('status_detail') or '')[:100],
+            'created_date': str(
+                item.get('created_date') or item.get('date_created') or ''
+            )[:64],
+            'last_updated_date': str(
+                item.get('last_updated_date')
+                or item.get('date_last_updated')
+                or ''
+            )[:64],
         } for item in value if isinstance(item, dict))
 
-    @staticmethod
-    def _chargeback_snapshots(value):
+    @classmethod
+    def _chargeback_snapshots(cls, value):
         if isinstance(value, dict):
             value = [value]
         if not isinstance(value, list):
@@ -246,7 +258,21 @@ class MercadoPagoAdapter:
         return tuple({
             'id': str(item.get('id') or '')[:128],
             'transaction_id': str(item.get('transaction_id') or '')[:128],
+            'reference_id': str(item.get('reference_id') or '')[:128],
+            'amount': cls._amount_text(item.get('amount')),
+            'currency': str(
+                item.get('currency') or item.get('currency_id') or ''
+            ).strip().upper()[:3],
             'status': str(item.get('status') or '')[:50],
+            'status_detail': str(item.get('status_detail') or '')[:100],
+            'created_date': str(
+                item.get('created_date') or item.get('date_created') or ''
+            )[:64],
+            'last_updated_date': str(
+                item.get('last_updated_date')
+                or item.get('date_last_updated')
+                or ''
+            )[:64],
         } for item in value if isinstance(item, dict))
 
     @classmethod

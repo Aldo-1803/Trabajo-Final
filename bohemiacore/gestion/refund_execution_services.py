@@ -20,6 +20,7 @@ from .financial_resolution_services import (
 )
 from .models import (
     Auditoria,
+    FinancialAdjustment,
     FinancialRefundOperation,
     FinancialRefundOperationEvent,
     FinancialResolutionDecision,
@@ -43,7 +44,6 @@ ACTIVE_REFUND_STATUSES = (
     FinancialRefundOperation.Status.PENDING,
     FinancialRefundOperation.Status.SUBMITTED,
     FinancialRefundOperation.Status.UNKNOWN,
-    FinancialRefundOperation.Status.CONFIRMED,
 )
 
 
@@ -231,7 +231,27 @@ def _validate_payment_for_refund(*, locked, decision, payment_public_id):
         ).aggregate(total=models.Sum('amount'))['total']
         or Decimal('0.00')
     )
-    if already_reserved + decision.authorized_amount > payment.monto:
+    confirmed_debits = (
+        FinancialAdjustment.objects.filter(
+            payment=payment,
+            effect=FinancialAdjustment.Effect.DEBIT,
+        ).aggregate(total=models.Sum('amount'))['total']
+        or Decimal('0.00')
+    )
+    confirmed_credits = (
+        FinancialAdjustment.objects.filter(
+            payment=payment,
+            effect=FinancialAdjustment.Effect.CREDIT,
+        ).aggregate(total=models.Sum('amount'))['total']
+        or Decimal('0.00')
+    )
+    if (
+        already_reserved
+        + confirmed_debits
+        - confirmed_credits
+        + decision.authorized_amount
+        > payment.monto
+    ):
         raise FinancialResolutionConflict(
             'Las operaciones existentes superan el saldo ejecutable del Pago.',
             code='REFUND_AMOUNT_EXCEEDS_AVAILABLE_PAYMENT',

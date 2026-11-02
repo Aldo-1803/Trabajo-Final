@@ -5672,6 +5672,7 @@ class FinancialRefundOperationEvent(models.Model):
         FAILED = 'FAILED', 'Fallo definitivo'
         UNKNOWN = 'UNKNOWN', 'Resultado desconocido'
         RECOVERY_OBSERVED = 'RECOVERY_OBSERVED', 'Recuperación consultada'
+        CONFIRMED = 'CONFIRMED', 'Confirmación financiera externa'
 
     public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     operation = models.ForeignKey(
@@ -5684,6 +5685,8 @@ class FinancialRefundOperationEvent(models.Model):
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,
         related_name='financial_refund_operation_events',
+        null=True,
+        blank=True,
     )
     operation_key = models.CharField(max_length=180, unique=True)
     payload = models.JSONField(default=dict, blank=True)
@@ -5711,6 +5714,183 @@ class FinancialRefundOperationEvent(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValidationError('La evidencia de refund no puede eliminarse.')
+
+
+class ImmutableFinancialAdjustmentQuerySet(models.QuerySet):
+    immutable_error = 'Los ajustes financieros confirmados son inmutables.'
+
+    def update(self, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+    def delete(self):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_create(self, objs, *args, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+    def update_or_create(self, defaults=None, create_defaults=None, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+
+class FinancialAdjustmentManager(
+    models.Manager.from_queryset(ImmutableFinancialAdjustmentQuerySet)
+):
+    def _create_from_service(self, **values):
+        adjustment = self.model(**values)
+        adjustment._allow_service_create = True
+        adjustment.save(force_insert=True, using=self.db)
+        return adjustment
+
+
+class FinancialAdjustment(models.Model):
+    """Hecho financiero externo confirmado, positivo y append-only."""
+
+    class Provider(models.TextChoices):
+        MERCADO_PAGO = 'MERCADO_PAGO', 'Mercado Pago'
+
+    class Type(models.TextChoices):
+        REFUND = 'REFUND', 'Devolución'
+        CHARGEBACK = 'CHARGEBACK', 'Contracargo'
+        CORRECTION = 'CORRECTION', 'Corrección'
+        REVERSAL = 'REVERSAL', 'Reversión de ajuste'
+
+    class Effect(models.TextChoices):
+        DEBIT = 'DEBIT', 'Reduce el neto'
+        CREDIT = 'CREDIT', 'Restaura el neto'
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    payment = models.ForeignKey(
+        Pago,
+        on_delete=models.PROTECT,
+        related_name='financial_adjustments',
+    )
+    adjustment_type = models.CharField(max_length=20, choices=Type.choices)
+    effect = models.CharField(max_length=10, choices=Effect.choices)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    currency = models.CharField(max_length=3, choices=PAYMENT_CURRENCY_CHOICES)
+    provider = models.CharField(max_length=20, choices=Provider.choices)
+    external_adjustment_id = models.CharField(max_length=128)
+    provider_status = models.CharField(max_length=50)
+    provider_event = models.ForeignKey(
+        ProviderEvent,
+        on_delete=models.PROTECT,
+        related_name='financial_adjustments',
+    )
+    refund_operation = models.OneToOneField(
+        FinancialRefundOperation,
+        on_delete=models.PROTECT,
+        related_name='confirmed_adjustment',
+        null=True,
+        blank=True,
+    )
+    reverses_adjustment = models.OneToOneField(
+        'self',
+        on_delete=models.PROTECT,
+        related_name='reversal_adjustment',
+        null=True,
+        blank=True,
+    )
+    effective_at = models.DateTimeField()
+    evidence = models.JSONField(default=dict)
+    created_at = models.DateTimeField(default=timezone.now, editable=False)
+    objects = FinancialAdjustmentManager()
+
+    class Meta:
+        ordering = ['effective_at', 'pk']
+        base_manager_name = 'objects'
+        default_manager_name = 'objects'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['provider', 'adjustment_type', 'external_adjustment_id'],
+                name='financial_adjustment_external_unique',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(amount__gt=0),
+                name='financial_adjustment_positive_amount',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        adjustment_type__in=['REFUND', 'CHARGEBACK'],
+                        effect='DEBIT',
+                        reverses_adjustment__isnull=True,
+                    )
+                    | models.Q(
+                        adjustment_type='REVERSAL',
+                        effect='CREDIT',
+                        reverses_adjustment__isnull=False,
+                    )
+                    | models.Q(adjustment_type='CORRECTION')
+                ),
+                name='financial_adjustment_type_effect_coherent',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['payment', 'effective_at'],
+                name='fin_adj_payment_idx',
+            ),
+            models.Index(
+                fields=['provider_event', 'adjustment_type'],
+                name='fin_adj_event_idx',
+            ),
+        ]
+
+    def clean(self):
+        errors = {}
+        if not self.external_adjustment_id or not self.external_adjustment_id.strip():
+            errors['external_adjustment_id'] = 'La identidad externa es obligatoria.'
+        if self.payment_id and self.currency != self.payment.currency:
+            errors['currency'] = 'La moneda debe coincidir con el Pago de origen.'
+        if self.provider_event_id:
+            if self.provider_event.status != ProviderEvent.Status.VERIFIED:
+                errors['provider_event'] = 'La evidencia oficial no está verificada.'
+            if self.provider_event.provider != self.provider:
+                errors['provider'] = 'El proveedor no coincide con la evidencia.'
+        if self.refund_operation_id:
+            operation = self.refund_operation
+            if self.adjustment_type != self.Type.REFUND:
+                errors['refund_operation'] = 'Sólo un refund admite operación F7.3.'
+            elif (
+                operation.payment_id != self.payment_id
+                or operation.amount != self.amount
+                or operation.currency != self.currency
+                or operation.provider != self.provider
+            ):
+                errors['refund_operation'] = 'La operación F7.3 no coincide.'
+        if self.reverses_adjustment_id:
+            reversed_adjustment = self.reverses_adjustment
+            if (
+                reversed_adjustment.payment_id != self.payment_id
+                or reversed_adjustment.currency != self.currency
+                or reversed_adjustment.provider != self.provider
+                or self.amount > reversed_adjustment.amount
+            ):
+                errors['reverses_adjustment'] = (
+                    'La reversión no coincide con el ajuste de origen.'
+                )
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if self._state.adding and not getattr(
+            self,
+            '_allow_service_create',
+            False,
+        ):
+            raise ValidationError(
+                'Un ajuste financiero sólo puede crearse mediante su servicio.'
+            )
+        if not self._state.adding:
+            raise ValidationError('Un ajuste financiero no puede modificarse.')
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Un ajuste financiero no puede eliminarse.')
 
 
 class ImmutableFinancialResolutionEventQuerySet(models.QuerySet):

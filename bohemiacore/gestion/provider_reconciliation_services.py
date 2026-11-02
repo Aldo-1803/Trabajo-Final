@@ -19,6 +19,7 @@ from .models import (
     ProviderPaymentAttempt,
     SlotHold,
 )
+from .financial_adjustment_services import materialize_confirmed_adjustments
 from .payment_confirmation_services import (
     PaymentConfirmationResult,
     _lock_confirmation_graph,
@@ -607,6 +608,7 @@ def _review_result(
     reason_code,
     detail,
     case_type=PaymentReconciliationCase.Type.EXTERNAL_PAYMENT_REVIEW,
+    effect='NO_BUSINESS_EFFECT',
 ):
     fingerprint = ','.join(
         sorted(payment.provider_payment_id for payment in payments)
@@ -627,7 +629,7 @@ def _review_result(
         status=ProviderEvent.ReconciliationStatus.REVIEW_REQUIRED,
         code=reason_code,
         decision='REVIEW_REQUIRED',
-        effect='NO_BUSINESS_EFFECT',
+        effect=effect,
     )
     return ProviderReconciliationResult(
         event=event,
@@ -636,7 +638,7 @@ def _review_result(
         confirmation=None,
         changed=case_created or bool(payments),
         decision='REVIEW_REQUIRED',
-        effect='NO_BUSINESS_EFFECT',
+        effect=effect,
     )
 
 
@@ -780,19 +782,32 @@ def _reconcile_booking(event_id, attempt_id):
         payment for payment in locked_payments if payment.provider_code
     )
     if _post_payment_change(snapshot):
-        payments, _ = _prepare_payment_rows(
-            event,
-            attempt,
-            snapshot,
-            pending_reason='POST_PAYMENT_CHANGE',
+        payments, _ = _prepare_payment_rows(event, attempt, snapshot)
+        adjustment_result = materialize_confirmed_adjustments(
+            event=event,
+            attempt=attempt,
+            snapshot=snapshot,
+            payments=payments or existing_external,
         )
+        detail = 'El proveedor informó refund o contracargo.'
+        if adjustment_result.issues:
+            detail = adjustment_result.issues[0].detail
         return _review_result(
             event=event,
             attempt=attempt,
             payments=payments or existing_external,
-            reason_code='POST_PAYMENT_CHANGE',
-            detail='El proveedor informó refund o contracargo.',
+            reason_code=(
+                adjustment_result.issues[0].code
+                if adjustment_result.issues
+                else 'POST_PAYMENT_CHANGE'
+            ),
+            detail=detail,
             case_type=PaymentReconciliationCase.Type.POST_PAYMENT_CHANGE,
+            effect=(
+                'CONFIRMED_ADJUSTMENT_RECORDED_NO_BUSINESS_EFFECT'
+                if adjustment_result.adjustments
+                else 'NO_BUSINESS_EFFECT'
+            ),
         )
     if not eligible:
         if existing_external:
@@ -950,19 +965,32 @@ def _reconcile_order(event_id, attempt_id):
         order.pagos.select_for_update().filter(provider_code=PROVIDER).order_by('pk')
     )
     if _post_payment_change(snapshot):
-        payments, _ = _prepare_payment_rows(
-            event,
-            attempt,
-            snapshot,
-            pending_reason='POST_PAYMENT_CHANGE',
+        payments, _ = _prepare_payment_rows(event, attempt, snapshot)
+        adjustment_result = materialize_confirmed_adjustments(
+            event=event,
+            attempt=attempt,
+            snapshot=snapshot,
+            payments=payments or existing_external,
         )
+        detail = 'El proveedor informó refund o contracargo.'
+        if adjustment_result.issues:
+            detail = adjustment_result.issues[0].detail
         return _review_result(
             event=event,
             attempt=attempt,
             payments=payments or existing_external,
-            reason_code='POST_PAYMENT_CHANGE',
-            detail='El proveedor informó refund o contracargo.',
+            reason_code=(
+                adjustment_result.issues[0].code
+                if adjustment_result.issues
+                else 'POST_PAYMENT_CHANGE'
+            ),
+            detail=detail,
             case_type=PaymentReconciliationCase.Type.POST_PAYMENT_CHANGE,
+            effect=(
+                'CONFIRMED_ADJUSTMENT_RECORDED_NO_BUSINESS_EFFECT'
+                if adjustment_result.adjustments
+                else 'NO_BUSINESS_EFFECT'
+            ),
         )
     if not _eligible_payments(snapshot):
         if existing_external:

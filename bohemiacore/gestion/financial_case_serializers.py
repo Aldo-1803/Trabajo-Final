@@ -5,6 +5,7 @@ from rest_framework import serializers
 
 from .models import (
     PAYMENT_CURRENCY_CHOICES,
+    FinancialAdjustment,
     FinancialRefundOperation,
     FinancialRefundOperationEvent,
     FinancialResolutionDecision,
@@ -18,6 +19,38 @@ from .models import (
     ProviderPaymentAttempt,
     Turno,
 )
+from .financial_adjustment_services import (
+    project_payment_finances,
+    project_payments_by_currency,
+)
+
+
+class FinancialAdjustmentSerializer(serializers.ModelSerializer):
+    provider_event_id = serializers.IntegerField(read_only=True)
+    refund_operation_public_id = serializers.UUIDField(
+        source='refund_operation.public_id',
+        read_only=True,
+        allow_null=True,
+    )
+
+    class Meta:
+        model = FinancialAdjustment
+        fields = (
+            'public_id',
+            'adjustment_type',
+            'effect',
+            'amount',
+            'currency',
+            'provider',
+            'external_adjustment_id',
+            'provider_status',
+            'provider_event_id',
+            'refund_operation_public_id',
+            'effective_at',
+            'evidence',
+            'created_at',
+        )
+        read_only_fields = fields
 
 
 class FinancialCasePaymentSerializer(serializers.ModelSerializer):
@@ -29,6 +62,12 @@ class FinancialCasePaymentSerializer(serializers.ModelSerializer):
     )
     method = serializers.CharField(source='metodo_pago', read_only=True)
     occurred_at = serializers.DateTimeField(source='fecha_pago', read_only=True)
+    financial_projection = serializers.SerializerMethodField()
+    adjustments = FinancialAdjustmentSerializer(
+        source='financial_adjustments',
+        many=True,
+        read_only=True,
+    )
 
     class Meta:
         model = Pago
@@ -45,8 +84,25 @@ class FinancialCasePaymentSerializer(serializers.ModelSerializer):
             'terminal_reason',
             'provider_code',
             'provider_payment_id',
+            'financial_projection',
+            'adjustments',
         )
         read_only_fields = fields
+
+    @staticmethod
+    def get_financial_projection(obj):
+        projection = project_payment_finances(obj)
+        return {
+            'currency': projection.currency,
+            'gross_reconciled': f'{projection.gross_reconciled:.2f}',
+            'confirmed_adjustments': f'{projection.confirmed_adjustments:.2f}',
+            'net_reconciled': f'{projection.net_reconciled:.2f}',
+            'refund_pending': f'{projection.refund_pending:.2f}',
+            'refunds_confirmed': f'{projection.refunds_confirmed:.2f}',
+            'chargebacks_confirmed': (
+                f'{projection.chargebacks_confirmed:.2f}'
+            ),
+        }
 
 
 class FinancialCasePaymentIntentSerializer(serializers.ModelSerializer):
@@ -499,12 +555,33 @@ class PaymentReconciliationCaseListSerializer(serializers.ModelSerializer):
         total = sum((payment.monto for payment in payments), Decimal('0.00'))
         currencies = sorted({payment.currency for payment in payments})
         statuses = sorted({payment.status for payment in payments})
+        grouped = project_payments_by_currency(payments)
+        by_currency = {
+            currency: {
+                field: f'{amount:.2f}' for field, amount in values.items()
+            }
+            for currency, values in sorted(grouped.items())
+        }
+        canonical = next(iter(by_currency.values()), None) if len(by_currency) == 1 else None
         return {
             'payment_count': len(payments),
             'total_amount': f'{total:.2f}',
             'currencies': currencies,
             'payment_statuses': statuses,
             'payment_public_ids': [str(payment.public_id) for payment in payments],
+            'gross_reconciled': (
+                canonical['gross_reconciled'] if canonical is not None else None
+            ),
+            'confirmed_adjustments': (
+                canonical['confirmed_adjustments'] if canonical is not None else None
+            ),
+            'net_reconciled': (
+                canonical['net_reconciled'] if canonical is not None else None
+            ),
+            'refund_pending': (
+                canonical['refund_pending'] if canonical is not None else None
+            ),
+            'by_currency': by_currency,
         }
 
     @staticmethod
