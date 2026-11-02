@@ -4,6 +4,10 @@ from django.utils import timezone
 from rest_framework import serializers
 
 from .models import (
+    PAYMENT_CURRENCY_CHOICES,
+    FinancialResolutionDecision,
+    FinancialResolutionEvent,
+    FinancialResolutionRequest,
     OrdenCompra,
     Pago,
     PaymentIntent,
@@ -123,6 +127,251 @@ class FinancialCaseProviderEventSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class FinancialResolutionRequestCommandSerializer(serializers.Serializer):
+    requested_outcome = serializers.ChoiceField(
+        choices=FinancialResolutionRequest.RequestedOutcome.choices,
+    )
+    reason = serializers.CharField(max_length=1000, trim_whitespace=True)
+    amount = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        required=False,
+        allow_null=True,
+        min_value=Decimal('0.01'),
+    )
+    currency = serializers.ChoiceField(
+        choices=PAYMENT_CURRENCY_CHOICES,
+        required=False,
+        allow_blank=True,
+        default='',
+    )
+    evidence_reference = serializers.CharField(
+        max_length=128,
+        required=False,
+        allow_blank=True,
+        default='',
+    )
+    evidence_note = serializers.CharField(
+        max_length=2000,
+        required=False,
+        allow_blank=True,
+        default='',
+    )
+
+    def validate(self, attrs):
+        allowed = {
+            'requested_outcome',
+            'reason',
+            'amount',
+            'currency',
+            'evidence_reference',
+            'evidence_note',
+        }
+        unexpected = set(self.initial_data) - allowed
+        if unexpected:
+            raise serializers.ValidationError({
+                'campos_no_permitidos': sorted(unexpected),
+            })
+        return attrs
+
+
+class PaidOrderCancellationRequestCommandSerializer(serializers.Serializer):
+    order_id = serializers.IntegerField(min_value=1)
+    reason = serializers.CharField(max_length=1000, trim_whitespace=True)
+    amount = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        required=False,
+        allow_null=True,
+        min_value=Decimal('0.01'),
+    )
+    currency = serializers.ChoiceField(
+        choices=PAYMENT_CURRENCY_CHOICES,
+        required=False,
+        allow_blank=True,
+        default='',
+    )
+    evidence_reference = serializers.CharField(
+        max_length=128,
+        required=False,
+        allow_blank=True,
+        default='',
+    )
+    evidence_note = serializers.CharField(
+        max_length=2000,
+        required=False,
+        allow_blank=True,
+        default='',
+    )
+
+    def validate(self, attrs):
+        allowed = {
+            'order_id',
+            'reason',
+            'amount',
+            'currency',
+            'evidence_reference',
+            'evidence_note',
+        }
+        unexpected = set(self.initial_data) - allowed
+        if unexpected:
+            raise serializers.ValidationError({
+                'campos_no_permitidos': sorted(unexpected),
+            })
+        return attrs
+
+
+class FinancialResolutionDecisionCommandSerializer(serializers.Serializer):
+    action = serializers.ChoiceField(
+        choices=FinancialResolutionDecision.Action.choices,
+    )
+    rationale = serializers.CharField(max_length=2000, trim_whitespace=True)
+    evidence_request = serializers.CharField(
+        max_length=2000,
+        required=False,
+        allow_blank=True,
+        default='',
+    )
+    authorized_amount = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        required=False,
+        allow_null=True,
+        min_value=Decimal('0.01'),
+    )
+    currency = serializers.ChoiceField(
+        choices=PAYMENT_CURRENCY_CHOICES,
+        required=False,
+        allow_blank=True,
+        default='',
+    )
+    policy_reference = serializers.CharField(
+        max_length=128,
+        required=False,
+        allow_blank=True,
+        default='',
+    )
+
+    def validate(self, attrs):
+        allowed = {
+            'action',
+            'rationale',
+            'evidence_request',
+            'authorized_amount',
+            'currency',
+            'policy_reference',
+        }
+        unexpected = set(self.initial_data) - allowed
+        if unexpected:
+            raise serializers.ValidationError({
+                'campos_no_permitidos': sorted(unexpected),
+            })
+        return attrs
+
+
+class FinancialResolutionDecisionInternalSerializer(serializers.ModelSerializer):
+    decided_by = serializers.EmailField(source='decided_by.email', read_only=True)
+
+    class Meta:
+        model = FinancialResolutionDecision
+        fields = (
+            'public_id',
+            'sequence',
+            'action',
+            'rationale',
+            'evidence_request',
+            'authorized_amount',
+            'currency',
+            'policy_reference',
+            'decided_by',
+            'decided_at',
+        )
+        read_only_fields = fields
+
+
+class FinancialResolutionEventInternalSerializer(serializers.ModelSerializer):
+    actor = serializers.EmailField(source='actor.email', read_only=True)
+
+    class Meta:
+        model = FinancialResolutionEvent
+        fields = (
+            'public_id',
+            'event_type',
+            'actor',
+            'payload',
+            'created_at',
+        )
+        read_only_fields = fields
+
+
+class FinancialResolutionRequestInternalSerializer(serializers.ModelSerializer):
+    requested_by = serializers.EmailField(
+        source='requested_by.email',
+        read_only=True,
+    )
+    decisions = FinancialResolutionDecisionInternalSerializer(
+        many=True,
+        read_only=True,
+    )
+    events = FinancialResolutionEventInternalSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = FinancialResolutionRequest
+        fields = (
+            'public_id',
+            'context',
+            'turno_id',
+            'requested_outcome',
+            'reason',
+            'amount',
+            'currency',
+            'evidence_reference',
+            'evidence_note',
+            'status',
+            'requested_by',
+            'created_at',
+            'status_updated_at',
+            'decisions',
+            'events',
+        )
+        read_only_fields = fields
+
+
+class FinancialResolutionRequestPublicSerializer(serializers.ModelSerializer):
+    latest_decision = serializers.SerializerMethodField()
+
+    class Meta:
+        model = FinancialResolutionRequest
+        fields = (
+            'public_id',
+            'context',
+            'turno_id',
+            'requested_outcome',
+            'reason',
+            'amount',
+            'currency',
+            'evidence_reference',
+            'evidence_note',
+            'status',
+            'created_at',
+            'status_updated_at',
+            'latest_decision',
+        )
+        read_only_fields = fields
+
+    @staticmethod
+    def get_latest_decision(obj):
+        decisions = list(obj.decisions.all())
+        if not decisions:
+            return None
+        decision = max(decisions, key=lambda item: (item.sequence, item.pk))
+        return {
+            'action': decision.action,
+            'evidence_request': decision.evidence_request,
+            'decided_at': decision.decided_at,
+        }
+
+
 class PaymentReconciliationCaseListSerializer(serializers.ModelSerializer):
     case_type_label = serializers.CharField(
         source='get_case_type_display',
@@ -230,6 +479,9 @@ class PaymentReconciliationCaseDetailSerializer(
     order = FinancialCaseOrderSerializer(read_only=True)
     provider_attempt = FinancialCaseProviderAttemptSerializer(read_only=True)
     provider_event = FinancialCaseProviderEventSerializer(read_only=True)
+    resolution_request = FinancialResolutionRequestInternalSerializer(
+        read_only=True,
+    )
 
     class Meta(PaymentReconciliationCaseListSerializer.Meta):
         fields = PaymentReconciliationCaseListSerializer.Meta.fields + (
@@ -239,5 +491,6 @@ class PaymentReconciliationCaseDetailSerializer(
             'order',
             'provider_attempt',
             'provider_event',
+            'resolution_request',
         )
         read_only_fields = fields

@@ -1966,6 +1966,17 @@ class TurnoViewSet(viewsets.ModelViewSet):
             'changed': result.changed,
             'estado_anterior': result.previous_state,
             'estado_actual': result.current_state,
+            'financial_resolution_required': result.financial_request is not None,
+            'financial_request_public_id': (
+                str(result.financial_request.public_id)
+                if result.financial_request is not None
+                else None
+            ),
+            'financial_case_public_id': (
+                str(result.financial_request.case.public_id)
+                if result.financial_request is not None
+                else None
+            ),
         })
 
     @action(detail=False, methods=['get'], url_path='selector-clientes')
@@ -2212,6 +2223,17 @@ class TurnoViewSet(viewsets.ModelViewSet):
             'turno_id': result.turno.pk,
             'changed': result.changed,
             'estado_actual': result.current_state,
+            'financial_resolution_required': result.financial_request is not None,
+            'financial_request_public_id': (
+                str(result.financial_request.public_id)
+                if result.financial_request is not None
+                else None
+            ),
+            'financial_case_public_id': (
+                str(result.financial_request.case.public_id)
+                if result.financial_request is not None
+                else None
+            ),
         })
     
     def _validar_slot_libre(self, fecha, hora, profesional, duracion_minutos, servicios_ids=None, excluir_turno_id=None):

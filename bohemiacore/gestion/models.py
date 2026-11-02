@@ -4953,6 +4953,10 @@ class PaymentReconciliationCase(models.Model):
             'POST_PAYMENT_CHANGE',
             'Novedad financiera posterior',
         )
+        CANCELLATION_WITH_PAYMENT = (
+            'CANCELLATION_WITH_PAYMENT',
+            'Cancelación con pago',
+        )
 
     class Status(models.TextChoices):
         OPEN = 'OPEN', 'Abierto'
@@ -5112,6 +5116,484 @@ class PaymentReconciliationCase(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValidationError('Un caso de conciliación no puede eliminarse.')
+
+
+class ImmutableFinancialResolutionRequestQuerySet(models.QuerySet):
+    immutable_error = (
+        'Las solicitudes financieras sólo cambian mediante sus servicios.'
+    )
+
+    def update(self, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+    def delete(self):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_create(self, objs, *args, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+
+class FinancialResolutionRequestManager(
+    models.Manager.from_queryset(ImmutableFinancialResolutionRequestQuerySet)
+):
+    def _create_from_service(self, **values):
+        resolution_request = self.model(**values)
+        resolution_request._allow_service_create = True
+        resolution_request.save(force_insert=True, using=self.db)
+        return resolution_request
+
+    def _transition_status(self, *, request_id, from_statuses, **values):
+        queryset = self.get_queryset().filter(
+            pk=request_id,
+            status__in=from_statuses,
+        )
+        return models.QuerySet.update(queryset, **values)
+
+
+class FinancialResolutionRequest(models.Model):
+    class Context(models.TextChoices):
+        BOOKING = 'BOOKING', 'Reserva'
+        ORDER = 'ORDER', 'Orden'
+
+    class RequestedOutcome(models.TextChoices):
+        REFUND = 'REFUND', 'Devolución'
+        CANCEL_AND_REFUND = (
+            'CANCEL_AND_REFUND',
+            'Cancelación y revisión de devolución',
+        )
+        REVIEW_PAYMENT = 'REVIEW_PAYMENT', 'Revisión del pago'
+        REVIEW_EXTERNAL_ADJUSTMENT = (
+            'REVIEW_EXTERNAL_ADJUSTMENT',
+            'Revisión de novedad externa',
+        )
+        NO_FINANCIAL_CHANGE = (
+            'NO_FINANCIAL_CHANGE',
+            'Sin cambio financiero',
+        )
+
+    class Status(models.TextChoices):
+        PENDING_DECISION = 'PENDING_DECISION', 'Pendiente de decisión'
+        EVIDENCE_REQUIRED = 'EVIDENCE_REQUIRED', 'Requiere evidencia'
+        DECIDED = 'DECIDED', 'Decidida'
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    case = models.OneToOneField(
+        PaymentReconciliationCase,
+        on_delete=models.PROTECT,
+        related_name='resolution_request',
+    )
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='financial_resolution_requests',
+    )
+    context = models.CharField(max_length=10, choices=Context.choices)
+    turno = models.ForeignKey(
+        'Turno',
+        on_delete=models.PROTECT,
+        related_name='financial_resolution_requests',
+        null=True,
+        blank=True,
+    )
+    requested_outcome = models.CharField(
+        max_length=30,
+        choices=RequestedOutcome.choices,
+    )
+    reason = models.TextField()
+    amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    currency = models.CharField(
+        max_length=3,
+        choices=PAYMENT_CURRENCY_CHOICES,
+        blank=True,
+        default='',
+    )
+    evidence_reference = models.CharField(max_length=128, blank=True, default='')
+    evidence_note = models.TextField(blank=True, default='')
+    status = models.CharField(
+        max_length=24,
+        choices=Status.choices,
+        default=Status.PENDING_DECISION,
+    )
+    idempotency_key = models.CharField(max_length=128)
+    request_fingerprint = models.CharField(max_length=64)
+    created_at = models.DateTimeField(default=timezone.now, editable=False)
+    status_updated_at = models.DateTimeField(default=timezone.now, editable=False)
+    objects = FinancialResolutionRequestManager()
+
+    class Meta:
+        ordering = ['-created_at', '-pk']
+        base_manager_name = 'objects'
+        default_manager_name = 'objects'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['requested_by', 'idempotency_key'],
+                name='financial_request_actor_key_unique',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(amount__isnull=True, currency='')
+                    | (
+                        models.Q(amount__isnull=False)
+                        & ~models.Q(currency='')
+                        & models.Q(amount__gt=0)
+                    )
+                ),
+                name='financial_request_amount_currency_coherent',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['status', 'created_at'],
+                name='financial_request_status_idx',
+            ),
+        ]
+
+    def clean(self):
+        errors = {}
+        if not self.reason or not self.reason.strip():
+            errors['reason'] = 'El motivo es obligatorio.'
+        if not self.idempotency_key or not self.idempotency_key.strip():
+            errors['idempotency_key'] = 'La clave idempotente es obligatoria.'
+        if len(self.request_fingerprint) != 64:
+            errors['request_fingerprint'] = 'El fingerprint no es válido.'
+        if self.case_id:
+            expected_context = (
+                self.Context.BOOKING
+                if self.case.payment_intent_id is not None
+                else self.Context.ORDER
+            )
+            if self.context != expected_context:
+                errors['context'] = 'El contexto no coincide con el caso.'
+            if self.context == self.Context.ORDER and self.turno_id is not None:
+                errors['turno'] = 'Una solicitud de orden no admite Turno.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if self._state.adding and not getattr(
+            self,
+            '_allow_service_create',
+            False,
+        ):
+            raise ValidationError(
+                'Una solicitud financiera sólo puede crearse mediante su servicio.'
+            )
+        if not self._state.adding:
+            raise ValidationError(
+                'Una solicitud financiera persistida sólo cambia mediante servicios.'
+            )
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Una solicitud financiera no puede eliminarse.')
+
+
+class ImmutableFinancialResolutionDecisionQuerySet(models.QuerySet):
+    immutable_error = 'Las decisiones financieras son inmutables.'
+
+    def update(self, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+    def delete(self):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_create(self, objs, *args, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+
+class FinancialResolutionDecisionManager(
+    models.Manager.from_queryset(ImmutableFinancialResolutionDecisionQuerySet)
+):
+    def _create_from_service(self, **values):
+        decision = self.model(**values)
+        decision._allow_service_create = True
+        decision.save(force_insert=True, using=self.db)
+        return decision
+
+
+class FinancialResolutionDecision(models.Model):
+    class Action(models.TextChoices):
+        APPROVE_REFUND = 'APPROVE_REFUND', 'Aprobar devolución'
+        DENY_REFUND = 'DENY_REFUND', 'Denegar devolución'
+        REQUIRE_MORE_EVIDENCE = (
+            'REQUIRE_MORE_EVIDENCE',
+            'Solicitar más evidencia',
+        )
+        ACKNOWLEDGE_EXTERNAL_ADJUSTMENT = (
+            'ACKNOWLEDGE_EXTERNAL_ADJUSTMENT',
+            'Reconocer novedad externa',
+        )
+        NO_FINANCIAL_CHANGE = (
+            'NO_FINANCIAL_CHANGE',
+            'Sin cambio financiero',
+        )
+
+    FINAL_ACTIONS = (
+        Action.APPROVE_REFUND,
+        Action.DENY_REFUND,
+        Action.ACKNOWLEDGE_EXTERNAL_ADJUSTMENT,
+        Action.NO_FINANCIAL_CHANGE,
+    )
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    resolution_request = models.ForeignKey(
+        FinancialResolutionRequest,
+        on_delete=models.PROTECT,
+        related_name='decisions',
+    )
+    sequence = models.PositiveSmallIntegerField()
+    action = models.CharField(max_length=40, choices=Action.choices)
+    rationale = models.TextField()
+    evidence_request = models.TextField(blank=True, default='')
+    authorized_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    currency = models.CharField(
+        max_length=3,
+        choices=PAYMENT_CURRENCY_CHOICES,
+        blank=True,
+        default='',
+    )
+    policy_reference = models.CharField(max_length=128, blank=True, default='')
+    decided_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='financial_resolution_decisions',
+    )
+    idempotency_key = models.CharField(max_length=128)
+    decision_fingerprint = models.CharField(max_length=64)
+    decided_at = models.DateTimeField(default=timezone.now, editable=False)
+    objects = FinancialResolutionDecisionManager()
+
+    class Meta:
+        ordering = ['sequence', 'pk']
+        base_manager_name = 'objects'
+        default_manager_name = 'objects'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['resolution_request', 'sequence'],
+                name='financial_decision_request_sequence_unique',
+            ),
+            models.UniqueConstraint(
+                fields=['decided_by', 'idempotency_key'],
+                name='financial_decision_actor_key_unique',
+            ),
+            models.UniqueConstraint(
+                fields=['resolution_request'],
+                condition=models.Q(
+                    action__in=[
+                        'APPROVE_REFUND',
+                        'DENY_REFUND',
+                        'ACKNOWLEDGE_EXTERNAL_ADJUSTMENT',
+                        'NO_FINANCIAL_CHANGE',
+                    ]
+                ),
+                name='financial_decision_one_final_per_request',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        action='APPROVE_REFUND',
+                        authorized_amount__isnull=False,
+                        authorized_amount__gt=0,
+                    )
+                    & ~models.Q(currency='')
+                    | (
+                        ~models.Q(action='APPROVE_REFUND')
+                        & models.Q(authorized_amount__isnull=True, currency='')
+                    )
+                ),
+                name='financial_decision_amount_currency_coherent',
+            ),
+        ]
+
+    def clean(self):
+        errors = {}
+        if not self.rationale or not self.rationale.strip():
+            errors['rationale'] = 'El fundamento es obligatorio.'
+        if self.action == self.Action.REQUIRE_MORE_EVIDENCE:
+            if not self.evidence_request or not self.evidence_request.strip():
+                errors['evidence_request'] = (
+                    'Debe indicar la evidencia adicional requerida.'
+                )
+        elif self.evidence_request:
+            errors['evidence_request'] = (
+                'La evidencia requerida sólo corresponde a esa decisión.'
+            )
+        if self.action in {self.Action.APPROVE_REFUND, self.Action.DENY_REFUND}:
+            if not self.policy_reference or not self.policy_reference.strip():
+                errors['policy_reference'] = (
+                    'La referencia de política es obligatoria.'
+                )
+        if not self.idempotency_key or not self.idempotency_key.strip():
+            errors['idempotency_key'] = 'La clave idempotente es obligatoria.'
+        if len(self.decision_fingerprint) != 64:
+            errors['decision_fingerprint'] = 'El fingerprint no es válido.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if self._state.adding and not getattr(
+            self,
+            '_allow_service_create',
+            False,
+        ):
+            raise ValidationError(
+                'Una decisión financiera sólo puede crearse mediante su servicio.'
+            )
+        if not self._state.adding:
+            raise ValidationError('Una decisión financiera no puede modificarse.')
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Una decisión financiera no puede eliminarse.')
+
+
+class ImmutableFinancialResolutionEventQuerySet(models.QuerySet):
+    immutable_error = 'Los eventos de resolución financiera son inmutables.'
+
+    def update(self, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+    def delete(self):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_create(self, objs, *args, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+
+class FinancialResolutionEventManager(
+    models.Manager.from_queryset(ImmutableFinancialResolutionEventQuerySet)
+):
+    def _create_from_service(self, **values):
+        event = self.model(**values)
+        event._allow_service_create = True
+        event.save(force_insert=True, using=self.db)
+        return event
+
+
+class FinancialResolutionEvent(models.Model):
+    class Type(models.TextChoices):
+        REQUEST_SUBMITTED = 'REQUEST_SUBMITTED', 'Solicitud presentada'
+        MORE_EVIDENCE_REQUIRED = (
+            'MORE_EVIDENCE_REQUIRED',
+            'Evidencia adicional requerida',
+        )
+        DECISION_RECORDED = 'DECISION_RECORDED', 'Decisión registrada'
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    resolution_request = models.ForeignKey(
+        FinancialResolutionRequest,
+        on_delete=models.PROTECT,
+        related_name='events',
+    )
+    decision = models.OneToOneField(
+        FinancialResolutionDecision,
+        on_delete=models.PROTECT,
+        related_name='event',
+        null=True,
+        blank=True,
+    )
+    event_type = models.CharField(max_length=30, choices=Type.choices)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='financial_resolution_events',
+    )
+    operation_key = models.CharField(max_length=160, unique=True)
+    payload = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(default=timezone.now, editable=False)
+    objects = FinancialResolutionEventManager()
+
+    class Meta:
+        ordering = ['created_at', 'pk']
+        base_manager_name = 'objects'
+        default_manager_name = 'objects'
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        event_type='REQUEST_SUBMITTED',
+                        decision__isnull=True,
+                    )
+                    | (
+                        models.Q(
+                            event_type__in=[
+                                'MORE_EVIDENCE_REQUIRED',
+                                'DECISION_RECORDED',
+                            ]
+                        )
+                        & models.Q(decision__isnull=False)
+                    )
+                ),
+                name='financial_event_decision_coherent',
+            ),
+        ]
+
+    def clean(self):
+        errors = {}
+        if self.decision_id is not None:
+            if (
+                self.decision.resolution_request_id
+                != self.resolution_request_id
+            ):
+                errors['decision'] = (
+                    'La decisión no pertenece a esta solicitud financiera.'
+                )
+            if (
+                self.event_type == self.Type.MORE_EVIDENCE_REQUIRED
+                and self.decision.action
+                != FinancialResolutionDecision.Action.REQUIRE_MORE_EVIDENCE
+            ):
+                errors['event_type'] = (
+                    'El evento de evidencia requiere esa decisión semántica.'
+                )
+            if (
+                self.event_type == self.Type.DECISION_RECORDED
+                and self.decision.action
+                == FinancialResolutionDecision.Action.REQUIRE_MORE_EVIDENCE
+            ):
+                errors['event_type'] = (
+                    'Una solicitud de evidencia no es una decisión final.'
+                )
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if self._state.adding and not getattr(
+            self,
+            '_allow_service_create',
+            False,
+        ):
+            raise ValidationError(
+                'Un evento financiero sólo puede crearse mediante su servicio.'
+            )
+        if not self._state.adding:
+            raise ValidationError('Un evento financiero no puede modificarse.')
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Un evento financiero no puede eliminarse.')
 
 
 class OrdenItem(models.Model):

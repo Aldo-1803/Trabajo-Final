@@ -16,6 +16,10 @@ from .models import (
     TipoEquipamiento,
     Turno,
 )
+from .financial_resolution_services import (
+    ensure_cancelled_turno_financial_request,
+    lock_turno_financial_context,
+)
 from .turno_creation_services import ACTIVE_TURNO_STATES, TurnoAvailabilityService
 
 
@@ -80,6 +84,7 @@ class TurnoCancellationResult:
     changed: bool
     previous_state: str
     current_state: str
+    financial_request: object | None = None
 
 
 def _locked_turno(turno_id):
@@ -372,17 +377,35 @@ def _cancel_locked_turno(*, actor, turno, reason, allowed_states):
 def cancel_turno(*, actor, turno_id, reason):
     if not actor.has_perm(BusinessPermission.CANCEL_ANY_TURNO):
         raise PermissionDeniedForTurnoManagement
+    booking_context = lock_turno_financial_context(turno_id)
     turno = _locked_turno(turno_id)
-    return _cancel_locked_turno(
+    result = _cancel_locked_turno(
         actor=actor,
         turno=turno,
         reason=reason,
         allowed_states=CANCELLABLE_STATES,
     )
+    financial_request = ensure_cancelled_turno_financial_request(
+        actor=actor,
+        turno=result.turno,
+        booking_context=booking_context,
+    )
+    return TurnoCancellationResult(
+        turno=result.turno,
+        changed=result.changed,
+        previous_state=result.previous_state,
+        current_state=result.current_state,
+        financial_request=(
+            financial_request.resolution_request
+            if financial_request is not None
+            else None
+        ),
+    )
 
 
 @transaction.atomic
 def cancel_owned_turno(*, actor, turno_id, reason):
+    booking_context = lock_turno_financial_context(turno_id)
     turno = _locked_owned_turno(actor, turno_id)
     if turno.estado != Turno.Estado.CANCELADO:
         config = Configuracion.objects.first() or Configuracion()
@@ -396,9 +419,25 @@ def cancel_owned_turno(*, actor, turno_id, reason):
                 'CLIENT_CANCELLATION_WINDOW_CLOSED',
                 'El Turno ya no puede cancelarse de forma autónoma.',
             )
-    return _cancel_locked_turno(
+    result = _cancel_locked_turno(
         actor=actor,
         turno=turno,
         reason=reason,
         allowed_states=CLIENT_CANCELLABLE_STATES,
+    )
+    financial_request = ensure_cancelled_turno_financial_request(
+        actor=actor,
+        turno=result.turno,
+        booking_context=booking_context,
+    )
+    return TurnoCancellationResult(
+        turno=result.turno,
+        changed=result.changed,
+        previous_state=result.previous_state,
+        current_state=result.current_state,
+        financial_request=(
+            financial_request.resolution_request
+            if financial_request is not None
+            else None
+        ),
     )
