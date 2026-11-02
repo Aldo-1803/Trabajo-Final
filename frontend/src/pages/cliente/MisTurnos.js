@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { confirmarAccion, notify } from '../../utils/notificaciones';
+import { IconCalendar, IconCheckCircle, IconClipboard, IconClock, IconX } from '../../components/common/Icons';
 
 const MisTurnos = () => {
     // --- ESTADOS ---
@@ -21,6 +22,7 @@ const MisTurnos = () => {
     const [horariosDelDia, setHorariosDelDia] = useState([]);
     const [horarioSeleccionado, setHorarioSeleccionado] = useState(null);
     const [cargandoDisponibilidad, setCargandoDisponibilidad] = useState(false);
+    const [motivoCancelacion, setMotivoCancelacion] = useState('');
 
     const navigate = useNavigate();
 
@@ -29,7 +31,7 @@ const MisTurnos = () => {
         try {
             setLoading(true);
             const token = localStorage.getItem('access_token');
-            const response = await axios.get('http://127.0.0.1:8000/api/gestion/turnos/', {
+            const response = await axios.get('http://127.0.0.1:8000/api/gestion/turnos/mis-turnos/', {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             setTurnos(response.data); 
@@ -90,7 +92,7 @@ const MisTurnos = () => {
 
         try {
             const token = localStorage.getItem('access_token');
-            await axios.patch(`http://127.0.0.1:8000/api/gestion/turnos/${turnoId}/`, formData, {
+            await axios.post(`http://127.0.0.1:8000/api/gestion/turnos/${turnoId}/subir-comprobante/`, formData, {
                 headers: { 
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'multipart/form-data'
@@ -112,9 +114,8 @@ const MisTurnos = () => {
     const abrirGestion = async (turno) => {
         try {
             const token = localStorage.getItem('access_token');
-            const res = await axios.post(
-                `http://127.0.0.1:8000/api/gestion/turnos/${turno.id}/gestionar/`,
-                { accion: 'CONSULTAR' },
+            const res = await axios.get(
+                `http://127.0.0.1:8000/api/gestion/turnos/${turno.id}/opciones-cliente/`,
                 { headers: { 'Authorization': `Bearer ${token}` } }
             );
             setDatosPolitica(res.data);
@@ -125,11 +126,12 @@ const MisTurnos = () => {
             setHorarioSeleccionado(null);
             setHorariosDelDia([]);
             setDisponibilidadReprogramacion([]);
+            setMotivoCancelacion('');
             
             // Cargar disponibilidad para reprogramación si puede reprogramar
             if (res.data.puede_reprogramar && turno.detalles && turno.detalles.length > 0) {
                 const servicioId = turno.detalles[0].servicio;
-                await cargarDisponibilidadReprogramacion(servicioId);
+                await cargarDisponibilidadReprogramacion(servicioId, turno.id);
             }
             
             setModalAbierto(true);
@@ -144,11 +146,11 @@ const MisTurnos = () => {
     };
 
     // Cargar disponibilidad para reprogramación
-    const cargarDisponibilidadReprogramacion = async (servicioId) => {
+    const cargarDisponibilidadReprogramacion = async (servicioId, turnoId) => {
         setCargandoDisponibilidad(true);
         try {
             const token = localStorage.getItem('access_token');
-            const url = `http://127.0.0.1:8000/api/gestion/turnos/consultar_disponibilidad/?servicio_id=${servicioId}`;
+            const url = `http://127.0.0.1:8000/api/gestion/turnos/consultar_disponibilidad/?servicio_id=${servicioId}&turno_id=${turnoId}`;
             const res = await axios.get(url, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
@@ -197,7 +199,8 @@ const MisTurnos = () => {
                     `http://127.0.0.1:8000/api/gestion/turnos/${turnoSeleccionado.id}/reprogramar_cliente/`,
                     { 
                         fecha: fechaSeleccionada.fecha,
-                        hora_inicio: horarioSeleccionado.hora
+                        hora_inicio: horarioSeleccionado.hora,
+                        profesional_id: horarioSeleccionado.profesional_id
                     },
                     { headers: { 'Authorization': `Bearer ${token}` } }
                 );
@@ -212,7 +215,10 @@ const MisTurnos = () => {
                 }, 500);
                 
             } else if (tipoAccion === 'CANCELAR') {
-                // Mantener la lógica existente de gestionar para cancelación
+                if (!motivoCancelacion.trim()) {
+                    notify.error('Ingresá el motivo de cancelación.');
+                    return;
+                }
                 const result = await confirmarAccion({
                     title: "¿Cancelar turno?",
                     text: "Esta acción es irreversible.",
@@ -221,8 +227,8 @@ const MisTurnos = () => {
                 if (!result.isConfirmed) return;
 
                 const res = await axios.post(
-                    `http://127.0.0.1:8000/api/gestion/turnos/${turnoSeleccionado.id}/gestionar/`,
-                    { accion: 'CANCELAR' },
+                    `http://127.0.0.1:8000/api/gestion/turnos/${turnoSeleccionado.id}/cancelar-cliente/`,
+                    { motivo: motivoCancelacion.trim() },
                     { headers: { 'Authorization': `Bearer ${token}` } }
                 );
 
@@ -251,6 +257,7 @@ const MisTurnos = () => {
         setHorarioSeleccionado(null);
         setHorariosDelDia([]);
         setDisponibilidadReprogramacion([]);
+        setMotivoCancelacion('');
     };
 
     if (loading) return <div className="text-center mt-10" style={{ color: '#8B8682' }}>Cargando turnos...</div>;
@@ -284,7 +291,12 @@ const MisTurnos = () => {
                                             <h3 className="text-xl font-bold" style={{ color: vencido ? '#8B8682' : '#817773' }}>
                                                 {turno.servicio_nombre || "Servicio Capilar"}
                                             </h3>
-                                            <p className="text-lg" style={{ color: '#8B8682' }}>📅 {turno.fecha} - 🕒 {turno.hora_inicio}</p>
+                                            <p className="text-lg inline-flex items-center gap-2" style={{ color: '#8B8682' }}>
+                                                <IconCalendar className="h-4 w-4" />
+                                                {turno.fecha}
+                                                <IconClock className="h-4 w-4 ml-2" />
+                                                {turno.hora_inicio}
+                                            </p>
                                             
                                             <div className="mt-2 flex items-center gap-2">
                                                 {/* Badge de Estado */}
@@ -334,18 +346,51 @@ const MisTurnos = () => {
                                             {/* LOGICA DE COMPROBANTE (Solo si NO vencido) */}
                                             {!vencido && turno.estado === 'esperando_sena' && (
                                                 <div className="w-full p-3 rounded border" style={{ backgroundColor: '#E3D5CA', borderColor: '#D5BDAF' }}>
-                                                    <p className="text-xs font-bold mb-2" style={{ color: '#817773' }}>Subir Comprobante:</p>
-                                                    <input 
-                                                        type="file" 
-                                                        accept="image/*,.pdf"
-                                                        onChange={(e) => handleFileChange(e, turno.id)} 
-                                                        className="block w-full text-xs"
-                                                        style={{ color: '#8B8682' }}
-                                                    />
-                                                    {turnoIdSubida === turno.id && archivo && (
-                                                        <button onClick={() => subirComprobante(turno.id)} className="mt-2 w-full text-white text-xs font-bold py-1 rounded transition" style={{ backgroundColor: '#AB9A91' }} onMouseEnter={(e) => e.target.style.backgroundColor = '#817773'} onMouseLeave={(e) => e.target.style.backgroundColor = '#AB9A91'}>
-                                                            ENVIAR
-                                                        </button>
+                                                    {turno.comprobante_pago ? (
+                                                        <div>
+                                                            <p className="text-xs font-bold mb-2 inline-flex items-center gap-2" style={{ color: '#817773' }}>
+                                                                <IconCheckCircle className="h-3 w-3" /> Comprobante Subido:
+                                                            </p>
+                                                            <a 
+                                                                href={turno.comprobante_pago} 
+                                                                target="_blank" 
+                                                                rel="noopener noreferrer"
+                                                                className="text-xs text-blue-600 hover:underline block mb-3"
+                                                            >
+                                                                <span className="inline-flex items-center gap-2">
+                                                                    <IconClipboard className="h-3 w-3" /> Ver Comprobante
+                                                                </span>
+                                                            </a>
+                                                            <p className="text-xs mb-2" style={{ color: '#817773' }}>¿Cambiar comprobante?</p>
+                                                            <input 
+                                                                type="file" 
+                                                                accept="image/*,.pdf"
+                                                                onChange={(e) => handleFileChange(e, turno.id)} 
+                                                                className="block w-full text-xs"
+                                                                style={{ color: '#8B8682' }}
+                                                            />
+                                                            {turnoIdSubida === turno.id && archivo && (
+                                                                <button onClick={() => subirComprobante(turno.id)} className="mt-2 w-full text-white text-xs font-bold py-1 rounded transition" style={{ backgroundColor: '#AB9A91' }} onMouseEnter={(e) => e.target.style.backgroundColor = '#817773'} onMouseLeave={(e) => e.target.style.backgroundColor = '#AB9A91'}>
+                                                                    ACTUALIZAR
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    ) : (
+                                                        <div>
+                                                            <p className="text-xs font-bold mb-2" style={{ color: '#817773' }}>Subir Comprobante:</p>
+                                                            <input 
+                                                                type="file" 
+                                                                accept="image/*,.pdf"
+                                                                onChange={(e) => handleFileChange(e, turno.id)} 
+                                                                className="block w-full text-xs"
+                                                                style={{ color: '#8B8682' }}
+                                                            />
+                                                            {turnoIdSubida === turno.id && archivo && (
+                                                                <button onClick={() => subirComprobante(turno.id)} className="mt-2 w-full text-white text-xs font-bold py-1 rounded transition" style={{ backgroundColor: '#AB9A91' }} onMouseEnter={(e) => e.target.style.backgroundColor = '#817773'} onMouseLeave={(e) => e.target.style.backgroundColor = '#AB9A91'}>
+                                                                    ENVIAR
+                                                                </button>
+                                                            )}
+                                                        </div>
                                                     )}
                                                 </div>
                                             )}
@@ -364,7 +409,9 @@ const MisTurnos = () => {
                     <div className="rounded-xl shadow-2xl max-w-md w-full p-6 animate-fade-in-up" style={{ backgroundColor: 'white' }}>
                         <div className="flex justify-between items-center mb-4">
                             <h2 className="text-xl font-bold" style={{ color: '#817773' }}>Gestionar Turno</h2>
-                            <button onClick={cerrarModal} className="transition" style={{ color: '#8B8682' }} onMouseEnter={(e) => e.target.style.color = '#5A5451'} onMouseLeave={(e) => e.target.style.color = '#8B8682'}>✕</button>
+                            <button onClick={cerrarModal} className="transition" style={{ color: '#8B8682' }} onMouseEnter={(e) => e.target.style.color = '#5A5451'} onMouseLeave={(e) => e.target.style.color = '#8B8682'}>
+                                <IconX className="h-4 w-4" />
+                            </button>
                         </div>
 
                         <div className="p-4 rounded-lg mb-6 border-l-4" style={{ 
@@ -487,14 +534,28 @@ const MisTurnos = () => {
                             </div>
                         )}
 
-                        <hr className="my-4" style={{ borderColor: '#D5D1CC' }} />
+                        {datosPolitica.puede_cancelar && (
+                            <>
+                                <hr className="my-4" style={{ borderColor: '#D5D1CC' }} />
 
-                        <div>
-                            <h3 className="font-bold mb-2" style={{ color: '#817773' }}>Cancelar Definitivamente</h3>
-                            <button onClick={() => ejecutarAccion('CANCELAR')} className="w-full border-2 font-bold py-2 rounded transition" style={{ borderColor: '#C73E3E', color: '#C73E3E', backgroundColor: 'white' }} onMouseEnter={(e) => e.target.style.backgroundColor = '#FFE8E8'} onMouseLeave={(e) => e.target.style.backgroundColor = 'white'}>
-                                Cancelar Turno
-                            </button>
-                        </div>
+                                <div>
+                                    <h3 className="font-bold mb-2" style={{ color: '#817773' }}>Cancelar Definitivamente</h3>
+                                    <label className="block text-sm font-semibold mb-2" style={{ color: '#817773' }}>
+                                        Motivo de cancelación
+                                        <textarea
+                                            aria-label="Motivo de cancelación"
+                                            value={motivoCancelacion}
+                                            onChange={(event) => setMotivoCancelacion(event.target.value)}
+                                            className="mt-1 w-full rounded border p-2"
+                                            style={{ borderColor: '#D5BDAF' }}
+                                        />
+                                    </label>
+                                    <button disabled={!motivoCancelacion.trim()} onClick={() => ejecutarAccion('CANCELAR')} className="w-full border-2 font-bold py-2 rounded transition disabled:opacity-50" style={{ borderColor: '#C73E3E', color: '#C73E3E', backgroundColor: 'white' }} onMouseEnter={(e) => e.target.style.backgroundColor = '#FFE8E8'} onMouseLeave={(e) => e.target.style.backgroundColor = 'white'}>
+                                        Cancelar Turno
+                                    </button>
+                                </div>
+                            </>
+                        )}
                     </div>
                 </div>
             )}

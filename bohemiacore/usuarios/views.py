@@ -6,8 +6,13 @@ from rest_framework import permissions
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework import viewsets
-from django.core.mail import send_mail
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import SearchFilter, OrderingFilter
+from django.core.mail import send_mail, EmailMultiAlternatives
+from django.template.loader import render_to_string
+from django.utils.html import strip_tags
 from django.conf import settings
 from django.shortcuts import redirect
 from django.contrib.auth.tokens import default_token_generator
@@ -15,24 +20,250 @@ from django.utils.http import urlsafe_base64_encode
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_decode
 from django.utils.encoding import force_str
-from .serializers import RegistroSerializer, ClienteListSerializer
-from .serializers import SetNewPasswordSerializer
+
+
 from django.db.models import Min
 from .serializers import (
-    UsuarioPerfilReadSerializer,
-    UsuarioPerfilUpdateSerializer
+    AdminAdministratorAccountCreateCommandSerializer,
+    AdminClientAccountCreateCommandSerializer, ClienteListSerializer,
+    CurrentSessionSerializer,
+    RegistroSerializer, SetNewPasswordSerializer, UsuarioPerfilReadSerializer,
+    UsuarioPerfilUpdateSerializer,
 )
-from .models import Usuario
-from .models import Cliente
+from .administrator_account_services import (
+    AdministratorAccountCreationConflict,
+    AdministratorEmailAlreadyExists,
+    InvalidAdministratorAccountPassword,
+    InvalidAdministratorAccountPayload,
+    InvalidAdministratorAccountReason,
+    PermissionDeniedForAdministratorAccountCreation,
+    create_administrator_account,
+)
+from .client_account_services import (
+    ClientAccountCreationConflict,
+    EmailAlreadyExists,
+    InvalidClientAccountPassword,
+    InvalidClientAccountPayload,
+    InvalidClientAccountReason,
+    PermissionDeniedForClientAccountCreation,
+    create_client_account_by_staff,
+)
+from .cliente_filters import ClienteFilter
+from .permissions import CanViewClients
+from .roles import InconsistentBusinessRoleError
+
+from .models import (
+    Usuario,  Cliente
+) 
 
 from gestion.models import (
-    ReglaDiagnostico, TipoCabello, GrosorCabello, 
-    PorosidadCabello, CueroCabelludo, EstadoGeneral, Servicio
+    ReglaDiagnostico, TipoCabello, GrosorCabello,
+    PorosidadCabello, CueroCabelludo, EstadoGeneral, Servicio,
+    DiagnosticoCapilar
 )
+from gestion.serializers import DiagnosticoCapilarSerializer
 
 # Vista para redirigir a la pantalla de registro
 def home(request):
     return redirect('registro')  # Redirige al nombre de la ruta 'registro'
+
+
+class AdminAdministratorAccountCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        command = AdminAdministratorAccountCreateCommandSerializer(
+            data=request.data
+        )
+        if not command.is_valid():
+            error_fields = set(command.errors)
+            if error_fields == {'password_temporal'}:
+                error_code = 'INVALID_PASSWORD'
+            elif error_fields == {'motivo'}:
+                error_code = 'INVALID_REASON'
+            else:
+                error_code = 'INVALID_PAYLOAD'
+            return self._command_error(
+                error_code,
+                'El payload de alta de administrador es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+                fields=command.errors,
+            )
+
+        data = command.validated_data
+        try:
+            result = create_administrator_account(
+                actor=request.user,
+                email=data['email'],
+                first_name=data['first_name'],
+                last_name=data['last_name'],
+                raw_password=data['password_temporal'],
+                reason=data['motivo'],
+            )
+        except PermissionDeniedForAdministratorAccountCreation:
+            return self._command_error(
+                'PERMISSION_DENIED',
+                'No tiene permisos para crear administradores.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except InvalidAdministratorAccountPassword:
+            return self._command_error(
+                'INVALID_PASSWORD',
+                'La contraseña temporal no cumple los requisitos de seguridad.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except InvalidAdministratorAccountReason:
+            return self._command_error(
+                'INVALID_REASON',
+                'El motivo de alta es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except InvalidAdministratorAccountPayload:
+            return self._command_error(
+                'INVALID_PAYLOAD',
+                'Los datos proporcionados son inválidos.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except AdministratorEmailAlreadyExists:
+            return self._command_error(
+                'EMAIL_ALREADY_EXISTS',
+                'Ya existe una cuenta con ese email.',
+                status.HTTP_409_CONFLICT,
+            )
+        except AdministratorAccountCreationConflict:
+            return self._command_error(
+                'ADMIN_ACCOUNT_CREATION_CONFLICT',
+                'El alta entra en conflicto con otra operación.',
+                status.HTTP_409_CONFLICT,
+            )
+
+        return Response({
+            'created': result.created,
+            'usuario_id': result.user_id,
+            'email': result.email,
+            'rol': result.role,
+            'usuario_activo': result.user_active,
+        }, status=status.HTTP_201_CREATED)
+
+    @staticmethod
+    def _command_error(code, detail, status_code, fields=None):
+        error = {'code': code, 'detail': detail}
+        if fields is not None:
+            error['fields'] = fields
+        return Response({'error': error}, status=status_code)
+
+
+class AdminClientAccountCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        command = AdminClientAccountCreateCommandSerializer(data=request.data)
+        if not command.is_valid():
+            error_fields = set(command.errors)
+            if error_fields == {'password_temporal'}:
+                error_code = 'INVALID_PASSWORD'
+            elif error_fields == {'motivo'}:
+                error_code = 'INVALID_REASON'
+            else:
+                error_code = 'INVALID_PAYLOAD'
+            return self._command_error(
+                error_code,
+                'El payload de alta administrativa de Cliente es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+                fields=command.errors,
+            )
+
+        data = command.validated_data
+        try:
+            result = create_client_account_by_staff(
+                actor=request.user,
+                email=data['email'],
+                first_name=data['first_name'],
+                last_name=data['last_name'],
+                raw_password=data['password_temporal'],
+                reason=data['motivo'],
+                telefono=data.get('telefono'),
+                zona=data.get('zona'),
+            )
+        except PermissionDeniedForClientAccountCreation:
+            return self._command_error(
+                'PERMISSION_DENIED',
+                'No tiene permisos para crear clientes.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except InvalidClientAccountPassword:
+            return self._command_error(
+                'INVALID_PASSWORD',
+                'La contraseña temporal no cumple los requisitos de seguridad.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except InvalidClientAccountReason:
+            return self._command_error(
+                'INVALID_REASON',
+                'El motivo de alta es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except InvalidClientAccountPayload:
+            return self._command_error(
+                'INVALID_PAYLOAD',
+                'Los datos proporcionados son inválidos.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except EmailAlreadyExists:
+            return self._command_error(
+                'EMAIL_ALREADY_EXISTS',
+                'Ya existe una cuenta con ese email.',
+                status.HTTP_409_CONFLICT,
+            )
+        except ClientAccountCreationConflict:
+            return self._command_error(
+                'CLIENT_ACCOUNT_CREATION_CONFLICT',
+                'El alta entra en conflicto con otra operación.',
+                status.HTTP_409_CONFLICT,
+            )
+
+        return Response({
+            'created': result.created,
+            'usuario_id': result.user_id,
+            'cliente_id': result.cliente_id,
+            'email': result.email,
+            'rol': result.role,
+            'usuario_activo': result.user_active,
+        }, status=status.HTTP_201_CREATED)
+
+    @staticmethod
+    def _command_error(code, detail, status_code, fields=None):
+        error = {'code': code, 'detail': detail}
+        if fields is not None:
+            error['fields'] = fields
+        return Response({'error': error}, status=status_code)
+
+
+class CurrentSessionView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = (
+            Usuario.objects
+            .select_related('cliente', 'perfil_profesional')
+            .get(pk=request.user.pk)
+        )
+
+        try:
+            data = CurrentSessionSerializer(user).data
+        except InconsistentBusinessRoleError:
+            return Response(
+                {
+                    'error': {
+                        'code': 'MULTIPLE_BUSINESS_ROLES',
+                        'detail': 'El Usuario tiene múltiples roles de negocio.',
+                    }
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        return Response(data, status=status.HTTP_200_OK)
 
 class LogoutView(APIView):
     """
@@ -67,9 +298,7 @@ class RegistroView(APIView):
         """
         serializer = RegistroSerializer(data=request.data)
         if serializer.is_valid():
-            usuario = serializer.save() # Guarda el usuario y cliente asociado
-            usuario.es_cliente = True  # Asigna automáticamente el rol de cliente
-            usuario.save()
+            serializer.save()  # Guarda usuario, cliente y rol CLIENTE.
             return Response(
                 {"mensaje": "Usuario registrado exitosamente."},
                 status=status.HTTP_201_CREATED
@@ -85,14 +314,14 @@ class LoginView(APIView):
 
         try:
             usuario = Usuario.objects.get(email=email)
-            if usuario.check_password(password):
+            if usuario.check_password(password) and usuario.is_active:
                 refresh = RefreshToken.for_user(usuario)
                 return Response({
                     'access': str(refresh.access_token),
                     'refresh': str(refresh),
                 }, status=status.HTTP_200_OK)
             else:
-                print(f"[LOGIN] Contraseña incorrecta para {email}")
+                print(f"[LOGIN] Credenciales inválidas para {email}")
                 return Response({'detail': 'Credenciales inválidas.'}, status=status.HTTP_401_UNAUTHORIZED)
         except Usuario.DoesNotExist:
             print(f"[LOGIN] Usuario no encontrado: {email}")
@@ -103,6 +332,7 @@ class PerfilView(APIView):
     Endpoint para LEER (GET) y ACTUALIZAR (PUT) el perfil del usuario.
     Responde a /api/usuarios/perfil/
     """
+    authentication_classes = [JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -169,28 +399,35 @@ class PasswordResetRequestView(APIView):
             frontend_url = 'http://localhost:3000' 
             reset_link = f'{frontend_url}/resetear-clave/{uid}/{token}/'
             
-            # 4. Enviar el correo (¡con el enlace, no con la clave!)
+            # 4. Enviar el correo con HTML (EmailMultiAlternatives)
             asunto = 'Recuperación de contraseña - Bohemia Hair'
-            mensaje = f"""
-                Hola {usuario.first_name},
-
-                Haz clic en el siguiente enlace para crear una nueva contraseña:
-
-                {reset_link}
-
-                Si no solicitaste esto, ignora este correo.
-
-                Saludos,
-                Bohemia Hair
-                """
             
-            send_mail(
+            # Contexto para el template HTML
+            context = {
+                'usuario': usuario,
+                'reset_link': reset_link,
+                'frontend_url': frontend_url,
+            }
+            
+            # Renderizar el template HTML
+            html_content = render_to_string('emails/password_reset_email.html', context)
+            
+            # Crear versión de texto plano (fallback)
+            text_content = strip_tags(html_content)
+            
+            # Crear email con alternativas
+            email_message = EmailMultiAlternatives(
                 asunto,
-                mensaje,
+                text_content,
                 settings.DEFAULT_FROM_EMAIL,
-                [email],
-                fail_silently=False,
+                [email]
             )
+            
+            # Agregar versión HTML
+            email_message.attach_alternative(html_content, "text/html")
+            
+            # Enviar el email
+            email_message.send(fail_silently=False)
             
             # 5. La respuesta segura (¡igual que la suya!)
             return Response(
@@ -275,131 +512,42 @@ class DiagnosticoView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        # --- VARIABLES UNIFICADAS (Inicialización) ---
-        # Definimos esto al principio para usarlas en Nivel 1 y Nivel 2
-        rutina_id = None
-        rutina_nombre = None
-        
-        # --- 1. NIVEL 1: REGLAS DE EXCEPCIÓN (Prioridad Alta) ---
-        # Ejemplo: Desequilibrio de pH
-        reglas_nivel_1 = ReglaDiagnostico.objects.all().order_by('prioridad')
-        
-        for regla in reglas_nivel_1:
-            match = True 
-            if regla.tipo_cabello and regla.tipo_cabello != perfil.tipo_cabello:
-                match = False
-            if match and regla.grosor_cabello and regla.grosor_cabello != perfil.grosor_cabello:
-                match = False
-            if match and regla.porosidad_cabello and regla.porosidad_cabello != perfil.porosidad_cabello:
-                match = False
-            if match and regla.cuero_cabelludo and regla.cuero_cabelludo != perfil.cuero_cabelludo:
-                match = False
-            if match and regla.estado_general and regla.estado_general != perfil.estado_general:
-                match = False
-            
-            if match:
-                # ¡COINCIDENCIA DE NIVEL 1 ENCONTRADA!
-                if regla.rutina_sugerida:
-                    rutina_id = regla.rutina_sugerida.id
-                    rutina_nombre = regla.rutina_sugerida.nombre
+        diagnostico = DiagnosticoCapilar.objects.filter(
+            cliente=perfil
+        ).order_by('-fecha_diagnostico').first()
 
-                return Response({
-                    'mensaje_diagnostico': regla.mensaje_resultado,
-                    'accion': regla.accion_resultado,
-                    'puntaje_final': 0,
-                    'fuente': f"Análisis Directo (Regla: {regla.mensaje_resultado[:30]}...)",
-                    'rutina_id': rutina_id,          # Variable unificada
-                    'rutina_nombre': rutina_nombre,  # Variable unificada
-                }, status=status.HTTP_200_OK)
-
-        # --- 2. NIVEL 2: LÓGICA DE MATRIZ (Si no hubo coincidencia arriba) ---
-        puntaje_salud_total = 0
-        reglas_activadas = []
-        fuente_principal = "Análisis Estándar (Matriz de Perfil)"
-
-        try:
-            if perfil.estado_general:
-                puntaje_salud_total += perfil.estado_general.puntaje_base
-                reglas_activadas.append(f"Estado({perfil.estado_general.puntaje_base})")
-            if perfil.cuero_cabelludo:
-                puntaje_salud_total += perfil.cuero_cabelludo.puntaje_base
-                reglas_activadas.append(f"Cuero({perfil.cuero_cabelludo.puntaje_base})")
-            if perfil.tipo_cabello:
-                puntaje_salud_total += perfil.tipo_cabello.puntaje_base
-                reglas_activadas.append(f"Tipo({perfil.tipo_cabello.puntaje_base})")
-            if perfil.grosor_cabello:
-                puntaje_salud_total += perfil.grosor_cabello.puntaje_base
-                reglas_activadas.append(f"Grosor({perfil.grosor_cabello.puntaje_base})")
-            if perfil.porosidad_cabello:
-                puntaje_salud_total += perfil.porosidad_cabello.puntaje_base
-                reglas_activadas.append(f"Porosidad({perfil.porosidad_cabello.puntaje_base})")
-                
-        except AttributeError as e:
+        if not diagnostico:
             return Response(
-                {"error": f"Error de configuración en modelos: {str(e)}"}, 
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                {"error": "No hay diagnósticos registrados para este cliente."},
+                status=status.HTTP_404_NOT_FOUND
             )
-        
-        # --- 3. GENERACIÓN DE MENSAJE NIVEL 2 ---
-        mensaje_diagnostico = ""
-        accion_recomendada = ""
-        
-        if puntaje_salud_total <= 3: 
-            mensaje_diagnostico = "Cabello dañado. Requiere reparación intensiva."
-            accion_recomendada = "Reparación Intensiva"
-            # AQUÍ PODRÍAS ASIGNAR UNA RUTINA POR DEFECTO SI QUISIERAS:
-            # rutina_id = 1 (ID de rutina de reparación)
-        elif puntaje_salud_total <= 7:
-            mensaje_diagnostico = "Estado regular. Requiere mantenimiento."
-            accion_recomendada = "Hidratación y Nutrición"
-        else:
-            mensaje_diagnostico = "Estado saludable. Mantener cuidado preventivo."
-            accion_recomendada = "Cuidado Preventivo"
 
-        # --- 4. RESPUESTA FINAL ---
-        # Buscamos si hay una notificación de recomendación de turno
-        turno_recomendado = None
-        try:
-            from gestion.models import Notificacion
-            notif = Notificacion.objects.filter(
-                usuario=request.user,
-                tipo='alerta',
-                titulo__icontains='Recomendación'
-            ).order_by('-fecha_envio').first()
-            
-            if notif and notif.datos_extra:
-                turno_recomendado = {
-                    'fecha': notif.datos_extra.get('fecha'),
-                    'hora': notif.datos_extra.get('hora'),
-                    'servicio_id': notif.datos_extra.get('servicio_id')
-                }
-        except:
-            pass
-        
-        response_data = {
-            'mensaje_diagnostico': mensaje_diagnostico,
-            'accion': accion_recomendada,
-            'puntaje_final': puntaje_salud_total,
-            'fuente': f"{fuente_principal} - Pts: {puntaje_salud_total}",
-            'rutina_id': rutina_id,
-            'rutina_nombre': rutina_nombre,
-        }
-        
-        # Agregamos el turno recomendado si existe
-        if turno_recomendado:
-            response_data['turno_recomendado'] = turno_recomendado
-        
-        return Response(response_data, status=status.HTTP_200_OK)
+        serializer = DiagnosticoCapilarSerializer(diagnostico, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
-# --- VIEWSET PARA LISTAR CLIENTES (ADMIN) ---
+# --- VIEWSET PARA CONSULTAR CLIENTES CON PERMISO CANÓNICO ---
 class ClienteViewSet(viewsets.ReadOnlyModelViewSet):
     """
-    ViewSet para que el admin pueda listar todos los clientes.
+    Consulta global de clientes para personal autorizado.
     Solo lectura (GET).
+    Incluye filtrado, búsqueda y ordenamiento.
     """
     queryset = Cliente.objects.all().select_related('usuario')
     serializer_class = ClienteListSerializer
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [permissions.IsAuthenticated, CanViewClients]
     pagination_class = None
     
+    # Configurar filtros, búsqueda y ordenamiento
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = ClienteFilter
+    search_fields = ['usuario__first_name', 'usuario__last_name', 'usuario__email']
+    ordering_fields = ['usuario__first_name', 'usuario__last_name', 'usuario__date_joined', 'activo']
+    ordering = ['-usuario__date_joined']  # Por defecto, mostrar primero los más nuevos
+    
+    def get_queryset(self):
+        """
+        Solo traer clientes cuyo usuario asociado esté activo.
+        Esto previene desincronización cuando se "desactivan" usuarios.
+        """
+        return Cliente.objects.filter(usuario__is_active=True).select_related('usuario')

@@ -1,12 +1,16 @@
 import React from 'react';
+import { IconCheckCircle, IconHeart, IconSparkles } from '../../components/common/Icons';
+import useEmpresaNombre from '../../hooks/useEmpresaNombre';
 
 const Acerca = () => {
+  const empresaNombre = useEmpresaNombre();
+
   return (
     <div className="w-full">
       {/* Header */}
       <section className="bg-gradient-to-r from-pink-500 to-rose-500 text-white py-12 px-4">
         <div className="max-w-6xl mx-auto">
-          <h1 className="text-4xl font-bold mb-4">Acerca de Bohemia Hair</h1>
+          <h1 className="text-4xl font-bold mb-4">Acerca de {empresaNombre}</h1>
           <p className="text-xl">Conoce nuestra historia y misión</p>
         </div>
       </section>
@@ -16,7 +20,7 @@ const Acerca = () => {
         <div className="max-w-4xl mx-auto">
           <h2 className="text-3xl font-bold mb-6">Nuestra Historia</h2>
           <p className="text-gray-700 text-lg leading-relaxed mb-6">
-            Bohemia Hair nace de la pasión por el cuidado profesional del cabello. Desde nuestros inicios, 
+            {empresaNombre} nace de la pasión por el cuidado profesional del cabello. Desde nuestros inicios, 
             nos hemos comprometido a ofrecer servicios de la más alta calidad utilizando productos premium 
             y técnicas innovadoras.
           </p>
@@ -55,17 +59,23 @@ const Acerca = () => {
           <h2 className="text-3xl font-bold mb-12 text-center">Nuestros Valores</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             <div className="bg-white p-6 rounded-lg shadow-lg text-center">
-              <div className="text-4xl mb-4">💆</div>
+              <div className="flex justify-center mb-4 text-pink-500">
+                <IconCheckCircle className="h-10 w-10" />
+              </div>
               <h3 className="text-xl font-bold mb-3">Profesionalismo</h3>
               <p className="text-gray-600">Dedicación y excelencia en cada servicio</p>
             </div>
             <div className="bg-white p-6 rounded-lg shadow-lg text-center">
-              <div className="text-4xl mb-4">❤️</div>
+              <div className="flex justify-center mb-4 text-pink-500">
+                <IconHeart className="h-10 w-10" />
+              </div>
               <h3 className="text-xl font-bold mb-3">Pasión</h3>
               <p className="text-gray-600">Amor por lo que hacemos y por nuestros clientes</p>
             </div>
             <div className="bg-white p-6 rounded-lg shadow-lg text-center">
-              <div className="text-4xl mb-4">✨</div>
+              <div className="flex justify-center mb-4 text-pink-500">
+                <IconSparkles className="h-10 w-10" />
+              </div>
               <h3 className="text-xl font-bold mb-3">Innovación</h3>
               <p className="text-gray-600">Siempre buscando las mejores técnicas y productos</p>
             </div>
@@ -76,7 +86,7 @@ const Acerca = () => {
       {/* Call to Action */}
       <section className="bg-gradient-to-r from-pink-500 to-rose-500 text-white py-16 px-4">
         <div className="max-w-4xl mx-auto text-center">
-          <h2 className="text-3xl font-bold mb-6">¿Quieres ser parte de Bohemia Hair?</h2>
+          <h2 className="text-3xl font-bold mb-6">¿Quieres ser parte de {empresaNombre}?</h2>
           <p className="text-lg mb-8">Únete a nuestro comunidad de clientes satisfechos</p>
           <a href="/auth/registro" className="bg-white text-pink-500 px-8 py-3 rounded-lg font-bold hover:bg-gray-100 inline-block">
             Registrarse

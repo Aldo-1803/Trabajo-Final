@@ -1,0 +1,21 @@
+[Unit]
+Description=Bohemia Hair provider event verification and reconciliation worker
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bohemia
+Group=bohemia
+WorkingDirectory=/opt/bohemia/bohemiacore
+EnvironmentFile=/etc/bohemia/bohemia.env
+ExecStart=/opt/bohemia/venv/bin/python -X utf8 manage.py process_provider_events --watch
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

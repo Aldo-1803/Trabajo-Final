@@ -8,6 +8,22 @@ function Paso1DatosPersonales({ formData, handleChange, nextStep }) {
             notify.error('Por favor, complete los campos requeridos.');
             return;
         }
+
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
+            notify.error('Ingrese un correo electrónico válido.');
+            return;
+        }
+
+        if (formData.numero && !/^\d+$/.test(formData.numero)) {
+            notify.error('El teléfono solo debe contener números.');
+            return;
+        }
+
+        if (!/^(?=.*[A-Za-z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/.test(formData.password)) {
+            notify.error('La contraseña debe tener al menos 8 caracteres e incluir letras, números y un signo especial.');
+            return;
+        }
+
         if (formData.password !== formData.password2) {
             notify.error('Las contraseñas no coinciden.');
             return;
@@ -23,7 +39,7 @@ function Paso1DatosPersonales({ formData, handleChange, nextStep }) {
         { name: 'password2', label: 'Confirmar Contraseña', type: 'password', required: true },
         { name: 'fecha_nacimiento', label: 'Fecha de Nacimiento', type: 'date', required: false },
         { name: 'zona', label: 'Zona', type: 'text', required: false },
-        { name: 'numero', label: 'Teléfono', type: 'text', required: false },
+        { name: 'numero', label: 'Teléfono', type: 'tel', required: false, inputMode: 'numeric', pattern: '[0-9]*' },
         { name: 'redes', label: 'Red Social (Opcional)', type: 'text', required: false },
         { name: 'sexo', label: 'Sexo', type: 'select', required: false, options: ['Femenino', 'Masculino', 'Otro'], values: ['F', 'M', 'O'] },
     ];
@@ -63,6 +79,8 @@ function Paso1DatosPersonales({ formData, handleChange, nextStep }) {
                                 value={formData[campo.name]}
                                 onChange={handleChange}
                                 required={campo.required}
+                                inputMode={campo.inputMode}
+                                pattern={campo.pattern}
                                 className="w-full px-4 py-3 border-2 border-rose-200 rounded-lg bg-rose-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-rose-400 focus:border-transparent transition duration-200 placeholder-gray-400"
                                 placeholder={`Ingresa tu ${campo.label.toLowerCase()}`}
                             />

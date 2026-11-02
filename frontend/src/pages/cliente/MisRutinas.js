@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { confirmarAccion, notify } from '../../utils/notificaciones';
+import { IconDownload, IconFileText, IconTrash } from '../../components/common/Icons';
 
 const MisRutinas = () => {
   const [rutinas, setRutinas] = useState([]);
@@ -185,7 +186,9 @@ const MisRutinas = () => {
 
                       {/* Archivo de Rutina */}
                       <div>
-                        <h3 className="font-bold text-[#817773] mb-4 text-lg">📄 Archivo de la Rutina:</h3>
+                        <h3 className="font-bold text-[#817773] mb-4 text-lg inline-flex items-center gap-2">
+                          <IconFileText className="h-5 w-5" /> Archivo de la Rutina:
+                        </h3>
                         {rutina.archivo ? (
                           <div className="p-4 rounded-lg border-2 bg-[#F5EBE0] border-[#D5BDAF]">
                             <p className="text-sm text-[#AB9A91] mb-3">Tu rutina personalizada está lista para descargar</p>
@@ -193,7 +196,7 @@ const MisRutinas = () => {
                               onClick={() => handleDescargarArchivo(rutina)}
                               className="bg-[#D5BDAF] hover:bg-[#AB9A91] text-white font-semibold py-2 px-4 rounded transition-colors flex items-center gap-2"
                             >
-                              📥 Abrir/Descargar Rutina
+                              <IconDownload className="h-5 w-5" /> Abrir/Descargar Rutina
                             </button>
                           </div>
                         ) : (
@@ -217,13 +220,13 @@ const MisRutinas = () => {
                             onClick={() => handleDescargarArchivo(rutina)}
                             className="flex-1 bg-[#D5BDAF] hover:bg-[#AB9A91] text-white font-semibold py-2 px-4 rounded transition-colors flex items-center justify-center gap-2"
                           >
-                            📥 Descargar Rutina
+                            <IconDownload className="h-5 w-5" /> Descargar Rutina
                           </button>
                           <button
                             onClick={() => handleEliminarRutina(rutina.id, rutina.nombre)}
                             className="flex-1 bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-4 rounded transition-colors flex items-center justify-center gap-2"
                           >
-                            🗑️ Dejar de Usar
+                            <IconTrash className="h-5 w-5" /> Dejar de Usar
                           </button>
                         </div>
                       </div>

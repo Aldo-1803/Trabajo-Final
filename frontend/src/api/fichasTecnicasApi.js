@@ -2,21 +2,30 @@ import axios from 'axios';
 
 const API_BASE_URL = 'http://127.0.0.1:8000/api/gestion';
 
-const token = localStorage.getItem('access_token');
-
 const API_CLIENT = axios.create({
   baseURL: API_BASE_URL,
+  withCredentials: false,
   headers: {
-    'Authorization': `Bearer ${token}`,
     'Content-Type': 'application/json',
   },
 });
 
+API_CLIENT.interceptors.request.use((config) => {
+  const token = localStorage.getItem('access_token');
+  config.headers = config.headers || {};
+
+  if (token) {
+    config.headers['Authorization'] = `Bearer ${token}`;
+  } else {
+    delete config.headers['Authorization'];
+  }
+
+  return config;
+});
+
 // Actualizar token cuando cambia
 export const setAuthToken = (newToken) => {
-  if (newToken) {
-    API_CLIENT.defaults.headers['Authorization'] = `Bearer ${newToken}`;
-  }
+  if (newToken) localStorage.setItem('access_token', newToken);
 };
 
 // FICHAS TÉCNICAS - CRUD

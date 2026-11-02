@@ -102,7 +102,7 @@ const GestionarRutinas = () => {
       resetForm();
       fetchRutinas();
     } catch (err) {
-      console.error('❌ Error al guardar:', err);
+      console.error('Error al guardar:', err);
       console.error('Respuesta del servidor:', err.response?.data);
       const errorMsg = err.response?.data?.archivo?.[0] || err.response?.data?.detail || 'Error al guardar la rutina. Verifica los campos.';
       notify.error(errorMsg);
@@ -208,7 +208,7 @@ const GestionarRutinas = () => {
   };
 
   return (
-    <div className="min-h-screen p-6" style={{ backgroundColor: '#F5EBE0' }}>
+    <div className="min-h-screen p-6" style={{ backgroundColor: '#F5F5EB' }}>
       <div className="max-w-6xl mx-auto">
         
         {/* HEADER */}
@@ -240,7 +240,7 @@ const GestionarRutinas = () => {
         {showForm ? (
           <div className="rounded-xl shadow-xl p-8 border" style={{ backgroundColor: 'white', borderColor: '#D5D1CC' }}>
             <h2 className="text-2xl font-bold mb-6" style={{ color: '#817773', borderBottom: '2px solid #E3D5CA', paddingBottom: '0.5rem' }}>
-              {editingId ? '✏️ Editar Rutina' : 'Nueva Rutina'}
+              {editingId ? 'Editar Rutina' : 'Nueva Rutina'}
             </h2>
             
             <form onSubmit={handleSubmit} className="space-y-6">
@@ -263,7 +263,7 @@ const GestionarRutinas = () => {
                     name="estado"
                     value={formData.estado} onChange={handleInputChange}
                     className="w-full border p-2 rounded font-medium"
-                    style={{ borderColor: '#D5D1CC', backgroundColor: '#F5EBE0' }}
+                    style={{ borderColor: '#D5D1CC', backgroundColor: '#F5F5EB' }}
                   >
                     <option value="borrador">Borrador</option>
                     <option value="publicada">Publicada</option>
@@ -301,7 +301,7 @@ const GestionarRutinas = () => {
               {/* CARGA DE ARCHIVO PDF */}
               <div>
                 <label className="block text-sm font-bold mb-1" style={{ color: '#817773' }}>
-                  📄 Cargar Rutina (PDF/Imagen)
+                  Cargar Rutina (PDF/Imagen)
                 </label>
                 <p className="text-xs mb-3" style={{ color: '#8B8682' }}>
                   Sube el diseño de la rutina en formato PDF, JPG o PNG. (Máx. 10MB)
@@ -459,7 +459,7 @@ const GestionarRutinas = () => {
                 ) : (
                   <div className="space-y-4">
                     {detalles.usuarios.map((usuario, idx) => (
-                      <div key={idx} className="border rounded-lg p-4 hover:bg-opacity-100 transition" style={{ backgroundColor: '#F5EBE0', borderColor: '#D5D1CC' }}>
+                      <div key={idx} className="border rounded-lg p-4 hover:bg-opacity-100 transition" style={{ backgroundColor: '#F5F5EB', borderColor: '#D5D1CC' }}>
                         <div className="flex justify-between items-start">
                           <div>
                             <h3 className="font-bold" style={{ color: '#817773' }}>{usuario.nombre}</h3>

@@ -1,0 +1,94 @@
+@startuml
+title UC-20 Cancelar Turno (DSS)
+
+actor Cliente
+actor Profesional
+participant ":Sistema"
+
+'==================== PRECONDICIÓN ====================
+note over Cliente,":Sistema"
+Precondición: existe un turno agendado en estado "ACEPTADO".
+Objetivo: permitir cancelar turno registrando motivo.
+IRQ: Turnos, Notificaciones.
+**Flujos diferenciados: Cliente vs Profesional**
+end note
+
+'==================== SECUENCIA NORMAL: CLIENTE =================
+note over Cliente,":Sistema"
+**FLUJO 1: CANCELACIÓN POR CLIENTE**
+end note
+
+Cliente -> ":Sistema": navegarMisTurnos()
+":Sistema" --> Cliente: mostrarListaTurnosAgendados(turnos[])
+
+Cliente -> ":Sistema": seleccionarTurno(turnoId)\nelecirCancelarTurno()
+activate ":Sistema"
+":Sistema" -> ":Sistema": obtenerTurno(turnoId)
+":Sistema" -> ":Sistema": verificarLimite24Horas(turno.fechaHora)
+
+alt  cancelación > 24hs antes del turno
+  ":Sistema" --> Cliente: solicitarMotivoCancelacion()
+  deactivate ":Sistema"
+  
+  Cliente -> ":Sistema": ingresarMotivo(motivo)\nconfirmarCancelacion()
+  activate ":Sistema"
+  ":Sistema" -> ":Sistema": actualizarEstadoTurno(turnoId, "CANCELADO")\nregistrarMotivo(motivo)\nliberarHorarioAgenda(turnoId)
+  ":Sistema" -> ":Sistema": notificarProfesional(turnoId, motivo)
+  ":Sistema" -> ":Sistema": enviarConfirmacionCliente(clienteId)
+  ":Sistema" --> Cliente: confirmarCancelacionExitosa()
+  deactivate ":Sistema"
+
+else cancelación <= 24hs antes del turno
+  ":Sistema" --> Cliente: errorPoliticaCancelacion()\nmensaje = "No se permite cancelar dentro de las 24hs previas al turno"
+  deactivate ":Sistema"
+end
+
+'==================== SECUENCIA NORMAL: PROFESIONAL =================
+note over Profesional,":Sistema"
+**FLUJO 2: CANCELACIÓN POR PROFESIONAL**
+end note
+
+Profesional -> ":Sistema": navegarSeccionAgenda()
+":Sistema" --> Profesional: mostrarAgendaDia()
+
+Profesional -> ":Sistema": seleccionarTurno(turnoId)\nelecirCancelarTurno()
+":Sistema" --> Profesional: solicitarMotivoCancelacion()
+
+Profesional -> ":Sistema": ingresarMotivo(motivo)\nconfirmarCancelacion()
+activate ":Sistema"
+":Sistema" -> ":Sistema": actualizarEstadoTurno(turnoId, "CANCELADO")\nregistrarMotivo(motivo)
+":Sistema" -> ":Sistema": liberarHorarioAgenda(turnoId)
+":Sistema" -> ":Sistema": notificarCliente(clienteId, motivo)
+":Sistema" --> Profesional: confirmarCancelacion()
+deactivate ":Sistema"
+
+note right of ":Sistema"
+**Diferencia clave:**
+Profesional NO tiene restricción de 24hs.
+Puede cancelar en cualquier momento.
+end note
+
+'==================== POSTCONDICIÓN ====================
+note over Cliente,":Sistema"
+Postcondición (flujo exitoso):
+- Turno actualizado a estado "CANCELADO".
+- Motivo de cancelación registrado en BD.
+- Horario liberado en agenda.
+- Notificaciones enviadas a ambas partes.
+end note
+
+'==================== RENDIMIENTO ======================
+note right of ":Sistema"
+Rendimiento (pasos 6/7):
+Actualización de estado <= 300 ms.
+end note
+
+'==================== COMENTARIOS ======================
+note over ":Sistema"
+Tecnología:
+- Campo motivo_cancelacion en tabla Turnos (PostgreSQL).
+- Útil para métricas y análisis de negocio futuro.
+- Django backend implementa validación de 24 horas para clientes.
+- Liberación de horario puede disparar notificación a Lista de Espera.
+end note
+@enduml

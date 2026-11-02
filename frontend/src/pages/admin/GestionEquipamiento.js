@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { confirmarAccion, notify } from '../../utils/notificaciones';
@@ -9,6 +9,11 @@ const GestionEquipamiento = () => {
     const [loading, setLoading] = useState(true);
     const [modalAbierto, setModalAbierto] = useState(false);
     const [modoEdicion, setModoEdicion] = useState(false);
+    
+    // --- FILTROS Y BÚSQUEDA ---
+    const [busqueda, setBusqueda] = useState('');
+    const [filtroEstado, setFiltroEstado] = useState('');
+    const [filtroTipo, setFiltroTipo] = useState('');
     
     const [form, setForm] = useState({
         id: null,
@@ -33,11 +38,21 @@ const GestionEquipamiento = () => {
     };
 
     // --- CARGA DE DATOS ---
-    const cargarEquipos = async () => {
+    const cargarEquipos = useCallback(async () => {
         setLoading(true);
         try {
             const token = localStorage.getItem('access_token');
-            const res = await axios.get('http://127.0.0.1:8000/api/gestion/equipamiento/', {
+            let url = 'http://127.0.0.1:8000/api/gestion/equipamiento/?';
+            
+            // Agregar parámetros de filtro
+            const params = new URLSearchParams();
+            if (busqueda) params.append('search', busqueda);
+            if (filtroEstado) params.append('estado', filtroEstado);
+            if (filtroTipo) params.append('tipo', filtroTipo);
+            
+            url += params.toString();
+            
+            const res = await axios.get(url, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             // Maneja tanto arrays como objetos con estructura results
@@ -49,7 +64,7 @@ const GestionEquipamiento = () => {
         } finally {
             setLoading(false);
         }
-    };
+    }, [busqueda, filtroEstado, filtroTipo, navigate]);
 
     // --- CARGA DE TIPOS DE EQUIPAMIENTO ---
     const cargarTipos = async () => {
@@ -69,7 +84,7 @@ const GestionEquipamiento = () => {
     useEffect(() => {
         cargarEquipos();
         cargarTipos();
-    }, []);
+    }, [cargarEquipos]);
 
     // --- MANEJADORES DEL FORMULARIO ---
     const handleChange = (e) => {
@@ -159,6 +174,69 @@ const GestionEquipamiento = () => {
                     >
                         + Registrar Equipo
                     </button>
+                </div>
+            </div>
+
+            {/* FILTROS Y BÚSQUEDA */}
+            <div className="bg-white shadow-lg rounded-lg p-6 mb-6 border border-gray-200">
+                <h3 className="text-lg font-bold text-gray-800 mb-4">🔍 Filtros y Búsqueda</h3>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    {/* Búsqueda por Nombre */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Buscar por Nombre o Código</label>
+                        <input
+                            type="text"
+                            placeholder="Ej: Lavacabezas, LAV-01..."
+                            value={busqueda}
+                            onChange={(e) => setBusqueda(e.target.value)}
+                            className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                    </div>
+
+                    {/* Filtro por Estado */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Estado</label>
+                        <select
+                            value={filtroEstado}
+                            onChange={(e) => setFiltroEstado(e.target.value)}
+                            className="w-full border border-gray-300 rounded-lg px-4 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                            <option value="">Todos los Estados</option>
+                            <option value="DISPONIBLE">🟢 Disponible</option>
+                            <option value="EN_USO">🔵 En Uso</option>
+                            <option value="MANTENIMIENTO">🟠 En Mantenimiento</option>
+                            <option value="FUERA_SERVICIO">🔴 Fuera de Servicio</option>
+                        </select>
+                    </div>
+
+                    {/* Filtro por Tipo */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Tipo de Equipamiento</label>
+                        <select
+                            value={filtroTipo}
+                            onChange={(e) => setFiltroTipo(e.target.value)}
+                            className="w-full border border-gray-300 rounded-lg px-4 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                            <option value="">Todos los Tipos</option>
+                            {tipos.map((tipo) => (
+                                <option key={tipo.id} value={tipo.id}>{tipo.nombre}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    {/* Botón Limpiar Filtros */}
+                    <div className="flex items-end">
+                        <button
+                            onClick={() => {
+                                setBusqueda('');
+                                setFiltroEstado('');
+                                setFiltroTipo('');
+                            }}
+                            className="w-full bg-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-400 font-bold"
+                        >
+                            🔄 Limpiar Filtros
+                        </button>
+                    </div>
                 </div>
             </div>
 

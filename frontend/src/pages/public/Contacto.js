@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { IconClock, IconMail, IconMapPin, IconPhone } from '../../components/common/Icons';
 
 const Contacto = () => {
   const [formData, setFormData] = useState({
@@ -52,22 +53,30 @@ const Contacto = () => {
               <h2 className="text-2xl font-bold mb-8">Información de Contacto</h2>
               
               <div className="mb-8">
-                <h3 className="font-bold text-lg mb-2">📍 Ubicación</h3>
+                <h3 className="font-bold text-lg mb-2 inline-flex items-center gap-2">
+                  <IconMapPin className="h-5 w-5" /> Ubicación
+                </h3>
                 <p className="text-gray-700">Calle Principal 123<br />Ciudad, País<br />Código Postal</p>
               </div>
 
               <div className="mb-8">
-                <h3 className="font-bold text-lg mb-2">📞 Teléfono</h3>
+                <h3 className="font-bold text-lg mb-2 inline-flex items-center gap-2">
+                  <IconPhone className="h-5 w-5" /> Teléfono
+                </h3>
                 <p className="text-gray-700">+34 XXX XXX XXX</p>
               </div>
 
               <div className="mb-8">
-                <h3 className="font-bold text-lg mb-2">📧 Email</h3>
+                <h3 className="font-bold text-lg mb-2 inline-flex items-center gap-2">
+                  <IconMail className="h-5 w-5" /> Email
+                </h3>
                 <p className="text-gray-700">info@bohemiahair.com</p>
               </div>
 
               <div>
-                <h3 className="font-bold text-lg mb-2">⏰ Horario de Atención</h3>
+                <h3 className="font-bold text-lg mb-2 inline-flex items-center gap-2">
+                  <IconClock className="h-5 w-5" /> Horario de Atención
+                </h3>
                 <p className="text-gray-700">
                   Lunes a Viernes: 9:00 AM - 6:00 PM<br />
                   Sábado: 10:00 AM - 4:00 PM<br />
