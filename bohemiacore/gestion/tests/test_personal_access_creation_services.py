@@ -96,15 +96,17 @@ class PersonalAccessCreationServiceTests(TestCase):
         self.assertFalse(personal.realiza_lavado)
         self.assertTrue(personal.realiza_color)
 
-    def test_administrator_access_is_created_without_staff_flag(self):
+    def test_administrator_access_is_rejected(self):
         personal = self.create_personal('administrator')
 
-        result = self.create_access(personal, BusinessRole.ADMINISTRADOR)
+        with self.assertRaises(InvalidPersonalAccessRole):
+            self.create_access(personal, BusinessRole.ADMINISTRADOR)
 
-        user = Usuario.objects.get(pk=result.user_id)
-        self.assertEqual(get_business_role(user), BusinessRole.ADMINISTRADOR)
-        self.assertFalse(user.is_staff)
-        self.assertFalse(user.is_superuser)
+        personal.refresh_from_db()
+        self.assertIsNone(personal.usuario_id)
+        self.assertFalse(
+            Usuario.objects.filter(email=f'access-{personal.pk}@test.com').exists()
+        )
 
     def test_client_role_is_rejected(self):
         personal = self.create_personal('client-role')
@@ -121,7 +123,7 @@ class PersonalAccessCreationServiceTests(TestCase):
         personal = self.create_personal('inactive', activo=False)
 
         with self.assertRaises(PersonalInactiveForAccess):
-            self.create_access(personal, BusinessRole.ADMINISTRADOR)
+            self.create_access(personal, BusinessRole.EMPLEADO)
 
         personal.refresh_from_db()
         self.assertFalse(personal.activo)
@@ -346,7 +348,7 @@ class PersonalAccessCreationServiceTests(TestCase):
     def test_compound_audit_records_creation_context_and_component_events(self):
         personal = self.create_personal('audit-content')
 
-        result = self.create_access(personal, BusinessRole.ADMINISTRADOR)
+        result = self.create_access(personal, BusinessRole.PROFESIONAL)
 
         audit = Auditoria.objects.get(tabla=PERSONAL_ACCESS_AUDIT_TABLE)
         self.assertEqual(audit.usuario, self.actor)
@@ -355,7 +357,7 @@ class PersonalAccessCreationServiceTests(TestCase):
         self.assertEqual(audit.valor_nuevo['source'], PERSONAL_ACCESS_AUDIT_SOURCE)
         self.assertEqual(audit.valor_nuevo['personal_id'], personal.pk)
         self.assertEqual(audit.valor_nuevo['user_id'], result.user_id)
-        self.assertEqual(audit.valor_nuevo['role'], BusinessRole.ADMINISTRADOR)
+        self.assertEqual(audit.valor_nuevo['role'], BusinessRole.PROFESIONAL)
         self.assertEqual(audit.valor_nuevo['reason'], 'Alta inicial de acceso laboral')
         self.assertEqual(audit.valor_nuevo['link_audit_id'], result.link_audit_id)
         self.assertEqual(audit.valor_nuevo['role_audit_id'], result.role_audit_id)

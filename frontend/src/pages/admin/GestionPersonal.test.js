@@ -131,7 +131,7 @@ const fillCreateAccess = () => {
         target: { value: 'Temporary!Access2026' }
     });
     fireEvent.change(screen.getByLabelText('Rol de acceso *'), {
-        target: { value: 'ADMINISTRADOR' }
+        target: { value: 'PROFESIONAL' }
     });
     fireEvent.change(screen.getByLabelText('Motivo *'), {
         target: { value: 'Alta de acceso laboral' }
@@ -206,13 +206,27 @@ describe('GestionPersonal access UI', () => {
             if (url.includes('/habilidades/')) {
                 return Promise.resolve({ data: [] });
             }
-            return Promise.resolve({ data: [personalSinUsuario] });
+            if (url.includes('/directorio-habilidades/')) {
+                return Promise.resolve({ data: [{
+                    id: 10,
+                    nombre: 'Sin',
+                    apellido: 'Acceso',
+                    activo: true
+                }] });
+            }
+            return Promise.resolve({ data: [] });
         });
         axios.post.mockResolvedValue({ data: { changed: true } });
 
         render(<GestionPersonal />);
 
         expect(await screen.findByText('Coloración')).toBeInTheDocument();
+        expect(axios.get).toHaveBeenCalledWith(
+            'http://127.0.0.1:8000/api/gestion/personal/directorio-habilidades/',
+            { headers: { Authorization: 'Bearer test-token' } }
+        );
+        expect(screen.queryByRole('columnheader', { name: 'Contacto' })).not.toBeInTheDocument();
+        expect(screen.queryByText('contacto-personal@test.com')).not.toBeInTheDocument();
         fireEvent.click(screen.getByRole('button', { name: 'Revocar Coloración' }));
 
         await waitFor(() => expect(axios.post).toHaveBeenCalledWith(
@@ -376,6 +390,7 @@ describe('GestionPersonal access UI', () => {
 
         expect(screen.getByRole('heading', { name: 'Crear acceso' })).toBeInTheDocument();
         expect(screen.queryByRole('option', { name: 'Cliente' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('option', { name: 'Administrador' })).not.toBeInTheDocument();
         fillCreateAccess();
         fireEvent.click(screen.getAllByRole('button', { name: 'Crear acceso' }).at(-1));
 
@@ -385,7 +400,7 @@ describe('GestionPersonal access UI', () => {
                 {
                     email: 'nuevo-acceso@test.com',
                     password_temporal: 'Temporary!Access2026',
-                    role: 'ADMINISTRADOR',
+                    role: 'PROFESIONAL',
                     motivo: 'Alta de acceso laboral'
                 },
                 { headers: { Authorization: 'Bearer test-token' } }

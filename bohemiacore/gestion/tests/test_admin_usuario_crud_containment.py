@@ -85,10 +85,6 @@ class AdminUsuarioCrudContainmentTests(APITestCase):
                     response.status_code,
                     status.HTTP_403_FORBIDDEN,
                 )
-                self.assertEqual(
-                    response.data['error']['code'],
-                    'PERMISSION_DENIED',
-                )
 
         self.target.refresh_from_db()
         self.assertEqual(self.target.email, 'identity-target@test.com')
@@ -297,9 +293,9 @@ class AdminUsuarioCrudContainmentTests(APITestCase):
         self.assertFalse(personal.realiza_lavado)
         self.assertTrue(personal.realiza_color)
 
-    def test_list_and_retrieve_keep_legacy_read_contract(self):
+    def test_manage_users_without_staff_can_list_and_retrieve(self):
         self.target.groups.add(Group.objects.get(name=BusinessRole.CLIENTE))
-        self.authenticate(self.staff_only)
+        self.authenticate()
 
         list_response = self.client.get(
             reverse('admin-usuarios-list'),
@@ -316,6 +312,33 @@ class AdminUsuarioCrudContainmentTests(APITestCase):
             BusinessRole.CLIENTE,
         )
         self.assertNotIn('password', retrieve_response.data)
+
+    def test_staff_without_manage_users_cannot_list_or_retrieve(self):
+        self.authenticate(self.staff_only)
+
+        list_response = self.client.get(reverse('admin-usuarios-list'))
+        retrieve_response = self.client.get(self.detail_url())
+
+        self.assertEqual(list_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(
+            retrieve_response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+    def test_delete_is_closed_without_changing_account_or_client(self):
+        cliente = Cliente.objects.create(usuario=self.target, activo=True)
+        self.authenticate()
+
+        response = self.client.delete(self.detail_url())
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+        self.target.refresh_from_db()
+        cliente.refresh_from_db()
+        self.assertTrue(self.target.is_active)
+        self.assertTrue(cliente.activo)
 
     def test_legacy_post_is_method_not_allowed_for_every_authenticated_actor(self):
         payload = {

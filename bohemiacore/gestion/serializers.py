@@ -535,6 +535,7 @@ class PersonalSerializer(serializers.ModelSerializer):
             'horarios'
         ]
         read_only_fields = [
+            'activo',
             'usuario',
             'usuario_email',
             'usuario_activo',
@@ -543,6 +544,25 @@ class PersonalSerializer(serializers.ModelSerializer):
             'realiza_lavado',
             'realiza_color',
         ]
+
+    WRITABLE_FIELDS = {
+        'nombre',
+        'apellido',
+        'rol',
+        'email',
+        'telefono',
+        'color_calendario',
+    }
+
+    def to_internal_value(self, data):
+        if hasattr(data, 'keys'):
+            forbidden_fields = set(data.keys()) - self.WRITABLE_FIELDS
+            if forbidden_fields:
+                raise serializers.ValidationError({
+                    field: ['Este campo no está permitido.']
+                    for field in sorted(forbidden_fields)
+                })
+        return super().to_internal_value(data)
 
     def get_usuario_business_role(self, obj):
         if obj.usuario_id is None:
@@ -565,6 +585,15 @@ class PersonalSerializer(serializers.ModelSerializer):
             }
             for h in horarios
         ]
+
+
+class PersonalSkillDirectorySerializer(serializers.ModelSerializer):
+    """Minimal Personal projection for canonical skill administration."""
+
+    class Meta:
+        model = Personal
+        fields = ['id', 'nombre', 'apellido', 'activo']
+        read_only_fields = fields
 
 
 class HabilidadSerializer(serializers.ModelSerializer):
@@ -782,7 +811,10 @@ class PersonalAccessCreateCommandSerializer(serializers.Serializer):
         write_only=True,
         trim_whitespace=False,
     )
-    role = serializers.CharField(max_length=50)
+    role = serializers.ChoiceField(choices=(
+        BusinessRole.EMPLEADO,
+        BusinessRole.PROFESIONAL,
+    ))
     motivo = serializers.CharField(
         min_length=3,
         max_length=500,

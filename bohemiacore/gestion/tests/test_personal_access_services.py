@@ -563,7 +563,10 @@ class PersonalAccessServiceTests(TestCase):
     def test_deleted_user_is_rejected(self):
         user = self.create_user('deleted-user-link@test.com')
         personal = self.create_personal('deleted-user')
-        user.delete()
+        # This test exercises validation of a stale model reference, not the
+        # deletion collector. Financial reconciliation querysets are
+        # intentionally immutable, so use a direct fixture cleanup here.
+        Usuario.objects.filter(pk=user.pk)._raw_delete(using='default')
 
         with self.assertRaises(InvalidPersonalLinkUser):
             link_user_to_personal(

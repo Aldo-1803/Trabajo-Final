@@ -15,6 +15,11 @@ class AuditoriaTestCase(TestCase):
     
     def setUp(self):
         """Preparar datos de prueba"""
+        # TestCase reuses the worker thread. Do not inherit an actor from a
+        # previous rolled-back test transaction.
+        _thread_locals.user = None
+        _thread_locals.request = None
+
         # Crear usuario admin
         self.usuario_admin = Usuario.objects.create_user(
             email='test_admin@test.com',
@@ -25,6 +30,11 @@ class AuditoriaTestCase(TestCase):
         # Simular que el usuario está autenticado
         _thread_locals.user = self.usuario_admin
         _thread_locals.request = None
+
+    def tearDown(self):
+        _thread_locals.user = None
+        _thread_locals.request = None
+        super().tearDown()
     
     def test_auditoria_modificacion_servicio(self):
         """
@@ -49,7 +59,11 @@ class AuditoriaTestCase(TestCase):
         self.assertEqual(audit_despues, audit_antes + 1, "Debería haberse creado una auditoría")
         
         # Verificar detalles de la auditoría
-        auditoria = Auditoria.objects.last()
+        auditoria = Auditoria.objects.get(
+            tabla='Servicio',
+            registro_id=servicio.id,
+            accion='MODIFICACION',
+        )
         self.assertEqual(auditoria.tabla, 'Servicio')
         self.assertEqual(auditoria.accion, 'MODIFICACION')
         self.assertEqual(auditoria.usuario, self.usuario_admin)
@@ -75,7 +89,11 @@ class AuditoriaTestCase(TestCase):
         self.assertEqual(audit_despues, audit_antes + 1, "Debería haberse creado una auditoría")
         
         # Verificar detalles de la auditoría
-        auditoria = Auditoria.objects.last()
+        auditoria = Auditoria.objects.get(
+            tabla='Servicio',
+            registro_id=servicio.id,
+            accion='ALTA',
+        )
         self.assertEqual(auditoria.tabla, 'Servicio')
         self.assertEqual(auditoria.accion, 'ALTA')
         self.assertEqual(auditoria.usuario, self.usuario_admin)
@@ -103,7 +121,11 @@ class AuditoriaTestCase(TestCase):
         self.assertEqual(audit_despues, audit_antes + 1, "Debería haberse creado una auditoría de eliminación")
         
         # Verificar detalles de la auditoría
-        auditoria = Auditoria.objects.last()
+        auditoria = Auditoria.objects.get(
+            tabla='Servicio',
+            registro_id=servicio_id,
+            accion='BAJA',
+        )
         self.assertEqual(auditoria.tabla, 'Servicio')
         self.assertEqual(auditoria.accion, 'BAJA')
         self.assertEqual(auditoria.usuario, self.usuario_admin)

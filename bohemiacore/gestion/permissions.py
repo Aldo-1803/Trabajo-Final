@@ -47,6 +47,39 @@ class CanManageSkills(BasePermission):
         return request.user.has_perm(BusinessPermission.MANAGE_SKILLS)
 
 
+class CanManagePersonal(BasePermission):
+    message = 'No tiene permisos para administrar Personal.'
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            getattr(user, 'is_active', False)
+            and user.has_perm(BusinessPermission.MANAGE_PERSONAL)
+        )
+
+
+class CanViewAudit(BasePermission):
+    message = 'No tiene permisos para consultar auditoría.'
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            getattr(user, 'is_active', False)
+            and user.has_perm(BusinessPermission.VIEW_AUDIT)
+        )
+
+
+class CanRevertAudit(BasePermission):
+    message = 'No tiene permisos para revertir auditoría.'
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            getattr(user, 'is_active', False)
+            and user.has_perm(BusinessPermission.REVERT_AUDIT)
+        )
+
+
 class CanManageTechnicalRiskPolicy(BasePermission):
     message = 'No tiene permisos para gestionar políticas de riesgo técnico.'
 

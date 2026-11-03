@@ -129,6 +129,24 @@ class PersonalAccessCreationActionTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data['error']['code'], 'INVALID_ROLE')
 
+    def test_administrator_role_returns_stable_400_without_creating_user(self):
+        personal = self.create_personal('administrator-role')
+        self.authenticate()
+
+        response = self.client.post(
+            self.url(personal.pk),
+            self.payload(role=BusinessRole.ADMINISTRADOR),
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data['error']['code'], 'INVALID_ROLE')
+        personal.refresh_from_db()
+        self.assertIsNone(personal.usuario_id)
+        self.assertFalse(
+            Usuario.objects.filter(email='new-personal-access@test.com').exists()
+        )
+
     def test_invalid_reason_returns_stable_400(self):
         personal = self.create_personal('invalid-reason')
         self.authenticate()

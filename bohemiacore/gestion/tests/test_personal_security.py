@@ -19,6 +19,14 @@ class PersonalPrivilegeEscalationTests(APITestCase):
             password='testpass123',
             is_staff=True,
         )
+        self.manager_user = Usuario.objects.create_user(
+            email='manager-personal@test.com',
+            password='testpass123',
+        )
+        self.manager_user.user_permissions.add(Permission.objects.get(
+            content_type__app_label='gestion',
+            codename='manage_personal',
+        ))
         self.target_user = Usuario.objects.create_user(
             email='target-personal@test.com',
             password='testpass123',
@@ -32,11 +40,7 @@ class PersonalPrivilegeEscalationTests(APITestCase):
             'rol': 'asistente',
             'email': 'ana-personal@test.com',
             'telefono': '123456789',
-            'activo': True,
             'color_calendario': '#E11D48',
-            'realiza_diagnostico': False,
-            'realiza_lavado': True,
-            'realiza_color': False,
         }
         payload.update(overrides)
         return payload
@@ -76,8 +80,8 @@ class PersonalPrivilegeEscalationTests(APITestCase):
         self.assertFalse(self.client_user.is_staff)
         self.assertFalse(self.client_user.is_superuser)
 
-    def test_usuario_payload_is_ignored_and_does_not_elevate_user(self):
-        self.client.force_authenticate(user=self.staff_user)
+    def test_usuario_payload_is_rejected_and_does_not_elevate_user(self):
+        self.client.force_authenticate(user=self.manager_user)
 
         response = self.client.post(
             self.list_url,
@@ -85,15 +89,27 @@ class PersonalPrivilegeEscalationTests(APITestCase):
             format='json',
         )
 
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        personal = Personal.objects.get(pk=response.data['id'])
-        self.assertIsNone(personal.usuario)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('usuario', response.data)
+        self.assertFalse(Personal.objects.exists())
         self.target_user.refresh_from_db()
         self.assertFalse(self.target_user.is_staff)
         self.assertFalse(self.target_user.is_superuser)
 
-    def test_staff_can_create_personal_without_usuario(self):
+    def test_staff_without_manage_personal_cannot_create_personal(self):
         self.client.force_authenticate(user=self.staff_user)
+
+        response = self.client.post(
+            self.list_url,
+            self.personal_payload(),
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertFalse(Personal.objects.exists())
+
+    def test_manager_without_staff_can_create_personal_without_usuario(self):
+        self.client.force_authenticate(user=self.manager_user)
 
         response = self.client.post(
             self.list_url,
@@ -120,7 +136,7 @@ class PersonalPrivilegeEscalationTests(APITestCase):
             rol='colorista',
         )
         privileges_before = self.privilege_snapshot(linked_user)
-        self.client.force_authenticate(user=self.staff_user)
+        self.client.force_authenticate(user=self.manager_user)
 
         response = self.client.patch(
             reverse('personal-detail', args=[personal.pk]),
@@ -135,9 +151,9 @@ class PersonalPrivilegeEscalationTests(APITestCase):
             format='json',
         )
 
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         personal.refresh_from_db()
-        self.assertEqual(personal.nombre, 'Despues')
+        self.assertEqual(personal.nombre, 'Antes')
         self.assertEqual(personal.usuario, linked_user)
         self.assertEqual(self.privilege_snapshot(linked_user), privileges_before)
         self.target_user.refresh_from_db()
@@ -158,7 +174,7 @@ class PersonalPrivilegeEscalationTests(APITestCase):
             apellido='Digital',
             rol='asistente',
         )
-        self.client.force_authenticate(user=self.staff_user)
+        self.client.force_authenticate(user=self.manager_user)
 
         response = self.client.get(
             reverse('personal-detail', args=[personal.pk])
@@ -182,7 +198,7 @@ class PersonalPrivilegeEscalationTests(APITestCase):
             format='json',
         )
 
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         linked_user.refresh_from_db()
         self.assertEqual(linked_user.email, 'linked-summary@test.com')
         self.assertFalse(linked_user.is_active)
@@ -227,7 +243,7 @@ class PersonalPrivilegeEscalationTests(APITestCase):
             unlink_privileges,
         )
 
-        self.client.force_authenticate(user=self.staff_user)
+        self.client.force_authenticate(user=self.manager_user)
         response = self.client.delete(
             reverse('personal-detail', args=[personal_to_delete.pk])
         )

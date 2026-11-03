@@ -60,6 +60,7 @@ from .serializers import (
     UsuarioAdminReadSerializer, AgendaCuidadosSerializer,
     HorarioLaboralSerializer, BloqueoAgendaSerializer, PersonalSerializer,
     HabilidadSerializer, PersonalHabilidadSerializer,
+    PersonalSkillDirectorySerializer,
     FamiliaProcesoTecnicoSerializer, PerfilTecnicoServicioSerializer,
     PoliticaRiesgoTecnicoSerializer, ReglaIntervaloTecnicoSerializer,
     ReglaDiagnosticoTecnicoSerializer, ReglaFrecuenciaTecnicaSerializer,
@@ -105,6 +106,7 @@ from .permissions import (
     CanRegisterTurnoArrival,
     CanReprogramAnyTurno,
     CanViewGlobalAgenda,
+    CanManagePersonal,
     CanManageSkills,
     CanManageTechnicalRiskPolicy,
     CanReviewTechnicalBooking,
@@ -295,6 +297,7 @@ from usuarios.access_services import (
 
 from usuarios.models import Usuario, Cliente
 from usuarios.filters import UsuarioFilter
+from usuarios.permissions import CanManageUsers
 from usuarios.roles import BusinessPermission
 from .filters import (
     ProductoFilter, TurnoFilter, PersonalFilter, ServicioFilter, 
@@ -794,6 +797,7 @@ class PersonalViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action in [
+            'skill_directory',
             'habilidades',
             'asignar_habilidad',
             'revocar_habilidad',
@@ -811,11 +815,24 @@ class PersonalViewSet(viewsets.ModelViewSet):
             'revocar_acceso_total',
         ]:
             permission_classes = [IsAuthenticated]
-        elif self.action in ['list', 'retrieve']:
-            permission_classes = [IsAuthenticated]
+        elif self.action in [
+            'list',
+            'retrieve',
+            'create',
+            'update',
+            'partial_update',
+        ]:
+            permission_classes = [IsAuthenticated, CanManagePersonal]
         else:
-            permission_classes = [IsAdminUser]
+            permission_classes = [IsAuthenticated, CanManagePersonal]
         return [permission() for permission in permission_classes]
+
+    @action(detail=False, methods=['get'], url_path='directorio-habilidades')
+    def skill_directory(self, request):
+        """Expose only the minimum personnel data required to manage skills."""
+        personnel = self.get_queryset().order_by('nombre', 'apellido', 'pk')
+        serializer = PersonalSkillDirectorySerializer(personnel, many=True)
+        return Response(serializer.data)
 
     def destroy(self, request, *args, **kwargs):
         """Personal has no ordinary hard-delete operation."""
@@ -1058,9 +1075,12 @@ class PersonalViewSet(viewsets.ModelViewSet):
 
         command = PersonalAccessCreateCommandSerializer(data=request.data)
         if not command.is_valid():
+            error_fields = set(command.errors)
             error_code = (
-                'INVALID_REASON'
-                if set(command.errors) == {'motivo'}
+                'INVALID_ROLE'
+                if error_fields == {'role'}
+                else 'INVALID_REASON'
+                if error_fields == {'motivo'}
                 else 'INVALID_PAYLOAD'
             )
             return self._link_error(
@@ -3458,7 +3478,7 @@ class SeleccionarRutinaView(APIView):
 class AdminUsuarioViewSet(viewsets.ModelViewSet):
     queryset = Usuario.objects.all()  # Cambiar a todos, luego filtramos en get_queryset
     serializer_class = UsuarioAdminReadSerializer
-    permission_classes = [IsAdminUser] # Solo admins pueden entrar aquí
+    permission_classes = [IsAuthenticated, CanManageUsers]
     
     # Configurar filtros
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
@@ -3479,15 +3499,8 @@ class AdminUsuarioViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action == 'create':
             permission_classes = [AllowAny]
-        elif self.action in [
-            'update',
-            'partial_update',
-            'desactivar_cuenta',
-            'reactivar_cuenta',
-        ]:
-            permission_classes = [IsAuthenticated]
         else:
-            permission_classes = [IsAdminUser]
+            permission_classes = [IsAuthenticated, CanManageUsers]
         return [permission() for permission in permission_classes]
 
     def create(self, request, *args, **kwargs):
@@ -3496,6 +3509,15 @@ class AdminUsuarioViewSet(viewsets.ModelViewSet):
             detail=(
                 'La creación genérica de Usuario está deshabilitada. '
                 'Utilice una operación de alta semántica.'
+            ),
+        )
+
+    def destroy(self, request, *args, **kwargs):
+        raise MethodNotAllowed(
+            request.method,
+            detail=(
+                'La baja genérica de Usuario está deshabilitada. '
+                'Utilice la operación semántica de desactivación de cuenta.'
             ),
         )
 
@@ -3745,31 +3767,6 @@ class AdminUsuarioViewSet(viewsets.ModelViewSet):
         if fields is not None:
             error['fields'] = fields
         return Response({'error': error}, status=status_code)
-
-    def perform_destroy(self, instance):
-        """
-        Desactiva el usuario en lugar de eliminarlo (Soft Delete).
-        Validación: No desactivar si tiene turnos futuros.
-        """
-        # Validación: No desactivar si es staff con turnos futuros
-        if instance.is_staff:
-            turnos_pendientes = Turno.objects.filter(
-                fecha__gte=timezone.now().date(), 
-                estado='confirmado'
-            ).exists()
-            if turnos_pendientes:
-                raise serializers.ValidationError(
-                    "No se puede desactivar: Hay turnos futuros confirmados en el sistema."
-                )
-        
-        # Desactivar usuario (Soft Delete)
-        instance.is_active = False
-        instance.save()
-        
-        # También desactivar el cliente asociado si existe
-        if hasattr(instance, 'cliente'):
-            instance.cliente.activo = False
-            instance.cliente.save()
 
 # ----------------------------------------------------
 # B. CRUD PRODUCTOS
@@ -6061,7 +6058,7 @@ class ContenidoEducativoViewSet(viewsets.ModelViewSet):
         """
         user = self.request.user
 
-        if user.is_staff or user.is_superuser:
+        if user.has_perm(BusinessPermission.MANAGE_CONTENT):
             return ContenidoEducativo.objects.filter(
                 activo=True
             ).select_related('autor').prefetch_related('me_gusta_recibidos', 'guardados_recibidos')
@@ -6088,27 +6085,20 @@ class ContenidoEducativoViewSet(viewsets.ModelViewSet):
             logger.info(f"Contenido creado por {personal.nombre}")
         except AttributeError:
             user = self.request.user
-            if user.is_staff or user.is_superuser:
-                nombre = (user.first_name or 'Admin').strip() or 'Admin'
-                apellido = (user.last_name or 'Sistema').strip() or 'Sistema'
-                personal, _ = Personal.objects.get_or_create(
-                    usuario=user,
-                    defaults={
-                        'nombre': nombre,
-                        'apellido': apellido,
-                        'rol': 'administrador',
-                        'activo': True
-                    }
+            if user.has_perm(BusinessPermission.MANAGE_CONTENT):
+                raise PermissionDenied(
+                    'Debe vincular un Personal mediante la operación '
+                    'semántica antes de crear contenido.'
                 )
-                serializer.save(autor=personal)
-                logger.info(f"Contenido creado por admin {user.email}")
-            else:
-                raise PermissionDenied("Solo profesionales pueden crear contenido")
+            raise PermissionDenied("Solo profesionales pueden crear contenido")
 
     def perform_update(self, serializer):
         """Solo el autor puede editar su contenido."""
         contenido = self.get_object()
-        if not (self.request.user.is_staff or self.request.user.is_superuser) and contenido.autor.usuario != self.request.user:
+        if (
+            not self.request.user.has_perm(BusinessPermission.MANAGE_CONTENT)
+            and contenido.autor.usuario != self.request.user
+        ):
             raise PermissionDenied("Solo el autor puede editar este contenido")
         serializer.save()
 

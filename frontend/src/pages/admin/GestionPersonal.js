@@ -63,20 +63,22 @@ const GestionPersonal = () => {
 
     const ACCESS_ROLE_CHOICES = [
         { value: 'EMPLEADO', label: 'Empleado' },
-        { value: 'PROFESIONAL', label: 'Profesional' },
-        { value: 'ADMINISTRADOR', label: 'Administrador' }
+        { value: 'PROFESIONAL', label: 'Profesional' }
     ];
 
     useEffect(() => {
         cargarPersonal();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [canManageSkills]);
+    }, [canManagePersonal, canManageSkills]);
 
     const cargarPersonal = async () => {
         setLoading(true);
         try {
             const token = localStorage.getItem('access_token');
-            const res = await axios.get('http://127.0.0.1:8000/api/gestion/personal/', {
+            const directoryUrl = canManagePersonal
+                ? 'http://127.0.0.1:8000/api/gestion/personal/'
+                : 'http://127.0.0.1:8000/api/gestion/personal/directorio-habilidades/';
+            const res = await axios.get(directoryUrl, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             const personalData = Array.isArray(res.data) ? res.data : res.data.results || [];
@@ -151,13 +153,21 @@ const GestionPersonal = () => {
         e.preventDefault();
         const token = localStorage.getItem('access_token');
         const headers = { 'Authorization': `Bearer ${token}` };
+        const payload = {
+            nombre: form.nombre,
+            apellido: form.apellido,
+            email: form.email,
+            telefono: form.telefono,
+            color_calendario: form.color_calendario,
+            rol: form.rol
+        };
 
         try {
             if (modoEdicion) {
-                await axios.put(`http://127.0.0.1:8000/api/gestion/personal/${form.id}/`, form, { headers });
+                await axios.put(`http://127.0.0.1:8000/api/gestion/personal/${form.id}/`, payload, { headers });
                 setMensaje('✅ Personal actualizado');
             } else {
-                await axios.post('http://127.0.0.1:8000/api/gestion/personal/', form, { headers });
+                await axios.post('http://127.0.0.1:8000/api/gestion/personal/', payload, { headers });
                 setMensaje('✅ Personal creado');
             }
             setModalAbierto(false);
@@ -510,16 +520,24 @@ const GestionPersonal = () => {
                     <div className="bg-white shadow-lg rounded-lg overflow-x-auto">
                         <table className="w-full text-sm">
                             <thead className="border-b" style={{ backgroundColor: '#E8DCC4' }}>
-                                <tr>
-                                    <th className="px-4 py-3 text-left font-bold text-gray-800">Nombre</th>
-                                    <th className="px-4 py-3 text-left font-bold text-gray-800">Contacto</th>
-                                    <th className="px-4 py-3 text-left font-bold text-gray-800">Teléfono</th>
-                                    <th className="px-4 py-3 text-left font-bold text-gray-800">Función laboral</th>
-                                    <th className="px-4 py-3 text-left font-bold text-gray-800">Habilidades</th>
-                                    <th className="px-4 py-3 text-left font-bold text-gray-800">Estado laboral</th>
-                                    <th className="px-4 py-3 text-left font-bold text-gray-800">Acceso al sistema</th>
-                                    <th className="px-4 py-3 text-right font-bold text-gray-800">Acciones</th>
-                                </tr>
+                                 <tr>
+                                     <th className="px-4 py-3 text-left font-bold text-gray-800">Nombre</th>
+                                     {canManagePersonal && (
+                                         <>
+                                             <th className="px-4 py-3 text-left font-bold text-gray-800">Contacto</th>
+                                             <th className="px-4 py-3 text-left font-bold text-gray-800">Teléfono</th>
+                                             <th className="px-4 py-3 text-left font-bold text-gray-800">Función laboral</th>
+                                         </>
+                                     )}
+                                     <th className="px-4 py-3 text-left font-bold text-gray-800">Habilidades</th>
+                                     <th className="px-4 py-3 text-left font-bold text-gray-800">Estado laboral</th>
+                                     {canManagePersonal && (
+                                         <>
+                                             <th className="px-4 py-3 text-left font-bold text-gray-800">Acceso al sistema</th>
+                                             <th className="px-4 py-3 text-right font-bold text-gray-800">Acciones</th>
+                                         </>
+                                     )}
+                                 </tr>
                             </thead>
                             <tbody className="divide-y">
                                 {personal.map((p) => (
@@ -527,13 +545,17 @@ const GestionPersonal = () => {
                                         <td className="px-4 py-3 font-semibold text-gray-800">
                                             {p.nombre} {p.apellido}
                                         </td>
-                                        <td className="px-4 py-3 text-gray-600">{p.email || '-'}</td>
-                                        <td className="px-4 py-3 text-gray-600">{p.telefono || '-'}</td>
-                                        <td className="px-4 py-3">
-                                            <span className="px-3 py-1 rounded-full text-xs font-semibold text-white" style={{ backgroundColor: '#C1B4A4' }}>
-                                                {ROL_CHOICES.find(r => r.value === p.rol)?.label}
-                                            </span>
-                                        </td>
+                                         {canManagePersonal && (
+                                             <>
+                                                 <td className="px-4 py-3 text-gray-600">{p.email || '-'}</td>
+                                                 <td className="px-4 py-3 text-gray-600">{p.telefono || '-'}</td>
+                                                 <td className="px-4 py-3">
+                                                     <span className="px-3 py-1 rounded-full text-xs font-semibold text-white" style={{ backgroundColor: '#C1B4A4' }}>
+                                                         {ROL_CHOICES.find(r => r.value === p.rol)?.label}
+                                                     </span>
+                                                 </td>
+                                             </>
+                                         )}
                                         <td className="px-4 py-3 text-sm text-gray-600">
                                             <div className="flex gap-2 flex-wrap">
                                                 {canManageSkills ? (
@@ -551,9 +573,11 @@ const GestionPersonal = () => {
                                                     <span className="text-xs text-gray-500">Skills canónicas: sin permiso de consulta</span>
                                                 )}
                                             </div>
-                                            <p className="mt-2 text-xs text-gray-400">
-                                                Legacy: {[p.realiza_diagnostico && 'Diagnóstico', p.realiza_lavado && 'Lavado', p.realiza_color && 'Color'].filter(Boolean).join(', ') || 'ninguna'}
-                                            </p>
+                                             {canManagePersonal && (
+                                                 <p className="mt-2 text-xs text-gray-400">
+                                                     Legacy: {[p.realiza_diagnostico && 'Diagnóstico', p.realiza_lavado && 'Lavado', p.realiza_color && 'Color'].filter(Boolean).join(', ') || 'ninguna'}
+                                                 </p>
+                                             )}
                                             {canManageSkills && (
                                                 <div className="mt-2 flex flex-wrap items-center gap-2">
                                                     <select
@@ -602,7 +626,7 @@ const GestionPersonal = () => {
                                                 Personal: {p.activo ? 'Activo' : 'Inactivo'}
                                             </span>
                                         </td>
-                                        <td className="px-4 py-3 min-w-[230px]">
+                                         {canManagePersonal && <td className="px-4 py-3 min-w-[230px]">
                                             {p.usuario !== null && p.usuario !== undefined ? (
                                                 <div className="space-y-1 text-xs">
                                                     <div><strong>Acceso al sistema:</strong> Sí</div>
@@ -650,8 +674,8 @@ const GestionPersonal = () => {
                                                     </div>
                                                 </div>
                                             )}
-                                        </td>
-                                        <td className="px-4 py-3 text-right">
+                                         </td>}
+                                         {canManagePersonal && <td className="px-4 py-3 text-right">
                                             <div className="flex flex-wrap justify-end gap-2">
                                                 {canManagePersonal && (
                                                     <button
@@ -691,7 +715,7 @@ const GestionPersonal = () => {
                                                     </>
                                                 )}
                                             </div>
-                                        </td>
+                                         </td>}
                                     </tr>
                                 ))}
                             </tbody>
@@ -1146,21 +1170,6 @@ const GestionPersonal = () => {
                                             <span className="text-sm text-gray-700">Realiza Color (legacy)</span>
                                         </label>
                                     </div>
-                                </div>
-
-                                {/* Activo */}
-                                <div className="border-t pt-4 flex items-center gap-3" style={{ borderColor: '#E8DCC4' }}>
-                                    <input
-                                        type="checkbox"
-                                        name="activo"
-                                        checked={form.activo}
-                                        onChange={handleChange}
-                                        className="w-5 h-5 cursor-pointer"
-                                        style={{ accentColor: '#817773' }}
-                                    />
-                                    <label className="text-sm font-medium" style={{ color: '#817773' }}>
-                                        Activo
-                                    </label>
                                 </div>
 
                                 {/* Botones */}

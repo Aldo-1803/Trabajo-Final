@@ -1,7 +1,13 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
+from django.contrib.auth.models import Group
 from .models import Usuario, Cliente
 from django.utils.html import format_html
+
+
+# Role and permission membership is managed only through semantic services.
+if admin.site.is_registered(Group):
+    admin.site.unregister(Group)
 
 @admin.register(Usuario)
 class UsuarioAdmin(BaseUserAdmin):
@@ -29,10 +35,26 @@ class UsuarioAdmin(BaseUserAdmin):
             'classes': ('wide',),
             'fields': ('email', 'password1', 'password2'),
         }),
-        ('Permisos', {'fields': ('is_staff', 'is_superuser')}),
     )
     
-    readonly_fields = ('date_joined', 'last_login')
+    readonly_fields = (
+        'date_joined',
+        'last_login',
+        'is_active',
+        'is_staff',
+        'is_superuser',
+        'groups',
+        'user_permissions',
+    )
+    actions = None
+
+    def has_add_permission(self, request):
+        """Accounts must be created through a semantic onboarding flow."""
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        """Accounts are deactivated only through the semantic service."""
+        return False
     
     def get_queryset(self, request):
         """
@@ -57,33 +79,6 @@ class UsuarioAdmin(BaseUserAdmin):
             )
     estado_badge.short_description = 'Estado'
     
-    actions = ['desactivar_usuarios', 'activar_usuarios']
-    
-    def desactivar_usuarios(self, request, queryset):
-        """Acción para desactivar TEMPORALMENTE (no eliminar) usuarios seleccionados"""
-        updated = queryset.update(is_active=False)
-        # También desactivar sus clientes asociados
-        for usuario in queryset:
-            if hasattr(usuario, 'cliente'):
-                usuario.cliente.activo = False
-                usuario.cliente.save()
-        
-        self.message_user(request, f'{updated} usuario(s) desactivado(s) temporalmente. Los datos se mantienen en el sistema.')
-    desactivar_usuarios.short_description = "⏸️ Desactivar temporalmente (sin eliminar)"
-    
-    def activar_usuarios(self, request, queryset):
-        """Acción para reactivar usuarios desactivados"""
-        updated = queryset.update(is_active=True)
-        # También reactivar sus clientes asociados
-        for usuario in queryset:
-            if hasattr(usuario, 'cliente'):
-                usuario.cliente.activo = True
-                usuario.cliente.save()
-        
-        self.message_user(request, f'{updated} usuario(s) reactivado(s) correctamente.')
-    activar_usuarios.short_description = "✅ Reactivar (recuperar acceso)"
-
-
 @admin.register(Cliente)
 class ClienteAdmin(admin.ModelAdmin):
     """
@@ -92,7 +87,21 @@ class ClienteAdmin(admin.ModelAdmin):
     list_display = ('usuario_email', 'usuario_nombre', 'activo', 'fecha_creacion', 'estado_badge')
     list_filter = ('activo', 'fecha_creacion')
     search_fields = ('usuario__email', 'usuario__first_name', 'usuario__last_name')
-    readonly_fields = ('usuario', 'fecha_creacion', 'fecha_actualizacion')
+    readonly_fields = (
+        'usuario',
+        'activo',
+        'fecha_creacion',
+        'fecha_actualizacion',
+    )
+    actions = None
+
+    def has_add_permission(self, request):
+        """Client profiles are created only by semantic onboarding flows."""
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        """Do not allow profile links to be removed through generic admin."""
+        return False
     
     fieldsets = (
         ('Usuario Asociado', {'fields': ('usuario',)}),

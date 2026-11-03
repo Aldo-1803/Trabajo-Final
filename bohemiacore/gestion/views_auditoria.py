@@ -1,6 +1,6 @@
 """
-ViewSet para el modelo Auditoria - Solo lectura (ReadOnly)
-Acceso restringido solo a administradores
+ViewSet para el modelo Auditoria - Solo lectura (ReadOnly).
+Acceso restringido mediante permisos Django efectivos.
 """
 from rest_framework import viewsets, permissions, filters, status
 from rest_framework.decorators import action
@@ -29,12 +29,13 @@ from .models import (
     Pago,
 )
 from .serializers_auditoria import AuditoriaSerializer, AuditoriaListSerializer
+from .permissions import CanRevertAudit, CanViewAudit
 
 
 class AuditoriaViewSet(viewsets.ReadOnlyModelViewSet):
     """
     ViewSet de auditoría para visualizar el log de cambios en el sistema.
-    Solo administradores pueden acceder.
+    Requiere el permiso efectivo de consulta de auditoría.
     
     Endpoints:
     - GET /api/auditoria/ - Lista todas las auditorías
@@ -48,7 +49,7 @@ class AuditoriaViewSet(viewsets.ReadOnlyModelViewSet):
     """
     
     queryset = Auditoria.objects.all().order_by('-fecha_hora')
-    permission_classes = [permissions.IsAdminUser]  # Solo administradores
+    permission_classes = [permissions.IsAuthenticated, CanViewAudit]
     filter_backends = [
         DjangoFilterBackend,
         filters.SearchFilter,
@@ -94,10 +95,10 @@ class AuditoriaViewSet(viewsets.ReadOnlyModelViewSet):
 class HistorialAuditoriaViewSet(viewsets.ViewSet):
     """
     ViewSet para exponer historial de django-simple-history.
-    Solo administradores pueden acceder.
+    La lectura y la reversión usan permisos efectivos separados.
     """
 
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [permissions.IsAuthenticated, CanViewAudit]
 
     HISTORY_MODELS = [
         Personal,
@@ -127,6 +128,10 @@ class HistorialAuditoriaViewSet(viewsets.ViewSet):
         BloqueoAgenda,
     ]
 
+    ACCESS_CONTROLLED_FIELDS = {
+        Personal: ('usuario_id', 'rol', 'activo'),
+    }
+
     SAFE_FIELD_TYPES = (
         dj_models.CharField,
         dj_models.TextField,
@@ -138,6 +143,14 @@ class HistorialAuditoriaViewSet(viewsets.ViewSet):
         dj_models.TimeField,
         dj_models.FloatField,
     )
+
+    def get_permissions(self):
+        permission_classes = (
+            [permissions.IsAuthenticated, CanRevertAudit]
+            if self.action == 'revertir'
+            else [permissions.IsAuthenticated, CanViewAudit]
+        )
+        return [permission() for permission in permission_classes]
 
     def list(self, request):
         tabla = request.query_params.get('tabla')
@@ -196,6 +209,23 @@ class HistorialAuditoriaViewSet(viewsets.ViewSet):
         instance = model.objects.filter(pk=history.instance.pk if history.instance else None).first()
         if not instance:
             return Response({'detail': 'Registro actual no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+
+        blocked_fields = self._get_blocked_revert_fields(
+            model,
+            history,
+            instance,
+        )
+        if blocked_fields:
+            return Response(
+                {
+                    'detail': (
+                        'Los campos de acceso no pueden revertirse desde el '
+                        'historial genérico.'
+                    ),
+                    'blocked_fields': blocked_fields,
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         safe_fields = self._get_safe_revert_fields(model)
         if not safe_fields:
@@ -306,19 +336,35 @@ class HistorialAuditoriaViewSet(viewsets.ViewSet):
             return False
         if history.history_type != '~':
             return False
-        return model.objects.filter(pk=history.instance.pk if history.instance else None).exists()
+        instance = model.objects.filter(
+            pk=history.instance.pk if history.instance else None
+        ).first()
+        if instance is None:
+            return False
+        return not self._get_blocked_revert_fields(model, history, instance)
 
     def _revert_disabled_reason(self, model, history):
         if model not in self.SAFE_REVERT_MODELS:
             return 'Modelo no permitido'
         if history.history_type != '~':
             return 'Solo se permiten modificaciones'
-        if not model.objects.filter(pk=history.instance.pk if history.instance else None).exists():
+        instance = model.objects.filter(
+            pk=history.instance.pk if history.instance else None
+        ).first()
+        if instance is None:
             return 'Registro actual no encontrado'
+        blocked_fields = self._get_blocked_revert_fields(
+            model,
+            history,
+            instance,
+        )
+        if blocked_fields:
+            return 'Contiene campos de acceso protegidos'
         return None
 
     def _get_safe_revert_fields(self, model):
         campos = []
+        controlled_fields = set(self.ACCESS_CONTROLLED_FIELDS.get(model, ()))
         for field in model._meta.fields:
             if field.primary_key:
                 continue
@@ -328,8 +374,21 @@ class HistorialAuditoriaViewSet(viewsets.ViewSet):
                 continue
             if not isinstance(field, self.SAFE_FIELD_TYPES):
                 continue
+            if field.name in controlled_fields:
+                continue
             campos.append(field.name)
         return campos
+
+    def _get_blocked_revert_fields(self, model, history, instance):
+        blocked = []
+        for field_name in self.ACCESS_CONTROLLED_FIELDS.get(model, ()):
+            if getattr(instance, field_name, None) != getattr(
+                history,
+                field_name,
+                None,
+            ):
+                blocked.append(field_name)
+        return sorted(blocked)
 
     def _serialize_history_values(self, history):
         if not history:

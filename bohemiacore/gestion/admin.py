@@ -340,10 +340,17 @@ class PersonalAdmin(admin.ModelAdmin):
     list_filter = ('rol', 'activo')
     search_fields = ('nombre', 'apellido', 'email')
     readonly_fields = (
+        'usuario',
+        'activo',
         'realiza_diagnostico',
         'realiza_color',
         'realiza_lavado',
     )
+    actions = None
+
+    def has_delete_permission(self, request, obj=None):
+        """Personal is retired only through semantic status operations."""
+        return False
     
     # Aquí incrustamos los horarios dentro del personal
     inlines = [HorarioLaboralInline]
