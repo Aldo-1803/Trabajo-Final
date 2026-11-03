@@ -223,6 +223,14 @@ class FinancialCaseReadApiTests(ManualPaymentFixtureMixin, TestCase):
         self.assertEqual(results[0]['context'], 'BOOKING')
         self.assertEqual(results[1]['case_type'], 'ORDER_FULFILLMENT_FAILED')
         self.assertEqual(results[1]['context'], 'ORDER')
+        self.assertEqual(results[0]['customer_reference'], {
+            'client_id': self.cliente.pk,
+            'display_name': f'Cliente #{self.cliente.pk}',
+        })
+        self.assertEqual(
+            results[1]['customer_reference'],
+            results[0]['customer_reference'],
+        )
         self.assertGreater(results[0]['age_seconds'], results[1]['age_seconds'])
         self.assertEqual(
             results[0]['financial_summary']['payment_public_ids'],

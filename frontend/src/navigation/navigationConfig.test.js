@@ -72,6 +72,30 @@ describe('navegación de caja presencial', () => {
 });
 
 
+describe('navegación de incidencias financieras', () => {
+    test('sólo reconcile_external_payment muestra la bandeja separada de Caja', () => {
+        const reviewer = getVisibleNavigationItems(
+            access({
+                permissions: ['gestion.reconcile_external_payment'],
+                businessRole: 'EMPLEADO'
+            }),
+            NAVIGATION_PLACEMENT.PRIMARY
+        );
+        const cashier = getVisibleNavigationItems(
+            access({
+                permissions: ['gestion.view_financial_reports'],
+                businessRole: 'ADMINISTRADOR'
+            }),
+            NAVIGATION_PLACEMENT.PRIMARY
+        );
+
+        expect(reviewer.map((item) => item.id)).toContain('financial-incidents');
+        expect(reviewer.map((item) => item.id)).not.toContain('in-person-payments');
+        expect(cashier.map((item) => item.id)).not.toContain('financial-incidents');
+    });
+});
+
+
 describe('navegación de inventario por permisos', () => {
     test.each([
         'gestion.view_stock',

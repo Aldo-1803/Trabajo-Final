@@ -67,6 +67,7 @@ import EditorContenidoEducativo from '../pages/admin/EditorContenidoEducativo';
 // Imports - Admin Pages (Órdenes)
 import GestionOrdenes from '../pages/admin/GestionOrdenes';
 import CajaPresencial from '../pages/admin/CajaPresencial';
+import GestionIncidenciasFinancieras from '../pages/admin/GestionIncidenciasFinancieras';
 
 // Imports - Admin Pages (Auditoría)
 import Auditoria from '../pages/admin/Auditoria';
@@ -146,6 +147,7 @@ export const AppRoutes = () => {
                 {/* Admin Routes - Órdenes */}
                 <Route path={ADMIN_ROUTES.ORDENES} element={<ProtectedRoute requiredPermission="gestion.manage_stock"><GestionOrdenes /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.CAJA} element={<ProtectedRoute requiredAnyPermission={['gestion.register_payment', 'gestion.confirm_deposit', 'gestion.view_financial_reports']}><CajaPresencial /></ProtectedRoute>} />
+                <Route path={ADMIN_ROUTES.INCIDENCIAS_FINANCIERAS} element={<ProtectedRoute requiredPermission="gestion.reconcile_external_payment"><GestionIncidenciasFinancieras /></ProtectedRoute>} />
 
                 {/* Admin Routes - Auditoría */}
                 <Route path={ADMIN_ROUTES.AUDITORIA} element={<ProtectedRoute requiredPermission="gestion.view_audit"><Auditoria /></ProtectedRoute>} />

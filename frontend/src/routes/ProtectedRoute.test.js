@@ -231,6 +231,22 @@ describe('ProtectedRoute declarativo con acceso por URL directa', () => {
         expectRedirect('/acceso-denegado');
     });
 
+    test('la bandeja financiera requiere permiso efectivo y no rol admin', () => {
+        const allowed = renderDirectUrl('/admin/incidencias-financieras', {
+            requiredPermission: 'gestion.reconcile_external_payment'
+        }, {
+            businessRole: 'EMPLEADO',
+            permissions: ['gestion.reconcile_external_payment']
+        });
+        expect(screen.getByText('Contenido protegido')).toBeInTheDocument();
+        allowed.unmount();
+
+        renderDirectUrl('/admin/incidencias-financieras', {
+            requiredPermission: 'gestion.reconcile_external_payment'
+        }, {businessRole: 'ADMINISTRADOR'});
+        expectRedirect('/acceso-denegado');
+    });
+
     test.each(['EMPLEADO', 'PROFESIONAL'])(
         '%s con view_clients entra directamente a Gestión de Clientes',
         (businessRole) => {

@@ -42,6 +42,13 @@ export const navigationItems = [
         ]
     },
     {
+        id: 'financial-incidents',
+        label: 'Incidencias financieras',
+        path: ADMIN_ROUTES.INCIDENCIAS_FINANCIERAS,
+        placement: NAVIGATION_PLACEMENT.PRIMARY,
+        requiredPermission: 'gestion.reconcile_external_payment'
+    },
+    {
         id: 'work-agenda',
         label: 'Mi agenda laboral',
         path: SESSION_ROUTES.MI_AGENDA_LABORAL,

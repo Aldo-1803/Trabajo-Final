@@ -62,6 +62,7 @@ export const ADMIN_ROUTES = {
   EDITAR_CONTENIDO: '/admin/contenido-educativo/:id/editar',
   ORDENES: '/admin/ordenes',
   CAJA: '/admin/caja',
+  INCIDENCIAS_FINANCIERAS: '/admin/incidencias-financieras',
   AUDITORIA: '/admin/auditoria',
 };
 

@@ -544,6 +544,7 @@ class PaymentReconciliationCaseListSerializer(serializers.ModelSerializer):
     context_reference = serializers.SerializerMethodField()
     financial_summary = serializers.SerializerMethodField()
     provider_reference = serializers.SerializerMethodField()
+    customer_reference = serializers.SerializerMethodField()
     age_seconds = serializers.SerializerMethodField()
 
     class Meta:
@@ -556,6 +557,7 @@ class PaymentReconciliationCaseListSerializer(serializers.ModelSerializer):
             'reason_code',
             'context',
             'context_reference',
+            'customer_reference',
             'financial_summary',
             'provider_reference',
             'created_at',
@@ -582,6 +584,19 @@ class PaymentReconciliationCaseListSerializer(serializers.ModelSerializer):
             'order_id': obj.order_id,
             'order_code': obj.order.codigo,
             'order_status': obj.order.estado,
+        }
+
+    @staticmethod
+    def get_customer_reference(obj):
+        customer = (
+            obj.slot_hold.cliente
+            if obj.payment_intent_id is not None
+            else obj.order.cliente
+        )
+        display_name = customer.usuario.get_full_name().strip()
+        return {
+            'client_id': customer.pk,
+            'display_name': display_name or f'Cliente #{customer.pk}',
         }
 
     @staticmethod

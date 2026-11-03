@@ -63,9 +63,12 @@ class PaymentReconciliationCaseViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = (
         PaymentReconciliationCase.objects.select_related(
             'payment_intent__slot_hold',
+            'payment_intent__slot_hold__cliente__usuario',
             'slot_hold',
+            'slot_hold__cliente__usuario',
             'turno',
             'order',
+            'order__cliente__usuario',
             'provider_attempt',
             'provider_event',
             'resolution_request__requested_by',
