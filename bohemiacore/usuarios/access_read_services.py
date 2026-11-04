@@ -14,6 +14,12 @@ ACCESS_ADMIN_PERMISSIONS = (
     BusinessPermission.REVERT_AUDIT,
 )
 
+ACCESS_MANAGEMENT_PERMISSIONS = (
+    BusinessPermission.MANAGE_USERS,
+    BusinessPermission.ASSIGN_ROLES,
+    BusinessPermission.MANAGE_PERSONAL,
+)
+
 
 def _permission_code(permission):
     return f'{permission.content_type.app_label}.{permission.codename}'
@@ -57,6 +63,73 @@ def _profile_summary(user):
             'job_role': personal.rol if personal is not None else None,
         },
     }
+
+
+def project_role_transition_access_capabilities(user, target_role):
+    """Project access-management assignments after replacing BusinessRole.
+
+    The projection never mutates memberships. It removes every current
+    BusinessRole source, adds the requested role source, and preserves direct
+    permissions and non-canonical groups.
+    """
+    user_model = get_user_model()
+    if not isinstance(user, user_model) or user.pk is None:
+        raise ValueError('A persisted Usuario is required.')
+    if target_role not in BusinessRole.ALL:
+        raise ValueError('A canonical target BusinessRole is required.')
+
+    target = user_model.objects.get(pk=user.pk)
+    technical_groups = list(
+        Group.objects.filter(user=target)
+        .exclude(name__in=BusinessRole.ALL)
+        .prefetch_related('permissions__content_type')
+        .order_by('name', 'pk')
+    )
+    target_group = (
+        Group.objects.prefetch_related('permissions__content_type')
+        .get(name=target_role)
+    )
+    direct_permissions = list(
+        target.user_permissions.select_related('content_type').order_by(
+            'content_type__app_label',
+            'codename',
+            'pk',
+        )
+    )
+
+    relevant = set(ACCESS_MANAGEMENT_PERMISSIONS)
+    origins = defaultdict(list)
+    for group in [target_group, *technical_groups]:
+        source_type = (
+            'BUSINESS_ROLE'
+            if group.pk == target_group.pk
+            else 'TECHNICAL_GROUP'
+        )
+        for permission in group.permissions.all():
+            code = _permission_code(permission)
+            if code in relevant:
+                origins[code].append({
+                    'type': source_type,
+                    'identifier': group.name,
+                })
+
+    for permission in direct_permissions:
+        code = _permission_code(permission)
+        if code in relevant:
+            origins[code].append({
+                'type': 'INDIVIDUAL',
+                'identifier': None,
+            })
+
+    return [
+        {
+            'code': code,
+            'effective': target.is_active,
+            'origins': sorted(origins[code], key=_origin_sort_key),
+        }
+        for code in ACCESS_MANAGEMENT_PERMISSIONS
+        if origins[code]
+    ]
 
 
 def build_administrative_access_summary(user):

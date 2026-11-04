@@ -969,6 +969,19 @@ class UsuarioAccountStatusCommandSerializer(
         trim_whitespace=True,
     )
 
+
+class UsuarioBusinessRoleChangeCommandSerializer(
+    StrictInputFieldsMixin,
+    serializers.Serializer,
+):
+    role = serializers.ChoiceField(choices=BusinessRole.ALL)
+    motivo = serializers.CharField(
+        min_length=3,
+        max_length=500,
+        allow_blank=False,
+        trim_whitespace=True,
+    )
+
 # --- B. SERIALIZER PRODUCTOS ---
 class CategoriaProductoSerializer(serializers.ModelSerializer):
     class Meta:

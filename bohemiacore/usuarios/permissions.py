@@ -19,3 +19,15 @@ class CanManageUsers(BasePermission):
             getattr(user, 'is_active', False)
             and user.has_perm(BusinessPermission.MANAGE_USERS)
         )
+
+
+class CanManageUsersAndAssignRoles(BasePermission):
+    message = 'No tiene permisos para cambiar roles de negocio.'
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            getattr(user, 'is_active', False)
+            and user.has_perm(BusinessPermission.MANAGE_USERS)
+            and user.has_perm(BusinessPermission.ASSIGN_ROLES)
+        )

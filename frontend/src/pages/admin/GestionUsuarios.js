@@ -4,6 +4,7 @@ import Swal from 'sweetalert2';
 import { useNavigate } from 'react-router-dom';
 import { notify } from '../../utils/notificaciones';
 import { ADMIN_ROUTES } from '../../routes/routes';
+import { useSession } from '../../context/SessionContext';
 
 
 const EMPTY_ADMIN_FORM = {
@@ -27,6 +28,57 @@ const ROLE_STATE_LABELS = {
     MULTIPLE_ROLES: 'Múltiples roles'
 };
 
+const BUSINESS_ROLES = [
+    'CLIENTE',
+    'EMPLEADO',
+    'PROFESIONAL',
+    'ADMINISTRADOR'
+];
+
+const ACCESS_MANAGEMENT_CAPABILITIES = new Set([
+    'usuarios.manage_users',
+    'usuarios.assign_roles',
+    'gestion.manage_personal'
+]);
+
+const buildRoleChangeWarnings = (summary, targetRole) => {
+    if (!summary || !targetRole) return [];
+
+    const warnings = [];
+    if (targetRole === 'CLIENTE' && !summary.profiles?.cliente?.exists) {
+        warnings.push('El rol Cliente requiere un perfil Cliente existente.');
+    }
+    if (['EMPLEADO', 'PROFESIONAL'].includes(targetRole)) {
+        if (!summary.profiles?.personal?.exists) {
+            warnings.push('El rol laboral requiere un perfil Personal vinculado.');
+        } else if (!summary.profiles.personal.active) {
+            warnings.push('El rol laboral requiere que el perfil Personal esté activo.');
+        }
+    }
+    if (
+        summary.business_role === 'ADMINISTRADOR'
+        && targetRole !== 'ADMINISTRADOR'
+    ) {
+        const residualCapabilities = (summary.capabilities || []).filter(
+            (capability) => (
+                ACCESS_MANAGEMENT_CAPABILITIES.has(capability.code)
+                && (capability.origins || []).some((origin) => (
+                    ['INDIVIDUAL', 'TECHNICAL_GROUP'].includes(origin.type)
+                ))
+            )
+        );
+        if (residualCapabilities.length > 0) {
+            warnings.push(
+                `La degradación conservaría autoridad residual: ${residualCapabilities.map((item) => item.code).join(', ')}.`
+            );
+        }
+    }
+    if (summary.role_state === 'MULTIPLE_ROLES') {
+        warnings.push('La cuenta tiene múltiples BusinessRoles y requiere revisión.');
+    }
+    return warnings;
+};
+
 const formatCapabilityOrigin = (origin) => {
     if (origin.type === 'BUSINESS_ROLE') {
         return `Rol ${BUSINESS_ROLE_LABELS[origin.identifier] || origin.identifier}`;
@@ -46,6 +98,8 @@ const GestionUsuarios = () => {
     const [creandoAdministrador, setCreandoAdministrador] = useState(false);
     const [resumenAcceso, setResumenAcceso] = useState(null);
     const [cargandoResumen, setCargandoResumen] = useState(false);
+    const [cambioRol, setCambioRol] = useState(null);
+    const [cambiandoRol, setCambiandoRol] = useState(false);
     
     // Filtros
     const [filtroRol, setFiltroRol] = useState('');
@@ -56,6 +110,11 @@ const GestionUsuarios = () => {
     const [form, setForm] = useState(EMPTY_ADMIN_FORM);
 
     const navigate = useNavigate();
+    const { hasPermission } = useSession();
+    const puedeCambiarRol = (
+        hasPermission('usuarios.manage_users')
+        && hasPermission('usuarios.assign_roles')
+    );
 
     // --- CARGA DE DATOS ---
     const cargarUsuarios = useCallback(async () => {
@@ -234,9 +293,111 @@ const GestionUsuarios = () => {
         }
     };
 
+    const abrirCambioRol = async (usuario) => {
+        setCargandoResumen(true);
+        try {
+            const token = localStorage.getItem('access_token');
+            const response = await axios.get(
+                `http://127.0.0.1:8000/api/gestion/admin/usuarios/${usuario.id}/resumen-acceso/`,
+                { headers: { 'Authorization': `Bearer ${token}` } }
+            );
+            const currentRole = response.data.business_role;
+            const defaultTarget = BUSINESS_ROLES.find(
+                (role) => role !== currentRole
+            ) || currentRole;
+            setCambioRol({
+                usuario,
+                summary: response.data,
+                targetRole: defaultTarget,
+                reason: '',
+                confirmed: false,
+                result: null,
+                error: null
+            });
+        } catch (error) {
+            notify.error(
+                error.response?.status === 403
+                    ? 'No tenés permisos para cambiar roles de negocio.'
+                    : 'No se pudo preparar el cambio de BusinessRole.'
+            );
+        } finally {
+            setCargandoResumen(false);
+        }
+    };
+
+    const enviarCambioRol = async (event) => {
+        event.preventDefault();
+        if (!cambioRol) return;
+
+        const motivo = cambioRol.reason.trim();
+        if (motivo.length < 3) {
+            notify.error('El motivo debe tener al menos 3 caracteres.');
+            return;
+        }
+        if (!cambioRol.confirmed) {
+            notify.error('Confirmá el cambio de BusinessRole antes de continuar.');
+            return;
+        }
+
+        setCambiandoRol(true);
+        try {
+            const token = localStorage.getItem('access_token');
+            const response = await axios.post(
+                `http://127.0.0.1:8000/api/gestion/admin/usuarios/${cambioRol.usuario.id}/cambiar-rol-negocio/`,
+                {
+                    role: cambioRol.targetRole,
+                    motivo
+                },
+                { headers: { 'Authorization': `Bearer ${token}` } }
+            );
+            setUsuarios((currentUsers) => currentUsers.map((user) => (
+                user.id === cambioRol.usuario.id
+                    ? { ...user, business_role: response.data.business_role }
+                    : user
+            )));
+            setCambioRol((current) => ({
+                ...current,
+                summary: response.data.access_summary,
+                targetRole: response.data.business_role,
+                result: response.data,
+                error: null
+            }));
+            notify.success('BusinessRole actualizado correctamente.');
+        } catch (error) {
+            const errorCode = error.response?.data?.error?.code;
+            const messages = {
+                PERMISSION_DENIED: 'No tenés permisos para cambiar roles de negocio.',
+                SELF_ROLE_CHANGE_NOT_ALLOWED: 'No podés cambiar tu propio BusinessRole.',
+                PROTECTED_SUPERUSER: 'La cuenta técnica protegida no puede gestionarse desde esta pantalla.',
+                INCONSISTENT_BUSINESS_ROLES: 'La cuenta tiene múltiples BusinessRoles y requiere revisión.',
+                CLIENT_PROFILE_REQUIRED: 'El rol Cliente requiere un perfil Cliente existente.',
+                PERSONAL_PROFILE_REQUIRED: 'El rol laboral requiere un perfil Personal vinculado.',
+                PERSONAL_INACTIVE: 'El rol laboral requiere un perfil Personal activo.',
+                LAST_ACTIVE_ADMIN: 'No se puede degradar al último administrador activo.',
+                RESIDUAL_ADMIN_CAPABILITIES: 'La cuenta conservaría autoridad administrativa residual.'
+            };
+            const fallback = error.response?.status === 403
+                ? messages.PERMISSION_DENIED
+                : error.response?.status === 409
+                    ? 'El cambio entra en conflicto con el estado actual de la cuenta.'
+                    : 'No se pudo cambiar el BusinessRole.';
+            const message = messages[errorCode] || fallback;
+            setCambioRol((current) => ({ ...current, error: message }));
+            notify.error(message);
+        } finally {
+            setCambiandoRol(false);
+        }
+    };
+
     const usuariosVisibles = filtroRol
         ? usuarios.filter((user) => user.business_role === filtroRol)
         : usuarios;
+    const advertenciasCambioRol = cambioRol?.result
+        ? []
+        : buildRoleChangeWarnings(
+            cambioRol?.summary,
+            cambioRol?.targetRole
+        );
 
     return (
         <div className="min-h-screen p-8" style={{ backgroundColor: '#F5F5EB' }}>
@@ -247,7 +408,7 @@ const GestionUsuarios = () => {
                     <p className="text-gray-500">Administración de cuentas y accesos</p>
                 </div>
                 <div className="flex flex-wrap justify-end gap-2">
-                    <button 
+                                             <button
                         onClick={() => navigate(ADMIN_ROUTES.DASHBOARD)}
                         className="px-4 py-2 rounded-lg font-medium transition-all"
                         style={{ color: '#817773', borderColor: '#C1B4A4', border: '1px solid' }}
@@ -411,9 +572,21 @@ const GestionUsuarios = () => {
                                                 className="font-semibold transition-all disabled:opacity-50"
                                                 style={{ color: '#817773' }}
                                             >
-                                                Ver accesos
-                                            </button>
-                                            <button
+                                                 Ver accesos
+                                             </button>
+                                            {puedeCambiarRol && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => abrirCambioRol(user)}
+                                                    disabled={cargandoResumen}
+                                                    className="font-semibold transition-all disabled:opacity-50"
+                                                    style={{ color: '#6B5F5B' }}
+                                                    aria-label={`Cambiar rol de ${user.email}`}
+                                                >
+                                                    Cambiar rol
+                                                </button>
+                                            )}
+                                             <button
                                                 onClick={() => toggleEstadoUsuario(user)}
                                                 className="font-semibold transition-all"
                                                 style={{ color: user.is_active ? '#DC2626' : '#4CAF50' }}
@@ -549,6 +722,159 @@ const GestionUsuarios = () => {
                                 Cerrar
                             </button>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {cambioRol && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="business-role-change-title"
+                        className="bg-white rounded-xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto p-6"
+                        style={{ borderTop: '4px solid #817773' }}
+                    >
+                        <h2 id="business-role-change-title" className="text-xl font-bold text-gray-800">
+                            Cambiar BusinessRole
+                        </h2>
+                        <p className="text-sm text-gray-500 mb-4">{cambioRol.usuario.email}</p>
+
+                        {cambioRol.result ? (
+                            <div>
+                                <div className="rounded-lg border border-green-200 bg-green-50 p-4">
+                                    <h3 className="font-bold text-green-800">Rol actualizado</h3>
+                                    <p>
+                                        {BUSINESS_ROLE_LABELS[cambioRol.result.previous_role] || 'Sin rol'}
+                                        {' → '}
+                                        {BUSINESS_ROLE_LABELS[cambioRol.result.business_role]}
+                                    </p>
+                                </div>
+                                <div className="flex justify-end mt-5">
+                                    <button
+                                        type="button"
+                                        onClick={() => setCambioRol(null)}
+                                        className="px-4 py-2 rounded-lg text-white font-semibold"
+                                        style={{ backgroundColor: '#817773' }}
+                                    >
+                                        Cerrar
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            <form onSubmit={enviarCambioRol} className="space-y-4">
+                                <div className="rounded-lg border p-3 text-sm">
+                                    <strong>Rol actual:</strong>{' '}
+                                    {BUSINESS_ROLE_LABELS[cambioRol.summary.business_role]
+                                        || ROLE_STATE_LABELS[cambioRol.summary.role_state]}
+                                </div>
+
+                                <div>
+                                    <label htmlFor="business-role-target" className="block text-sm font-medium text-gray-700">
+                                        Rol destino
+                                    </label>
+                                    <select
+                                        id="business-role-target"
+                                        value={cambioRol.targetRole}
+                                        onChange={(event) => setCambioRol((current) => ({
+                                            ...current,
+                                            targetRole: event.target.value,
+                                            error: null
+                                        }))}
+                                        className="mt-1 w-full border rounded-lg p-2"
+                                    >
+                                        {BUSINESS_ROLES.map((role) => (
+                                            <option key={role} value={role}>
+                                                {BUSINESS_ROLE_LABELS[role]}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-3 text-sm">
+                                    <div className="border rounded-lg p-3">
+                                        <strong>Cliente:</strong>{' '}
+                                        {cambioRol.summary.profiles.cliente.exists
+                                            ? `#${cambioRol.summary.profiles.cliente.id}`
+                                            : 'No vinculado'}
+                                    </div>
+                                    <div className="border rounded-lg p-3">
+                                        <strong>Personal:</strong>{' '}
+                                        {cambioRol.summary.profiles.personal.exists
+                                            ? `#${cambioRol.summary.profiles.personal.id} · ${cambioRol.summary.profiles.personal.active ? 'Activo' : 'Inactivo'}`
+                                            : 'No vinculado'}
+                                    </div>
+                                </div>
+
+                                {advertenciasCambioRol.length > 0 && (
+                                    <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">
+                                        <strong>Advertencias</strong>
+                                        <ul className="list-disc pl-5 mt-1">
+                                            {advertenciasCambioRol.map((warning) => (
+                                                <li key={warning}>{warning}</li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                )}
+
+                                {cambioRol.error && (
+                                    <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                                        {cambioRol.error}
+                                    </p>
+                                )}
+
+                                <div>
+                                    <label htmlFor="business-role-reason" className="block text-sm font-medium text-gray-700">
+                                        Motivo del cambio
+                                    </label>
+                                    <textarea
+                                        id="business-role-reason"
+                                        required
+                                        minLength={3}
+                                        maxLength={500}
+                                        rows={3}
+                                        value={cambioRol.reason}
+                                        onChange={(event) => setCambioRol((current) => ({
+                                            ...current,
+                                            reason: event.target.value,
+                                            error: null
+                                        }))}
+                                        className="mt-1 w-full border rounded-lg p-2"
+                                    />
+                                </div>
+
+                                <label className="flex items-start gap-2 text-sm">
+                                    <input
+                                        type="checkbox"
+                                        checked={cambioRol.confirmed}
+                                        onChange={(event) => setCambioRol((current) => ({
+                                            ...current,
+                                            confirmed: event.target.checked
+                                        }))}
+                                    />
+                                    <span>Confirmo el cambio de BusinessRole y la conservación de los perfiles vinculados.</span>
+                                </label>
+
+                                <div className="flex justify-end gap-3 border-t pt-4">
+                                    <button
+                                        type="button"
+                                        onClick={() => setCambioRol(null)}
+                                        disabled={cambiandoRol}
+                                        className="px-4 py-2 border rounded-lg font-medium"
+                                    >
+                                        Cancelar
+                                    </button>
+                                    <button
+                                        type="submit"
+                                        disabled={cambiandoRol}
+                                        className="px-4 py-2 rounded-lg text-white font-bold disabled:opacity-50"
+                                        style={{ backgroundColor: '#817773' }}
+                                    >
+                                        {cambiandoRol ? 'Cambiando...' : 'Confirmar cambio'}
+                                    </button>
+                                </div>
+                            </form>
+                        )}
                     </div>
                 </div>
             )}

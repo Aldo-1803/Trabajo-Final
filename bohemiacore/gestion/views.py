@@ -56,8 +56,10 @@ from .serializers import (
     TurnoRescheduleCommandSerializer,
     RutinaSerializer, RutinaClienteSerializer,
     RutinaClienteCreateSerializer, ReglaDiagnosticoSerializer, NotificacionSerializer, ProductoSerializer, ImagenProductoSerializer, EquipamientoSerializer,
-    UsuarioAccountStatusCommandSerializer, UsuarioAdminIdentityUpdateSerializer,
+    UsuarioAccountStatusCommandSerializer,
+    UsuarioAdminIdentityUpdateSerializer,
     UsuarioAdminReadSerializer, AgendaCuidadosSerializer,
+    UsuarioBusinessRoleChangeCommandSerializer,
     HorarioLaboralSerializer, BloqueoAgendaSerializer, PersonalSerializer,
     HabilidadSerializer, PersonalHabilidadSerializer,
     PersonalSkillDirectorySerializer,
@@ -283,21 +285,32 @@ from usuarios.access_services import (
     InvalidAccountDeactivationTarget,
     InvalidAccountReactivationReason,
     InvalidAccountReactivationTarget,
+    InvalidBusinessRole,
+    InvalidRoleAssignmentTarget,
+    InvalidRoleChangeReason,
     LastActiveAdministrator,
+    LastActiveAdministratorRoleChange,
     MissingClientProfile,
     MissingPersonalProfile,
     PermissionDeniedForAccountDeactivation,
     PermissionDeniedForAccountReactivation,
+    PermissionDeniedForRoleAssignment,
     ProtectedSuperuser,
+    ResidualAdministrativeCapabilities,
     SelfDeactivationNotAllowed,
+    SelfRoleAssignmentNotAllowed,
     UserHasNoBusinessRole,
+    change_administrative_business_role,
     deactivate_account,
     reactivate_account,
 )
 
 from usuarios.models import Usuario, Cliente
 from usuarios.filters import UsuarioFilter
-from usuarios.permissions import CanManageUsers
+from usuarios.permissions import (
+    CanManageUsers,
+    CanManageUsersAndAssignRoles,
+)
 from usuarios.access_read_services import build_administrative_access_summary
 from usuarios.roles import BusinessPermission
 from .filters import (
@@ -3500,6 +3513,8 @@ class AdminUsuarioViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action == 'create':
             permission_classes = [AllowAny]
+        elif self.action == 'cambiar_rol_negocio':
+            permission_classes = [IsAuthenticated]
         else:
             permission_classes = [IsAuthenticated, CanManageUsers]
         return [permission() for permission in permission_classes]
@@ -3532,6 +3547,141 @@ class AdminUsuarioViewSet(viewsets.ModelViewSet):
     def resumen_acceso(self, request, pk=None):
         target = self.get_object()
         return Response(build_administrative_access_summary(target))
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='cambiar-rol-negocio',
+    )
+    def cambiar_rol_negocio(self, request, pk=None):
+        role_change_permission = CanManageUsersAndAssignRoles()
+        if not role_change_permission.has_permission(request, self):
+            return self._command_error(
+                'PERMISSION_DENIED',
+                role_change_permission.message,
+                status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            target_user = self.get_object()
+        except Http404:
+            return self._command_error(
+                'USER_NOT_FOUND',
+                'El Usuario solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        command = UsuarioBusinessRoleChangeCommandSerializer(
+            data=request.data
+        )
+        if not command.is_valid():
+            error_fields = set(command.errors)
+            error_code = (
+                'INVALID_ROLE'
+                if error_fields == {'role'}
+                else 'INVALID_REASON'
+                if error_fields == {'motivo'}
+                else 'INVALID_PAYLOAD'
+            )
+            return self._command_error(
+                error_code,
+                'El payload de cambio de BusinessRole es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+                fields=command.errors,
+            )
+
+        try:
+            result = change_administrative_business_role(
+                actor=request.user,
+                target_user=target_user,
+                target_role=command.validated_data['role'],
+                reason=command.validated_data['motivo'],
+            )
+        except PermissionDeniedForRoleAssignment:
+            return self._command_error(
+                'PERMISSION_DENIED',
+                'No tiene permisos para cambiar roles de negocio.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except SelfRoleAssignmentNotAllowed:
+            return self._command_error(
+                'SELF_ROLE_CHANGE_NOT_ALLOWED',
+                'No puede cambiar su propio BusinessRole.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except ProtectedSuperuser:
+            return self._command_error(
+                'PROTECTED_SUPERUSER',
+                'El Usuario protegido no puede gestionarse mediante esta acción.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except InvalidBusinessRole:
+            return self._command_error(
+                'INVALID_ROLE',
+                'El BusinessRole solicitado no es válido.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except InvalidRoleChangeReason:
+            return self._command_error(
+                'INVALID_REASON',
+                'El motivo del cambio de BusinessRole es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except InconsistentBusinessRoleState:
+            return self._command_error(
+                'INCONSISTENT_BUSINESS_ROLES',
+                'El Usuario tiene múltiples roles de negocio.',
+                status.HTTP_409_CONFLICT,
+            )
+        except MissingClientProfile:
+            return self._command_error(
+                'CLIENT_PROFILE_REQUIRED',
+                'El rol CLIENTE requiere un perfil Cliente.',
+                status.HTTP_409_CONFLICT,
+            )
+        except MissingPersonalProfile:
+            return self._command_error(
+                'PERSONAL_PROFILE_REQUIRED',
+                'El rol laboral requiere un Personal vinculado.',
+                status.HTTP_409_CONFLICT,
+            )
+        except InactivePersonal:
+            return self._command_error(
+                'PERSONAL_INACTIVE',
+                'El rol laboral requiere un Personal activo.',
+                status.HTTP_409_CONFLICT,
+            )
+        except LastActiveAdministratorRoleChange:
+            return self._command_error(
+                'LAST_ACTIVE_ADMIN',
+                'No puede degradarse el último administrador activo.',
+                status.HTTP_409_CONFLICT,
+            )
+        except ResidualAdministrativeCapabilities as exc:
+            return self._command_error(
+                'RESIDUAL_ADMIN_CAPABILITIES',
+                'La cuenta conservaría capacidades administrativas residuales.',
+                status.HTTP_409_CONFLICT,
+                capabilities=list(exc.capabilities),
+            )
+        except InvalidRoleAssignmentTarget:
+            return self._command_error(
+                'USER_NOT_FOUND',
+                'El Usuario solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        refreshed_target = Usuario.objects.get(pk=target_user.pk)
+        return Response({
+            'changed': result.changed,
+            'usuario_id': target_user.pk,
+            'previous_role': result.previous_role,
+            'business_role': result.new_role,
+            'audit_id': result.audit_id,
+            'access_summary': build_administrative_access_summary(
+                refreshed_target
+            ),
+        }, status=status.HTTP_200_OK)
 
     def update(self, request, *args, **kwargs):
         if (
@@ -3768,10 +3918,17 @@ class AdminUsuarioViewSet(viewsets.ModelViewSet):
         }, status=status.HTTP_200_OK)
 
     @staticmethod
-    def _command_error(code, detail, status_code, fields=None):
+    def _command_error(
+        code,
+        detail,
+        status_code,
+        fields=None,
+        **details,
+    ):
         error = {'code': code, 'detail': detail}
         if fields is not None:
             error['fields'] = fields
+        error.update(details)
         return Response({'error': error}, status=status_code)
 
 # ----------------------------------------------------

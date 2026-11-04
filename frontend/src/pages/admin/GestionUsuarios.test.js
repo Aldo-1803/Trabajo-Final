@@ -7,6 +7,7 @@ import { notify } from '../../utils/notificaciones';
 
 
 const mockNavigate = jest.fn();
+const mockHasPermission = jest.fn(() => true);
 
 
 jest.mock('axios', () => ({
@@ -29,6 +30,9 @@ jest.mock('../../utils/notificaciones', () => ({
         success: jest.fn(),
         error: jest.fn()
     }
+}));
+jest.mock('../../context/SessionContext', () => ({
+    useSession: () => ({ hasPermission: mockHasPermission })
 }));
 
 
@@ -120,6 +124,7 @@ const accessSummary = {
 describe('GestionUsuarios account status actions', () => {
     beforeEach(() => {
         jest.clearAllMocks();
+        mockHasPermission.mockImplementation(() => true);
         localStorage.setItem('access_token', 'test-token');
         axios.post.mockResolvedValue({ data: { changed: true } });
     });
@@ -152,9 +157,12 @@ describe('GestionUsuarios account status actions', () => {
         expect(screen.getByLabelText('Email')).toBeInTheDocument();
         expect(screen.getByLabelText('Contraseña temporal')).toBeInTheDocument();
         expect(screen.getByLabelText('Motivo')).toBeInTheDocument();
-        expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
-        expect(screen.queryByLabelText(/staff/i)).not.toBeInTheDocument();
-        expect(screen.queryByLabelText(/rol/i)).not.toBeInTheDocument();
+        const administratorForm = screen.getByRole('button', {
+            name: 'Crear administrador'
+        }).closest('form');
+        expect(within(administratorForm).queryByRole('checkbox')).not.toBeInTheDocument();
+        expect(within(administratorForm).queryByLabelText(/staff/i)).not.toBeInTheDocument();
+        expect(within(administratorForm).queryByLabelText(/rol/i)).not.toBeInTheDocument();
     });
 
     test('consulta y muestra el resumen canónico como sólo lectura', async () => {
@@ -397,5 +405,172 @@ describe('GestionUsuarios account status actions', () => {
                 'No se puede desactivar al último administrador activo.'
             );
         });
+    });
+
+    test('oculta cambio de rol si falta uno de los permisos requeridos', async () => {
+        mockHasPermission.mockImplementation(
+            (permission) => permission === 'usuarios.manage_users'
+        );
+        axios.get.mockResolvedValue({ data: [activeUser] });
+
+        render(<GestionUsuarios />);
+        await screen.findByText('activa@test.com');
+
+        expect(screen.queryByRole('button', {
+            name: 'Cambiar rol de activa@test.com'
+        })).not.toBeInTheDocument();
+    });
+
+    test('confirma el cambio, envía motivo y muestra el resultado actualizado', async () => {
+        axios.get.mockImplementation((url) => {
+            if (url.includes('/resumen-acceso/')) {
+                return Promise.resolve({ data: accessSummary });
+            }
+            return Promise.resolve({ data: [activeUser] });
+        });
+        const updatedSummary = {
+            ...accessSummary,
+            business_role: 'ADMINISTRADOR',
+            business_roles: ['ADMINISTRADOR']
+        };
+        axios.post.mockResolvedValue({
+            data: {
+                changed: true,
+                usuario_id: 10,
+                previous_role: 'EMPLEADO',
+                business_role: 'ADMINISTRADOR',
+                audit_id: 91,
+                access_summary: updatedSummary
+            }
+        });
+
+        render(<GestionUsuarios />);
+        fireEvent.click(await screen.findByRole('button', {
+            name: 'Cambiar rol de activa@test.com'
+        }));
+        const dialog = await screen.findByRole('dialog', {
+            name: 'Cambiar BusinessRole'
+        });
+        expect(dialog).toHaveTextContent('Rol actual: Empleado');
+        expect(dialog).toHaveTextContent('Cliente: #10');
+        expect(dialog).toHaveTextContent('Personal: #21 · Inactivo');
+
+        fireEvent.change(within(dialog).getByLabelText('Rol destino'), {
+            target: { value: 'ADMINISTRADOR' }
+        });
+        fireEvent.change(within(dialog).getByLabelText('Motivo del cambio'), {
+            target: { value: 'Promoción administrativa aprobada' }
+        });
+        fireEvent.click(within(dialog).getByRole('checkbox'));
+        fireEvent.click(within(dialog).getByRole('button', {
+            name: 'Confirmar cambio'
+        }));
+
+        await waitFor(() => {
+            expect(axios.post).toHaveBeenCalledWith(
+                'http://127.0.0.1:8000/api/gestion/admin/usuarios/10/cambiar-rol-negocio/',
+                {
+                    role: 'ADMINISTRADOR',
+                    motivo: 'Promoción administrativa aprobada'
+                },
+                { headers: { Authorization: 'Bearer test-token' } }
+            );
+        });
+        expect(await within(dialog).findByText('Rol actualizado')).toBeInTheDocument();
+        expect(dialog).toHaveTextContent('Empleado → Administrador');
+        expect(screen.getAllByText('Administrador').length).toBeGreaterThan(0);
+        expect(notify.success).toHaveBeenCalledWith(
+            'BusinessRole actualizado correctamente.'
+        );
+    });
+
+    test('advierte perfiles incompatibles y autoridad residual', async () => {
+        const administratorSummary = {
+            ...accessSummary,
+            business_role: 'ADMINISTRADOR',
+            business_roles: ['ADMINISTRADOR'],
+            capabilities: [
+                {
+                    code: 'usuarios.manage_users',
+                    effective: true,
+                    origins: [
+                        { type: 'BUSINESS_ROLE', identifier: 'ADMINISTRADOR' },
+                        { type: 'TECHNICAL_GROUP', identifier: 'ACCESS_REVIEW' }
+                    ]
+                }
+            ]
+        };
+        axios.get.mockImplementation((url) => (
+            url.includes('/resumen-acceso/')
+                ? Promise.resolve({ data: administratorSummary })
+                : Promise.resolve({ data: [activeUser] })
+        ));
+
+        render(<GestionUsuarios />);
+        fireEvent.click(await screen.findByRole('button', {
+            name: 'Cambiar rol de activa@test.com'
+        }));
+        const dialog = await screen.findByRole('dialog', {
+            name: 'Cambiar BusinessRole'
+        });
+        expect(dialog).toHaveTextContent(
+            'La degradación conservaría autoridad residual: usuarios.manage_users.'
+        );
+
+        fireEvent.change(within(dialog).getByLabelText('Rol destino'), {
+            target: { value: 'PROFESIONAL' }
+        });
+        expect(dialog).toHaveTextContent(
+            'El rol laboral requiere que el perfil Personal esté activo.'
+        );
+    });
+
+    test.each([
+        [
+            403,
+            'PERMISSION_DENIED',
+            'No tenés permisos para cambiar roles de negocio.'
+        ],
+        [
+            409,
+            'RESIDUAL_ADMIN_CAPABILITIES',
+            'La cuenta conservaría autoridad administrativa residual.'
+        ]
+    ])('muestra el conflicto seguro de cambio de rol %s', async (
+        responseStatus,
+        code,
+        message
+    ) => {
+        axios.get.mockImplementation((url) => (
+            url.includes('/resumen-acceso/')
+                ? Promise.resolve({ data: accessSummary })
+                : Promise.resolve({ data: [activeUser] })
+        ));
+        axios.post.mockRejectedValue({
+            response: {
+                status: responseStatus,
+                data: { error: { code } }
+            }
+        });
+
+        render(<GestionUsuarios />);
+        fireEvent.click(await screen.findByRole('button', {
+            name: 'Cambiar rol de activa@test.com'
+        }));
+        const dialog = await screen.findByRole('dialog', {
+            name: 'Cambiar BusinessRole'
+        });
+        fireEvent.change(within(dialog).getByLabelText('Motivo del cambio'), {
+            target: { value: 'Cambio administrativo rechazado' }
+        });
+        fireEvent.click(within(dialog).getByRole('checkbox'));
+        fireEvent.click(within(dialog).getByRole('button', {
+            name: 'Confirmar cambio'
+        }));
+
+        await waitFor(() => {
+            expect(notify.error).toHaveBeenCalledWith(message);
+        });
+        expect(within(dialog).getByRole('alert')).toHaveTextContent(message);
     });
 });

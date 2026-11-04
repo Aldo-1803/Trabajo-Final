@@ -5,6 +5,9 @@ from django.contrib.auth.models import Group
 from django.db import transaction
 
 from gestion.models import Auditoria
+from usuarios.access_read_services import (
+    project_role_transition_access_capabilities,
+)
 from usuarios.models import Cliente
 from usuarios.roles import (
     BusinessPermission,
@@ -77,6 +80,18 @@ class InvalidRoleAssignmentTarget(RoleAssignmentError):
 
 class InitialBusinessRoleAlreadyAssigned(RoleAssignmentError):
     pass
+
+
+class LastActiveAdministratorRoleChange(RoleAssignmentError):
+    pass
+
+
+class ResidualAdministrativeCapabilities(RoleAssignmentError):
+    def __init__(self, capabilities):
+        super().__init__(
+            'The role transition would preserve access-management authority.'
+        )
+        self.capabilities = tuple(capabilities)
 
 
 class AccountDeactivationError(Exception):
@@ -394,13 +409,14 @@ def deactivate_account(actor, target_user, reason):
         )
 
     if BusinessRole.ADMINISTRADOR in roles:
-        administrator_group = Group.objects.select_for_update().get(
-            name=BusinessRole.ADMINISTRADOR
+        administrator_group = _lock_administrator_group()
+        another_active_administrator_exists = (
+            _another_active_business_administrator_exists(
+                user_model,
+                administrator_group,
+                exclude_user_id=locked_target.pk,
+            )
         )
-        another_active_administrator_exists = user_model.objects.filter(
-            is_active=True,
-            groups=administrator_group,
-        ).exclude(pk=locked_target.pk).exists()
         if not another_active_administrator_exists:
             raise LastActiveAdministrator(
                 'The last active business administrator cannot be deactivated.'
@@ -456,9 +472,10 @@ def assign_validated_business_role(actor, target_user, target_role, reason):
     """
     Assign one validated business role and write its semantic audit event.
 
-    Last-active-administrator protection is intentionally deferred until the
-    business-role backfill is complete. Legacy is_staff data is never treated
-    as evidence that a user is an ADMINISTRADOR.
+    Scoped domain orchestrators supply their own operation-level authority.
+    General administrative changes must use
+    `change_administrative_business_role`, which adds the conjunction of
+    permissions, last-administrator protection and residual-access projection.
     """
     normalized_reason = _validate_reason(reason)
     _validate_role(target_role)
@@ -524,6 +541,84 @@ def assign_validated_business_role(actor, target_user, target_role, reason):
         previous_role=previous_role,
         new_role=target_role,
         audit_id=audit.pk,
+    )
+
+
+@transaction.atomic
+def change_administrative_business_role(
+    actor,
+    target_user,
+    target_role,
+    reason,
+):
+    """Apply the general administrative BusinessRole transition policy."""
+    normalized_reason = _validate_reason(reason)
+    _validate_role(target_role)
+
+    user_model = get_user_model()
+    current_actor = _get_role_manager_actor(actor, user_model)
+    locked_target = _get_locked_target(target_user, user_model)
+
+    if current_actor.pk == locked_target.pk:
+        raise SelfRoleAssignmentNotAllowed(
+            'Users cannot assign their own business role.'
+        )
+    if locked_target.is_superuser:
+        raise ProtectedSuperuser(
+            'Superusers cannot be managed through business-role assignment.'
+        )
+
+    current_roles = get_business_roles(locked_target)
+    if len(current_roles) > 1:
+        raise InconsistentBusinessRoleState(
+            'The target user has multiple business roles.'
+        )
+    previous_role = current_roles[0] if current_roles else None
+    _validate_target_profile(locked_target, target_role)
+
+    if previous_role == target_role:
+        return RoleAssignmentResult(
+            changed=False,
+            previous_role=previous_role,
+            new_role=target_role,
+            audit_id=None,
+        )
+
+    if (
+        previous_role == BusinessRole.ADMINISTRADOR
+        or target_role == BusinessRole.ADMINISTRADOR
+    ):
+        administrator_group = _lock_administrator_group()
+    else:
+        administrator_group = None
+
+    if (
+        previous_role == BusinessRole.ADMINISTRADOR
+        and target_role != BusinessRole.ADMINISTRADOR
+    ):
+        if not _another_active_business_administrator_exists(
+            user_model,
+            administrator_group,
+            exclude_user_id=locked_target.pk,
+        ):
+            raise LastActiveAdministratorRoleChange(
+                'The last active business administrator cannot be demoted.'
+            )
+
+        residual_capabilities = (
+            project_role_transition_access_capabilities(
+                locked_target,
+                target_role,
+            )
+        )
+        if residual_capabilities:
+            raise ResidualAdministrativeCapabilities(residual_capabilities)
+
+    return assign_validated_business_role(
+        actor=current_actor,
+        target_user=target_user,
+        target_role=target_role,
+        reason=normalized_reason,
     )
 
 
@@ -600,6 +695,60 @@ def _get_authorized_actor(actor, user_model):
             'The actor cannot assign business roles.'
         )
     return current_actor
+
+
+def _get_role_manager_actor(actor, user_model):
+    if (
+        not isinstance(actor, user_model)
+        or actor.pk is None
+        or not actor.is_authenticated
+    ):
+        raise PermissionDeniedForRoleAssignment(
+            'A valid authenticated actor is required.'
+        )
+
+    try:
+        current_actor = user_model.objects.get(pk=actor.pk)
+    except user_model.DoesNotExist as exc:
+        raise PermissionDeniedForRoleAssignment(
+            'A valid authenticated actor is required.'
+        ) from exc
+
+    required_permissions = (
+        BusinessPermission.MANAGE_USERS,
+        BusinessPermission.ASSIGN_ROLES,
+    )
+    if not current_actor.is_active or not all(
+        current_actor.has_perm(permission)
+        for permission in required_permissions
+    ):
+        raise PermissionDeniedForRoleAssignment(
+            'The actor cannot manage general business roles.'
+        )
+    return current_actor
+
+
+def _lock_administrator_group():
+    return Group.objects.select_for_update().get(
+        name=BusinessRole.ADMINISTRADOR
+    )
+
+
+def _another_active_business_administrator_exists(
+    user_model,
+    administrator_group,
+    *,
+    exclude_user_id,
+):
+    candidates = user_model.objects.filter(
+        is_active=True,
+        is_superuser=False,
+        groups=administrator_group,
+    ).exclude(pk=exclude_user_id)
+    for role in BusinessRole.ALL:
+        if role != BusinessRole.ADMINISTRADOR:
+            candidates = candidates.exclude(groups__name=role)
+    return candidates.exists()
 
 
 def _get_account_manager_actor(actor, user_model):
