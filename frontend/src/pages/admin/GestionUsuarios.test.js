@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import axios from 'axios';
 import Swal from 'sweetalert2';
 
@@ -49,6 +49,73 @@ const inactiveUser = {
     is_active: false
 };
 
+const accessSummary = {
+    identity: {
+        id: 10,
+        email: 'activa@test.com',
+        first_name: 'Cuenta',
+        last_name: 'Activa'
+    },
+    account: {
+        is_active: true,
+        is_staff: false,
+        is_superuser: false
+    },
+    business_role: 'EMPLEADO',
+    business_roles: ['EMPLEADO'],
+    role_state: 'VALID',
+    profiles: {
+        cliente: { exists: true, id: 10, active: true },
+        personal: {
+            exists: true,
+            id: 21,
+            active: false,
+            job_role: 'asistente'
+        }
+    },
+    assigned_capabilities: [
+        'gestion.view_stock',
+        'usuarios.manage_users'
+    ],
+    effective_capabilities: ['gestion.view_stock'],
+    capabilities: [
+        {
+            code: 'gestion.view_stock',
+            assigned: true,
+            effective: true,
+            origins: [
+                { type: 'BUSINESS_ROLE', identifier: 'EMPLEADO' },
+                { type: 'TECHNICAL_GROUP', identifier: 'STOCK_READERS' },
+                { type: 'INDIVIDUAL', identifier: null }
+            ]
+        },
+        {
+            code: 'usuarios.manage_users',
+            assigned: true,
+            effective: false,
+            origins: [
+                { type: 'TECHNICAL_GROUP', identifier: 'ACCESS_REVIEW' }
+            ]
+        }
+    ],
+    warnings: [
+        {
+            code: 'INACTIVE_PERSONAL_FOR_LABOR_ROLE',
+            message: 'El BusinessRole laboral está vinculado a Personal inactivo.'
+        },
+        {
+            code: 'ADMIN_CAPABILITIES_OUTSIDE_ROLE',
+            message: 'La cuenta conserva capacidades administrativas fuera de su rol.'
+        }
+    ],
+    technical: {
+        permission_evaluation: 'EFFECTIVE',
+        has_individual_business_permissions: true,
+        has_technical_group_business_permissions: true,
+        has_permissions_outside_business_catalog: false
+    }
+};
+
 
 describe('GestionUsuarios account status actions', () => {
     beforeEach(() => {
@@ -88,6 +155,46 @@ describe('GestionUsuarios account status actions', () => {
         expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
         expect(screen.queryByLabelText(/staff/i)).not.toBeInTheDocument();
         expect(screen.queryByLabelText(/rol/i)).not.toBeInTheDocument();
+    });
+
+    test('consulta y muestra el resumen canónico como sólo lectura', async () => {
+        axios.get.mockImplementation((url) => {
+            if (url.includes('/resumen-acceso/')) {
+                return Promise.resolve({ data: accessSummary });
+            }
+            return Promise.resolve({ data: [activeUser] });
+        });
+
+        render(<GestionUsuarios />);
+        await screen.findByText('activa@test.com');
+        fireEvent.click(screen.getByRole('button', { name: 'Ver accesos' }));
+
+        const dialog = await screen.findByRole('dialog', {
+            name: 'Resumen de acceso'
+        });
+        expect(axios.get).toHaveBeenCalledWith(
+            'http://127.0.0.1:8000/api/gestion/admin/usuarios/10/resumen-acceso/',
+            { headers: { Authorization: 'Bearer test-token' } }
+        );
+        expect(within(dialog).getByText('Empleado')).toBeInTheDocument();
+        expect(dialog).toHaveTextContent('Cliente: #10 · Activo');
+        expect(dialog).toHaveTextContent('Personal: #21 · Inactivo · Función asistente');
+        expect(within(dialog).getByText('gestion.view_stock')).toBeInTheDocument();
+        expect(within(dialog).getByText('usuarios.manage_users')).toBeInTheDocument();
+        expect(dialog).toHaveTextContent(
+            'Origen: Rol Empleado · Grupo técnico STOCK_READERS · Permiso individual'
+        );
+        expect(within(dialog).getByText('Asignada, no efectiva')).toBeInTheDocument();
+        expect(dialog).toHaveTextContent('INACTIVE_PERSONAL_FOR_LABOR_ROLE');
+        expect(dialog).toHaveTextContent('ADMIN_CAPABILITIES_OUTSIDE_ROLE');
+        expect(within(dialog).queryByRole('textbox')).not.toBeInTheDocument();
+        expect(within(dialog).queryByRole('checkbox')).not.toBeInTheDocument();
+        expect(within(dialog).queryByRole('combobox')).not.toBeInTheDocument();
+
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Cerrar' }));
+        expect(screen.queryByRole('dialog', {
+            name: 'Resumen de acceso'
+        })).not.toBeInTheDocument();
     });
 
     test('envía solo el contrato dedicado y actualiza el listado por BusinessRole', async () => {

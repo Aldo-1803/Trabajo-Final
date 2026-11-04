@@ -298,6 +298,7 @@ from usuarios.access_services import (
 from usuarios.models import Usuario, Cliente
 from usuarios.filters import UsuarioFilter
 from usuarios.permissions import CanManageUsers
+from usuarios.access_read_services import build_administrative_access_summary
 from usuarios.roles import BusinessPermission
 from .filters import (
     ProductoFilter, TurnoFilter, PersonalFilter, ServicioFilter, 
@@ -3526,6 +3527,11 @@ class AdminUsuarioViewSet(viewsets.ModelViewSet):
         Retornar todos los usuarios y dejar que django-filter haga el filtrado.
         """
         return Usuario.objects.prefetch_related('groups')
+
+    @action(detail=True, methods=['get'], url_path='resumen-acceso')
+    def resumen_acceso(self, request, pk=None):
+        target = self.get_object()
+        return Response(build_administrative_access_summary(target))
 
     def update(self, request, *args, **kwargs):
         if (

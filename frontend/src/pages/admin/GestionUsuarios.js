@@ -21,11 +21,31 @@ const BUSINESS_ROLE_LABELS = {
     ADMINISTRADOR: 'Administrador'
 };
 
+const ROLE_STATE_LABELS = {
+    VALID: 'Rol válido',
+    NO_ROLE: 'Sin rol',
+    MULTIPLE_ROLES: 'Múltiples roles'
+};
+
+const formatCapabilityOrigin = (origin) => {
+    if (origin.type === 'BUSINESS_ROLE') {
+        return `Rol ${BUSINESS_ROLE_LABELS[origin.identifier] || origin.identifier}`;
+    }
+    if (origin.type === 'TECHNICAL_GROUP') {
+        return `Grupo técnico ${origin.identifier}`;
+    }
+    if (origin.type === 'INDIVIDUAL') return 'Permiso individual';
+    if (origin.type === 'SUPERUSER') return 'Superusuario';
+    return origin.type;
+};
+
 const GestionUsuarios = () => {
     const [usuarios, setUsuarios] = useState([]);
     const [loading, setLoading] = useState(true);
     const [modalAbierto, setModalAbierto] = useState(false);
     const [creandoAdministrador, setCreandoAdministrador] = useState(false);
+    const [resumenAcceso, setResumenAcceso] = useState(null);
+    const [cargandoResumen, setCargandoResumen] = useState(false);
     
     // Filtros
     const [filtroRol, setFiltroRol] = useState('');
@@ -191,6 +211,26 @@ const GestionUsuarios = () => {
                 ? 'No se pudo desactivar la cuenta.'
                 : 'No se pudo reactivar la cuenta por un estado incoherente.';
             notify.error(errorMessages[errorCode] || fallbackMessage);
+        }
+    };
+
+    const consultarResumenAcceso = async (usuario) => {
+        setCargandoResumen(true);
+        try {
+            const token = localStorage.getItem('access_token');
+            const response = await axios.get(
+                `http://127.0.0.1:8000/api/gestion/admin/usuarios/${usuario.id}/resumen-acceso/`,
+                { headers: { 'Authorization': `Bearer ${token}` } }
+            );
+            setResumenAcceso(response.data);
+        } catch (error) {
+            notify.error(
+                error.response?.status === 403
+                    ? 'No tenés permisos para consultar capacidades.'
+                    : 'No se pudo cargar el resumen de acceso.'
+            );
+        } finally {
+            setCargandoResumen(false);
         }
     };
 
@@ -363,16 +403,27 @@ const GestionUsuarios = () => {
                                         )}
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                        <button 
-                                            onClick={() => toggleEstadoUsuario(user)}
-                                            className="font-semibold transition-all"
-                                            style={{ color: user.is_active ? '#DC2626' : '#4CAF50' }}
-                                            onMouseEnter={(e) => e.target.style.opacity = '0.7'}
-                                            onMouseLeave={(e) => e.target.style.opacity = '1'}
-                                            title={user.is_active ? 'Desactivar temporalmente (sin eliminar)' : 'Recuperar acceso'}
-                                        >
-                                            {user.is_active ? 'Desactivar' : 'Reactivar'}
-                                        </button>
+                                        <div className="flex justify-end gap-3">
+                                            <button
+                                                type="button"
+                                                onClick={() => consultarResumenAcceso(user)}
+                                                disabled={cargandoResumen}
+                                                className="font-semibold transition-all disabled:opacity-50"
+                                                style={{ color: '#817773' }}
+                                            >
+                                                Ver accesos
+                                            </button>
+                                            <button
+                                                onClick={() => toggleEstadoUsuario(user)}
+                                                className="font-semibold transition-all"
+                                                style={{ color: user.is_active ? '#DC2626' : '#4CAF50' }}
+                                                onMouseEnter={(e) => e.target.style.opacity = '0.7'}
+                                                onMouseLeave={(e) => e.target.style.opacity = '1'}
+                                                title={user.is_active ? 'Desactivar temporalmente (sin eliminar)' : 'Recuperar acceso'}
+                                            >
+                                                {user.is_active ? 'Desactivar' : 'Reactivar'}
+                                            </button>
+                                        </div>
                                     </td>
                                 </tr>
                             ))}
@@ -380,6 +431,127 @@ const GestionUsuarios = () => {
                     </table>
                 )}
             </div>
+
+            {resumenAcceso && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="access-summary-title"
+                        className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6"
+                        style={{ borderTop: '4px solid #817773' }}
+                    >
+                        <div className="flex justify-between gap-4 mb-5">
+                            <div>
+                                <h2 id="access-summary-title" className="text-2xl font-bold text-gray-800">Resumen de acceso</h2>
+                                <p className="text-sm text-gray-500">{resumenAcceso.identity.email}</p>
+                                <p className="text-xs text-gray-400 mt-1">Consulta de sólo lectura</p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setResumenAcceso(null)}
+                                className="text-gray-500 font-bold self-start"
+                                aria-label="Cerrar resumen de acceso"
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        <div className="grid md:grid-cols-3 gap-3 mb-5 text-sm">
+                            <section className="border rounded-lg p-3">
+                                <h3 className="font-bold text-gray-700">Cuenta</h3>
+                                <p>{resumenAcceso.account.is_active ? 'Activa' : 'Inactiva'}</p>
+                                {resumenAcceso.account.is_staff && <p>Indicador técnico: staff</p>}
+                                {resumenAcceso.account.is_superuser && <p>Indicador técnico: superusuario</p>}
+                            </section>
+                            <section className="border rounded-lg p-3">
+                                <h3 className="font-bold text-gray-700">BusinessRole</h3>
+                                <p>{BUSINESS_ROLE_LABELS[resumenAcceso.business_role] || ROLE_STATE_LABELS[resumenAcceso.role_state]}</p>
+                                {resumenAcceso.business_roles.length > 1 && (
+                                    <p className="text-xs text-gray-500 mt-1">
+                                        {resumenAcceso.business_roles.map((role) => BUSINESS_ROLE_LABELS[role] || role).join(', ')}
+                                    </p>
+                                )}
+                            </section>
+                            <section className="border rounded-lg p-3">
+                                <h3 className="font-bold text-gray-700">Evaluación Django</h3>
+                                <p>
+                                    {resumenAcceso.technical.permission_evaluation === 'EFFECTIVE'
+                                        ? 'Permisos efectivos habilitados'
+                                        : 'Asignaciones no efectivas por cuenta inactiva'}
+                                </p>
+                            </section>
+                        </div>
+
+                        <section className="mb-5">
+                            <h3 className="font-bold text-gray-800 mb-2">Perfiles vinculados</h3>
+                            <div className="grid md:grid-cols-2 gap-3 text-sm">
+                                <div className="border rounded-lg p-3">
+                                    <strong>Cliente:</strong>{' '}
+                                    {resumenAcceso.profiles.cliente.exists
+                                        ? `#${resumenAcceso.profiles.cliente.id} · ${resumenAcceso.profiles.cliente.active ? 'Activo' : 'Inactivo'}`
+                                        : 'No vinculado'}
+                                </div>
+                                <div className="border rounded-lg p-3">
+                                    <strong>Personal:</strong>{' '}
+                                    {resumenAcceso.profiles.personal.exists
+                                        ? `#${resumenAcceso.profiles.personal.id} · ${resumenAcceso.profiles.personal.active ? 'Activo' : 'Inactivo'} · Función ${resumenAcceso.profiles.personal.job_role}`
+                                        : 'No vinculado'}
+                                </div>
+                            </div>
+                        </section>
+
+                        <section className="mb-5">
+                            <h3 className="font-bold text-gray-800 mb-2">Capacidades</h3>
+                            {resumenAcceso.capabilities.length === 0 ? (
+                                <p className="text-sm text-gray-500">Sin capacidades asignadas ni efectivas.</p>
+                            ) : (
+                                <div className="space-y-2">
+                                    {resumenAcceso.capabilities.map((capability) => (
+                                        <div key={capability.code} className="border rounded-lg p-3 text-sm">
+                                            <div className="flex flex-wrap justify-between gap-2">
+                                                <code className="font-semibold text-gray-800">{capability.code}</code>
+                                                <span className={capability.effective ? 'text-green-700 font-bold' : 'text-amber-700 font-bold'}>
+                                                    {capability.effective ? 'Efectiva' : 'Asignada, no efectiva'}
+                                                </span>
+                                            </div>
+                                            <p className="text-xs text-gray-500 mt-1">
+                                                Origen: {capability.origins.map(formatCapabilityOrigin).join(' · ')}
+                                            </p>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </section>
+
+                        <section>
+                            <h3 className="font-bold text-gray-800 mb-2">Anomalías y advertencias</h3>
+                            {resumenAcceso.warnings.length === 0 ? (
+                                <p className="text-sm text-green-700">Sin advertencias detectadas.</p>
+                            ) : (
+                                <ul className="space-y-2">
+                                    {resumenAcceso.warnings.map((warning) => (
+                                        <li key={warning.code} className="border border-amber-200 bg-amber-50 rounded-lg p-3 text-sm">
+                                            <strong>{warning.code}</strong>: {warning.message}
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                        </section>
+
+                        <div className="flex justify-end mt-6">
+                            <button
+                                type="button"
+                                onClick={() => setResumenAcceso(null)}
+                                className="px-4 py-2 rounded-lg text-white font-semibold"
+                                style={{ backgroundColor: '#817773' }}
+                            >
+                                Cerrar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* MODAL NUEVO ADMINISTRADOR */}
             {modalAbierto && (
