@@ -120,6 +120,7 @@ class PersonalAccessServiceTests(TestCase):
 
         self.assertEqual(get_business_roles(user), (BusinessRole.CLIENTE,))
         self.assertEqual(result.business_role, BusinessRole.CLIENTE)
+        self.assertIn('BUSINESS_ROLE_INCOMPATIBLE', result.warnings)
 
     def test_administrator_business_role_is_not_changed(self):
         user = self.create_user('admin-role-link@test.com')
@@ -138,6 +139,7 @@ class PersonalAccessServiceTests(TestCase):
             (BusinessRole.ADMINISTRADOR,),
         )
         self.assertEqual(result.business_role, BusinessRole.ADMINISTRADOR)
+        self.assertIn('BUSINESS_ROLE_INCOMPATIBLE', result.warnings)
 
     def test_labor_roles_without_personal_can_be_corrected_by_link(self):
         for index, role in enumerate(

@@ -28,7 +28,8 @@ jest.mock('react-router-dom', () => ({
 jest.mock('../../utils/notificaciones', () => ({
     notify: {
         success: jest.fn(),
-        error: jest.fn()
+        error: jest.fn(),
+        info: jest.fn()
     }
 }));
 jest.mock('../../context/SessionContext', () => ({
@@ -381,6 +382,28 @@ describe('GestionUsuarios account status actions', () => {
         expect(notify.success).toHaveBeenCalledWith(
             'Cuenta reactivada correctamente.'
         );
+    });
+
+    test('informa que Cliente inactivo se preserva al reactivar cuenta', async () => {
+        axios.get.mockResolvedValue({ data: [inactiveUser] });
+        axios.post.mockResolvedValue({
+            data: {
+                changed: true,
+                warnings: ['CLIENT_PROFILE_INACTIVE'],
+                refresh_tokens_revoked: 0
+            }
+        });
+        Swal.fire.mockResolvedValue({
+            isConfirmed: true,
+            value: 'Reactivación conservando perfiles'
+        });
+
+        render(<GestionUsuarios />);
+        fireEvent.click(await screen.findByRole('button', { name: 'Reactivar' }));
+
+        await waitFor(() => expect(notify.info).toHaveBeenCalledWith(
+            'La cuenta se reactivó, pero el perfil Cliente permanece inactivo.'
+        ));
     });
 
     test('muestra un mensaje comprensible para el último administrador', async () => {

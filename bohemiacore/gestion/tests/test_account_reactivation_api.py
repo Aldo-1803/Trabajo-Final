@@ -71,7 +71,7 @@ class AccountReactivationActionTests(APITestCase):
         self.assertEqual(response.data['rol_actual'], BusinessRole.CLIENTE)
         self.assertIn('CLIENT_PROFILE_INACTIVE', response.data['warnings'])
         self.assertIn(
-            'PREEXISTING_TOKENS_MAY_REGAIN_VALIDITY',
+            'PREEXISTING_ACCESS_TOKENS_MAY_REGAIN_VALIDITY',
             response.data['warnings'],
         )
         target.refresh_from_db()

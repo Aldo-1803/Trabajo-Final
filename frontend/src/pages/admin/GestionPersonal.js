@@ -183,22 +183,26 @@ const GestionPersonal = () => {
         desactivar: {
             titulo: 'Desactivar Personal',
             endpoint: 'desactivar',
-            exito: 'Personal desactivado correctamente.'
+            exito: 'Personal desactivado correctamente.',
+            descripcion: 'Modifica sólo el estado laboral. La cuenta y los perfiles se conservan.'
         },
         reactivar: {
             titulo: 'Reactivar Personal',
             endpoint: 'reactivar',
-            exito: 'Personal reactivado correctamente.'
+            exito: 'Personal reactivado correctamente.',
+            descripcion: 'Modifica sólo el estado laboral. No activa ni cambia la cuenta vinculada.'
         },
         revocarLaboral: {
             titulo: 'Revocar acceso laboral',
             endpoint: 'revocar-acceso-laboral',
-            exito: 'Acceso laboral revocado correctamente.'
+            exito: 'Acceso laboral revocado correctamente.',
+            descripcion: 'Desactiva Personal y cambia un rol laboral a CLIENTE. La cuenta y el perfil Cliente se conservan.'
         },
         revocarTotal: {
             titulo: 'Revocar acceso total',
             endpoint: 'revocar-acceso-total',
-            exito: 'Acceso total revocado correctamente.'
+            exito: 'Acceso total revocado correctamente.',
+            descripcion: 'Desactiva la cuenta y el Personal. Conserva roles, perfiles, ownership e historial.'
         }
     };
 
@@ -246,7 +250,7 @@ const GestionPersonal = () => {
         setProcesandoAccion(true);
         try {
             const token = localStorage.getItem('access_token');
-            await axios.post(
+            const response = await axios.post(
                 `http://127.0.0.1:8000/api/gestion/personal/${accionSemantica.personal.id}/${config.endpoint}/`,
                 { motivo: motivoAccion },
                 { headers: { 'Authorization': `Bearer ${token}` } }
@@ -255,9 +259,35 @@ const GestionPersonal = () => {
             setMotivoAccion('');
             await cargarPersonal();
             notify.success(config.exito);
+            const warningMessages = {
+                USER_INACTIVE: 'La cuenta vinculada permanece inactiva.',
+                NO_LINKED_USER: 'El Personal no tiene una cuenta vinculada.',
+                NO_BUSINESS_ROLE: 'La cuenta vinculada no tiene BusinessRole.',
+                INCONSISTENT_BUSINESS_ROLES: 'La cuenta conserva múltiples BusinessRoles y requiere revisión.',
+                PREEXISTING_ACCESS_TOKENS_MAY_REGAIN_VALIDITY: 'Los access tokens previos pueden recuperar validez si la cuenta se reactiva antes de que venzan.'
+            };
+            (response.data?.warnings || []).forEach((warning) => {
+                notify.info(warningMessages[warning] || warning);
+            });
+            if (response.data?.refresh_tokens_revoked > 0) {
+                notify.info(`Refresh tokens revocados: ${response.data.refresh_tokens_revoked}.`);
+            }
         } catch (error) {
-            const message = error.response?.data?.error?.message;
-            notify.error(message || `No se pudo completar: ${config.titulo.toLowerCase()}.`);
+            const errorCode = error.response?.data?.error?.code;
+            const messages = {
+                PERMISSION_DENIED: 'No tiene permisos para completar esta operación.',
+                SELF_REVOCATION_NOT_ALLOWED: 'No puede revocar su propio acceso laboral.',
+                LAST_ACTIVE_ADMIN: 'No puede desactivarse el último administrador activo.',
+                PROTECTED_SUPERUSER: 'La cuenta técnica protegida no puede gestionarse aquí.',
+                INVALID_WORK_ACCESS_STATE: 'La cuenta no tiene un rol laboral revocable.',
+                INCONSISTENT_BUSINESS_ROLES: 'La cuenta tiene múltiples BusinessRoles y requiere revisión.',
+                USER_INACTIVE: 'La cuenta está inactiva y no puede conservar acceso Cliente.'
+            };
+            const detail = error.response?.data?.error?.detail;
+            const fallback = error.response?.status === 409
+                ? 'La operación entra en conflicto con el estado actual.'
+                : `No se pudo completar: ${config.titulo.toLowerCase()}.`;
+            notify.error(messages[errorCode] || detail || fallback);
         } finally {
             setProcesandoAccion(false);
         }
@@ -456,11 +486,19 @@ const GestionPersonal = () => {
                 { headers: { 'Authorization': `Bearer ${token}` } }
             );
             const linkedRole = response.data?.rol;
+            const warnings = response.data?.warnings || [];
             cerrarVincularUsuario();
             await cargarPersonal();
-            if (linkedRole === 'CLIENTE') {
-                notify.info('La cuenta fue vinculada correctamente. El rol de acceso todavía es CLIENTE.');
-            } else {
+            const warningMessages = {
+                BUSINESS_ROLE_INCOMPATIBLE: `La cuenta fue vinculada, pero el rol ${linkedRole} no habilita acceso laboral.`,
+                NO_BUSINESS_ROLE: 'La cuenta fue vinculada sin asignarle un BusinessRole.',
+                USER_INACTIVE: 'La cuenta fue vinculada y permanece inactiva.',
+                PERSONAL_INACTIVE: 'La cuenta fue vinculada y el Personal permanece inactivo.'
+            };
+            warnings.forEach((warning) => {
+                notify.info(warningMessages[warning] || warning);
+            });
+            if (warnings.length === 0) {
                 notify.success('Cuenta vinculada correctamente.');
             }
         } catch (error) {
@@ -815,6 +853,9 @@ const GestionPersonal = () => {
                             </h2>
                             <p className="text-sm text-gray-600 mb-5">
                                 {accionSemantica.personal.nombre} {accionSemantica.personal.apellido}
+                            </p>
+                            <p className="text-sm p-3 mb-4 rounded-lg bg-amber-50 text-amber-800">
+                                {ACCIONES_SEMANTICAS[accionSemantica.tipo].descripcion}
                             </p>
                             <form onSubmit={ejecutarAccionSemantica} className="space-y-4">
                                 <div>

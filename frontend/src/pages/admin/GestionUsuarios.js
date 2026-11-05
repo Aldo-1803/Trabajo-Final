@@ -41,6 +41,12 @@ const ACCESS_MANAGEMENT_CAPABILITIES = new Set([
     'gestion.manage_personal'
 ]);
 
+const ACCOUNT_WARNING_MESSAGES = {
+    CLIENT_PROFILE_INACTIVE: 'La cuenta se reactivó, pero el perfil Cliente permanece inactivo.',
+    PREEXISTING_ACCESS_TOKENS_MAY_REGAIN_VALIDITY: 'Los access tokens emitidos antes de la baja pueden recuperar validez hasta vencer. Los refresh tokens pendientes fueron revocados.',
+    INCONSISTENT_BUSINESS_ROLES: 'La cuenta conserva múltiples BusinessRoles y requiere revisión.'
+};
+
 const buildRoleChangeWarnings = (summary, targetRole) => {
     if (!summary || !targetRole) return [];
 
@@ -208,8 +214,8 @@ const GestionUsuarios = () => {
         const desactivar = usuario.is_active;
         const accion = desactivar ? 'desactivar' : 'reactivar';
         const textoAccion = desactivar
-            ? 'La cuenta no podrá iniciar sesión, pero sus datos se conservarán.'
-            : 'La cuenta recuperará el acceso si su estado y perfiles son coherentes.';
+            ? 'Se desactivará sólo la cuenta. Los perfiles Cliente y Personal conservarán su estado.'
+            : 'Se reactivará sólo la cuenta. Los perfiles Cliente y Personal conservarán su estado.';
 
         const result = await Swal.fire({
             title: `¿${desactivar ? 'Desactivar' : 'Reactivar'} cuenta?`,
@@ -241,7 +247,7 @@ const GestionUsuarios = () => {
             const actionPath = desactivar
                 ? 'desactivar-cuenta'
                 : 'reactivar-cuenta';
-            await axios.post(
+            const response = await axios.post(
                 `http://127.0.0.1:8000/api/gestion/admin/usuarios/${userId}/${actionPath}/`,
                 { motivo: result.value.trim() },
                 { headers: { 'Authorization': `Bearer ${token}` } }
@@ -252,6 +258,14 @@ const GestionUsuarios = () => {
                     ? 'Cuenta desactivada correctamente.'
                     : 'Cuenta reactivada correctamente.'
             );
+            (response.data?.warnings || []).forEach((warning) => {
+                notify.info(ACCOUNT_WARNING_MESSAGES[warning] || warning);
+            });
+            if (response.data?.refresh_tokens_revoked > 0) {
+                notify.info(
+                    `Refresh tokens revocados: ${response.data.refresh_tokens_revoked}.`
+                );
+            }
         } catch (error) {
             const errorCode = error.response?.data?.error?.code;
             const errorMessages = {

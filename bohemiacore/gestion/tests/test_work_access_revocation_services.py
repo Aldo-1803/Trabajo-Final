@@ -15,8 +15,10 @@ from gestion.models import (
 from gestion.personal_access_services import (
     ClientProfileRequired,
     InactiveUserForWorkAccessRevocation,
+    InvalidWorkAccessState,
     PermissionDeniedForWorkAccessRevocation,
     PersonalHasNoUser,
+    SelfWorkAccessRevocationNotAllowed,
     WORK_ACCESS_REVOKED_KEEP_CLIENT_EVENT,
     WORK_ACCESS_REVOCATION_AUDIT_TABLE,
     WORK_ACCESS_REVOCATION_SOURCE,
@@ -137,17 +139,33 @@ class WorkAccessRevocationServiceTests(TestCase):
         self.assertEqual(result.previous_role, BusinessRole.PROFESIONAL)
         self.assert_final_client_state(personal, user)
 
-    def test_administrator_with_personal_is_revoked_to_client(self):
+    def test_administrator_is_rejected_without_implicit_demotion(self):
         personal, user, _ = self.create_linked_context(
             'administrator',
             BusinessRole.ADMINISTRADOR,
         )
 
-        result = self.revoke(personal)
+        with self.assertRaises(InvalidWorkAccessState):
+            self.revoke(personal)
 
-        self.assertTrue(result.changed)
-        self.assertEqual(result.previous_role, BusinessRole.ADMINISTRADOR)
-        self.assert_final_client_state(personal, user)
+        personal.refresh_from_db()
+        self.assertTrue(personal.activo)
+        self.assertEqual(
+            get_business_roles(user),
+            (BusinessRole.ADMINISTRADOR,),
+        )
+
+    def test_roleless_account_is_rejected_without_implicit_client_role(self):
+        user = self.create_user('revoke-roleless@test.com')
+        Cliente.objects.create(usuario=user)
+        personal = self.create_personal('roleless', usuario=user)
+
+        with self.assertRaises(InvalidWorkAccessState):
+            self.revoke(personal)
+
+        personal.refresh_from_db()
+        self.assertTrue(personal.activo)
+        self.assertEqual(get_business_roles(user), ())
 
     def test_inactive_personal_with_labor_role_completes_role_change(self):
         personal, user, _ = self.create_linked_context(
@@ -450,12 +468,12 @@ class WorkAccessRevocationServiceTests(TestCase):
         self.assertTrue(personal.activo)
         self.assertEqual(get_business_roles(user), (BusinessRole.EMPLEADO,))
 
-    def test_self_role_change_is_a_stable_conflict_and_rolls_back(self):
+    def test_self_revocation_is_forbidden_and_rolls_back(self):
         self.actor.groups.add(Group.objects.get(name=BusinessRole.EMPLEADO))
         Cliente.objects.create(usuario=self.actor, zona='Centro')
         personal = self.create_personal('self-target', usuario=self.actor)
 
-        with self.assertRaises(WorkAccessRevocationConflict):
+        with self.assertRaises(SelfWorkAccessRevocationNotAllowed):
             self.revoke(personal)
 
         personal.refresh_from_db()

@@ -465,7 +465,12 @@ describe('GestionPersonal access UI', () => {
 
     test('vincula con usuario_id y motivo, conserva CLIENTE y muestra advertencia', async () => {
         axios.post.mockResolvedValue({
-            data: { changed: true, usuario_id: 88, rol: 'CLIENTE' }
+            data: {
+                changed: true,
+                usuario_id: 88,
+                rol: 'CLIENTE',
+                warnings: ['BUSINESS_ROLE_INCOMPATIBLE']
+            }
         });
         await renderLoaded();
         const row = screen.getByText('Sin Acceso').closest('tr');
@@ -490,7 +495,7 @@ describe('GestionPersonal access UI', () => {
         expect(axios.post).toHaveBeenCalledTimes(1);
         await waitFor(() => {
             expect(notify.info).toHaveBeenCalledWith(
-                'La cuenta fue vinculada correctamente. El rol de acceso todavía es CLIENTE.'
+                'La cuenta fue vinculada, pero el rol CLIENTE no habilita acceso laboral.'
             );
         });
         expect(notify.success).not.toHaveBeenCalledWith(expect.stringContaining('rol'));

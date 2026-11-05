@@ -181,7 +181,7 @@ class WorkAccessRevocationActionTests(APITestCase):
         self.assertTrue(personal.activo)
         self.assertEqual(get_business_roles(user), (BusinessRole.EMPLEADO,))
 
-    def test_self_role_change_returns_stable_409_and_rolls_back(self):
+    def test_self_revocation_returns_stable_403_and_rolls_back(self):
         self.actor.groups.add(Group.objects.get(name=BusinessRole.EMPLEADO))
         Cliente.objects.create(usuario=self.actor, zona='Centro')
         personal = self.create_personal('self-target', usuario=self.actor)
@@ -189,10 +189,10 @@ class WorkAccessRevocationActionTests(APITestCase):
 
         response = self.post(personal.pk)
 
-        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(
             response.data['error']['code'],
-            'WORK_ACCESS_REVOCATION_CONFLICT',
+            'SELF_REVOCATION_NOT_ALLOWED',
         )
         personal.refresh_from_db()
         self.assertTrue(personal.activo)
@@ -276,6 +276,27 @@ class WorkAccessRevocationActionTests(APITestCase):
         self.assertSetEqual(
             set(get_business_roles(user)),
             {BusinessRole.CLIENTE, BusinessRole.EMPLEADO},
+        )
+
+    def test_administrator_returns_stable_409_without_demotion(self):
+        personal, user, _ = self.create_linked_context(
+            'administrator',
+            role=BusinessRole.ADMINISTRADOR,
+        )
+        self.authenticate()
+
+        response = self.post(personal.pk)
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(
+            response.data['error']['code'],
+            'INVALID_WORK_ACCESS_STATE',
+        )
+        personal.refresh_from_db()
+        self.assertTrue(personal.activo)
+        self.assertEqual(
+            get_business_roles(user),
+            (BusinessRole.ADMINISTRADOR,),
         )
 
     def test_invalid_reason_returns_stable_400(self):

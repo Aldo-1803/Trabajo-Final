@@ -110,6 +110,10 @@ class PersonalUserLinkActionTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['rol'], BusinessRole.CLIENTE)
+        self.assertIn(
+            'BUSINESS_ROLE_INCOMPATIBLE',
+            response.data['warnings'],
+        )
         self.assertEqual(get_business_roles(user), (BusinessRole.CLIENTE,))
 
     def test_inactive_user_remains_inactive(self):

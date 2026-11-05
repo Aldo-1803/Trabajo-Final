@@ -3,6 +3,11 @@ from dataclasses import dataclass
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from django.db import transaction
+from django.utils import timezone
+from rest_framework_simplejwt.token_blacklist.models import (
+    BlacklistedToken,
+    OutstandingToken,
+)
 
 from gestion.models import Auditoria
 from usuarios.access_read_services import (
@@ -171,6 +176,7 @@ class AccountDeactivationResult:
     current_active: bool
     current_role: str | None
     audit_id: int | None
+    refresh_tokens_revoked: int
     warnings: tuple[str, ...]
 
 
@@ -182,6 +188,7 @@ class AccountReactivationResult:
     current_active: bool
     current_role: str
     audit_id: int | None
+    refresh_tokens_revoked: int
     warnings: tuple[str, ...]
 
 
@@ -323,9 +330,13 @@ def reactivate_account(actor, target_user, reason):
             current_active=True,
             current_role=current_role,
             audit_id=None,
+            refresh_tokens_revoked=0,
             warnings=tuple(warnings),
         )
 
+    refresh_tokens_revoked = _blacklist_outstanding_refresh_tokens(
+        locked_target
+    )
     updated = user_model.objects.filter(
         pk=locked_target.pk,
         is_active=False,
@@ -336,7 +347,7 @@ def reactivate_account(actor, target_user, reason):
         )
 
     locked_target.is_active = True
-    warnings.append('PREEXISTING_TOKENS_MAY_REGAIN_VALIDITY')
+    warnings.append('PREEXISTING_ACCESS_TOKENS_MAY_REGAIN_VALIDITY')
     audit = Auditoria.objects.create(
         tabla=ACCOUNT_REACTIVATION_AUDIT_TABLE,
         registro_id=locked_target.pk,
@@ -356,6 +367,7 @@ def reactivate_account(actor, target_user, reason):
             'previous_active': previous_active,
             'current_active': True,
             'current_business_role': current_role,
+            'refresh_tokens_revoked': refresh_tokens_revoked,
             'reason': normalized_reason,
         },
     )
@@ -367,6 +379,7 @@ def reactivate_account(actor, target_user, reason):
         current_active=True,
         current_role=current_role,
         audit_id=audit.pk,
+        refresh_tokens_revoked=refresh_tokens_revoked,
         warnings=tuple(warnings),
     )
 
@@ -405,6 +418,7 @@ def deactivate_account(actor, target_user, reason):
             current_active=False,
             current_role=current_role,
             audit_id=None,
+            refresh_tokens_revoked=0,
             warnings=warnings,
         )
 
@@ -432,6 +446,9 @@ def deactivate_account(actor, target_user, reason):
         )
 
     locked_target.is_active = False
+    refresh_tokens_revoked = _blacklist_outstanding_refresh_tokens(
+        locked_target
+    )
     audit = Auditoria.objects.create(
         tabla=ACCOUNT_DEACTIVATION_AUDIT_TABLE,
         registro_id=locked_target.pk,
@@ -452,6 +469,7 @@ def deactivate_account(actor, target_user, reason):
             'current_active': False,
             'current_business_role': current_role,
             'business_roles': list(roles),
+            'refresh_tokens_revoked': refresh_tokens_revoked,
             'reason': normalized_reason,
         },
     )
@@ -463,8 +481,31 @@ def deactivate_account(actor, target_user, reason):
         current_active=False,
         current_role=current_role,
         audit_id=audit.pk,
+        refresh_tokens_revoked=refresh_tokens_revoked,
         warnings=warnings,
     )
+
+
+def _blacklist_outstanding_refresh_tokens(user):
+    """Blacklist every unexpired SimpleJWT refresh token known for a user."""
+    outstanding_tokens = (
+        OutstandingToken.objects.select_for_update()
+        .filter(
+            user=user,
+            expires_at__gt=timezone.now(),
+        )
+        .exclude(
+            pk__in=BlacklistedToken.objects.values('token_id')
+        )
+        .order_by('pk')
+    )
+    revoked = 0
+    for outstanding_token in outstanding_tokens:
+        _, created = BlacklistedToken.objects.get_or_create(
+            token=outstanding_token
+        )
+        revoked += int(created)
+    return revoked
 
 
 @transaction.atomic

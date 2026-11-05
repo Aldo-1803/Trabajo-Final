@@ -89,7 +89,7 @@ class AccountReactivationServiceTests(TestCase):
         self.assertEqual(client.zona, 'Centro')
         self.assertIn('CLIENT_PROFILE_INACTIVE', result.warnings)
         self.assertIn(
-            'PREEXISTING_TOKENS_MAY_REGAIN_VALIDITY',
+            'PREEXISTING_ACCESS_TOKENS_MAY_REGAIN_VALIDITY',
             result.warnings,
         )
 

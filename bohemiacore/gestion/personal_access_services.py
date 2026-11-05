@@ -228,6 +228,14 @@ class WorkAccessRevocationConflict(WorkAccessRevocationError):
     pass
 
 
+class InvalidWorkAccessState(WorkAccessRevocationError):
+    pass
+
+
+class SelfWorkAccessRevocationNotAllowed(WorkAccessRevocationError):
+    pass
+
+
 class FullWorkAccessRevocationError(Exception):
     pass
 
@@ -327,6 +335,7 @@ class FullWorkAccessRevocationResult:
     audit_id: int | None
     status_audit_id: int | None
     account_audit_id: int | None
+    refresh_tokens_revoked: int
     warnings: tuple[str, ...]
 
 
@@ -613,6 +622,7 @@ def revoke_work_access_and_disable_account(actor, personal, reason):
             audit_id=None,
             status_audit_id=None,
             account_audit_id=None,
+            refresh_tokens_revoked=0,
             warnings=account_result.warnings,
         )
 
@@ -647,6 +657,7 @@ def revoke_work_access_and_disable_account(actor, personal, reason):
                 status_result.audit_id if status_result is not None else None
             ),
             'account_audit_id': account_result.audit_id,
+            'refresh_tokens_revoked': account_result.refresh_tokens_revoked,
         },
     )
 
@@ -664,6 +675,7 @@ def revoke_work_access_and_disable_account(actor, personal, reason):
             status_result.audit_id if status_result is not None else None
         ),
         account_audit_id=account_result.audit_id,
+        refresh_tokens_revoked=account_result.refresh_tokens_revoked,
         warnings=account_result.warnings,
     )
 
@@ -716,6 +728,10 @@ def revoke_work_access_keep_client(actor, personal, reason):
         raise ProtectedSuperuser(
             'Superusers cannot be managed through work-access revocation.'
         )
+    if current_actor.pk == locked_user.pk:
+        raise SelfWorkAccessRevocationNotAllowed(
+            'Users cannot revoke their own work access.'
+        )
     if not locked_user.is_active:
         raise InactiveUserForWorkAccessRevocation(
             'An inactive user cannot retain client access.'
@@ -738,6 +754,15 @@ def revoke_work_access_keep_client(actor, personal, reason):
         )
 
     previous_role = get_business_role(locked_user)
+    allowed_current_roles = (
+        BusinessRole.CLIENTE,
+        BusinessRole.EMPLEADO,
+        BusinessRole.PROFESIONAL,
+    )
+    if previous_role not in allowed_current_roles:
+        raise InvalidWorkAccessState(
+            'Work-access revocation requires a labor role or CLIENTE.'
+        )
     previous_personal_active = locked_personal.activo
     personal_needs_change = previous_personal_active
     role_needs_change = previous_role != BusinessRole.CLIENTE
@@ -1358,6 +1383,8 @@ def _build_result(
         warnings.append('PERSONAL_INACTIVE')
     if business_role is None:
         warnings.append('NO_BUSINESS_ROLE')
+    elif business_role not in ALLOWED_PERSONAL_ACCESS_ROLES:
+        warnings.append('BUSINESS_ROLE_INCOMPATIBLE')
 
     return PersonalLinkResult(
         changed=changed,

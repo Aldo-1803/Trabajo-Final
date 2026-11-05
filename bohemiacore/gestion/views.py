@@ -237,6 +237,7 @@ from .personal_access_services import (
     InvalidPersonalLinkUser,
     InvalidPersonalStatusReason,
     InvalidTemporaryPassword,
+    InvalidWorkAccessState,
     InvalidWorkAccessRevocationReason,
     PermissionDeniedForPersonalLink,
     PermissionDeniedForPersonalBusinessRoleChange,
@@ -254,6 +255,7 @@ from .personal_access_services import (
     PersonalLinkConflict,
     PersonalStatusConflict,
     PersonalWithoutUserForRoleChange,
+    SelfWorkAccessRevocationNotAllowed,
     MultiplePersonalBusinessRoles,
     UserAlreadyLinkedToPersonal,
     create_access_for_personal,
@@ -1427,6 +1429,12 @@ class PersonalViewSet(viewsets.ModelViewSet):
                 'El Usuario protegido no puede gestionarse mediante esta acción.',
                 status.HTTP_403_FORBIDDEN,
             )
+        except SelfWorkAccessRevocationNotAllowed:
+            return self._link_error(
+                'SELF_REVOCATION_NOT_ALLOWED',
+                'No puede revocar su propio acceso laboral.',
+                status.HTTP_403_FORBIDDEN,
+            )
         except InvalidWorkAccessRevocationReason:
             return self._link_error(
                 'INVALID_REASON',
@@ -1461,6 +1469,12 @@ class PersonalViewSet(viewsets.ModelViewSet):
             return self._link_error(
                 'INCONSISTENT_BUSINESS_ROLES',
                 'El Usuario tiene múltiples roles de negocio.',
+                status.HTTP_409_CONFLICT,
+            )
+        except InvalidWorkAccessState:
+            return self._link_error(
+                'INVALID_WORK_ACCESS_STATE',
+                'La cuenta no tiene un rol laboral revocable.',
                 status.HTTP_409_CONFLICT,
             )
         except (WorkAccessRevocationConflict, PersonalStatusConflict):
@@ -1577,6 +1591,7 @@ class PersonalViewSet(viewsets.ModelViewSet):
             'usuario_activo_anterior': result.previous_user_active,
             'usuario_activo_actual': result.current_user_active,
             'rol_actual': result.current_role,
+            'refresh_tokens_revoked': result.refresh_tokens_revoked,
             'warnings': list(result.warnings),
         }, status=status.HTTP_200_OK)
 
@@ -3513,7 +3528,11 @@ class AdminUsuarioViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action == 'create':
             permission_classes = [AllowAny]
-        elif self.action == 'cambiar_rol_negocio':
+        elif self.action in [
+            'cambiar_rol_negocio',
+            'desactivar_cuenta',
+            'reactivar_cuenta',
+        ]:
             permission_classes = [IsAuthenticated]
         else:
             permission_classes = [IsAuthenticated, CanManageUsers]
@@ -3808,6 +3827,7 @@ class AdminUsuarioViewSet(viewsets.ModelViewSet):
             'usuario_activo_anterior': result.previous_active,
             'usuario_activo_actual': result.current_active,
             'rol_actual': result.current_role,
+            'refresh_tokens_revoked': result.refresh_tokens_revoked,
             'warnings': list(result.warnings),
         }, status=status.HTTP_200_OK)
 
@@ -3914,6 +3934,7 @@ class AdminUsuarioViewSet(viewsets.ModelViewSet):
             'usuario_activo_anterior': result.previous_active,
             'usuario_activo_actual': result.current_active,
             'rol_actual': result.current_role,
+            'refresh_tokens_revoked': result.refresh_tokens_revoked,
             'warnings': list(result.warnings),
         }, status=status.HTTP_200_OK)
 
