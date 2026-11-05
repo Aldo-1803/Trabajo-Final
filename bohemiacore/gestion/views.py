@@ -55,7 +55,8 @@ from .serializers import (
     TurnoCancellationCommandSerializer, TurnoClientRescheduleCommandSerializer,
     TurnoRescheduleCommandSerializer,
     RutinaSerializer, RutinaClienteSerializer,
-    RutinaClienteCreateSerializer, ReglaDiagnosticoSerializer, NotificacionSerializer, ProductoSerializer, ImagenProductoSerializer, EquipamientoSerializer,
+    RutinaClienteAssignCommandSerializer, RutinaClienteCreateSerializer,
+    ReglaDiagnosticoSerializer, NotificacionSerializer, ProductoSerializer, ImagenProductoSerializer, EquipamientoSerializer,
     UsuarioAccountStatusCommandSerializer,
     UsuarioAdminIdentityUpdateSerializer,
     UsuarioAdminReadSerializer, AgendaCuidadosSerializer,
@@ -122,6 +123,11 @@ from .permissions import (
     CanManagePromotions,
     CanManageProductsOrPrices,
     CanManageProductsAndPrices,
+    CanManagePricesOrFormulas,
+    CanManageTechnicalRecordWithSkill,
+    CanReadOwnedOrManageTechnicalRecord,
+    CanAssignRoutines,
+    IsActiveUser,
 )
 from .inventory_services import (
     StockConflict,
@@ -138,6 +144,12 @@ from .agenda_services import (
     AgendaBlockInvalid,
     AgendaBlockPermissionDenied,
     create_agenda_block,
+)
+from .routine_services import (
+    RoutineAssignmentConflict,
+    RoutineAssignmentInvalid,
+    assign_routine_copy,
+    ensure_internal_routine_assignment,
 )
 from .order_inventory_services import (
     OrderInventoryError,
@@ -1757,9 +1769,15 @@ class ServicioViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         # La gestión de precios usa permiso efectivo; la lectura pública ve activos.
-        if (
-            self.request.user.is_authenticated
-            and self.request.user.has_perm(BusinessPermission.MANAGE_PRICES)
+        user = self.request.user
+        can_manage_formulas = bool(
+            user.is_authenticated
+            and user.has_perm(BusinessPermission.MANAGE_FORMULAS)
+            and user_has_active_skill(user, DIAGNOSIS_SKILL_CODE)
+        )
+        if user.is_authenticated and (
+            user.has_perm(BusinessPermission.MANAGE_PRICES)
+            or can_manage_formulas
         ):
             return Servicio.objects.all().order_by('nombre')
         else:
@@ -1769,6 +1787,8 @@ class ServicioViewSet(viewsets.ModelViewSet):
         """Lectura pública; toda escritura requiere manage_prices efectivo."""
         if self.action in ['list', 'retrieve']:
             permission_classes = [AllowAny]
+        elif self.action in ['update', 'partial_update']:
+            permission_classes = [IsAuthenticated, CanManagePricesOrFormulas]
         else:
             permission_classes = [IsAuthenticated, CanManagePrices]
         return [permission() for permission in permission_classes]
@@ -2825,21 +2845,10 @@ class TurnoViewSet(viewsets.ModelViewSet):
 
                 # B. Si la regla tiene una RUTINA asociada, se la asignamos automáticamente
                 if regla.rutina:
-                    # Verificamos si ya la tiene activa para no duplicar
-                    if not RutinaCliente.objects.filter(
-                        cliente=turno.cliente, 
-                        rutina_original=regla.rutina, 
-                        estado='activa'
-                    ).exists():
-                        RutinaCliente.objects.create(
-                            cliente=turno.cliente,
-                            rutina_original=regla.rutina,
-                            nombre=regla.rutina.nombre,
-                            objetivo=regla.rutina.objetivo,
-                            archivo=regla.rutina.archivo,
-                            version_asignada=regla.rutina.version,
-                            estado='activa'
-                        )
+                    ensure_internal_routine_assignment(
+                        cliente=turno.cliente,
+                        rutina=regla.rutina,
+                    )
 
         # 4. LÓGICA P3: Programación de Retoque (Marketing Inteligente)
         # Crea promociones diferidas para sugerir retoques en el momento ideal
@@ -3085,6 +3094,50 @@ class AdminDashboardStatsView(APIView):
 # VIEWSETS PARA RUTINAS
 # ============================================
 
+
+def _select_owned_routine(request):
+    cliente = getattr(request.user, 'cliente', None)
+    if (
+        not getattr(request.user, 'is_active', False)
+        or cliente is None
+        or not cliente.activo
+    ):
+        raise PermissionDenied(
+            'Se requiere un perfil de Cliente activo para seleccionar Rutinas.'
+        )
+
+    command = RutinaClienteCreateSerializer(data=request.data)
+    command.is_valid(raise_exception=True)
+    try:
+        assignment, _ = assign_routine_copy(
+            cliente_id=cliente.pk,
+            rutina_id=command.validated_data['rutina_id'],
+        )
+    except RoutineAssignmentInvalid as exc:
+        status_code = (
+            status.HTTP_404_NOT_FOUND
+            if exc.code == 'ROUTINE_NOT_FOUND'
+            else status.HTTP_400_BAD_REQUEST
+        )
+        return Response(
+            {'error': {'code': exc.code, 'detail': exc.detail}},
+            status=status_code,
+        )
+    except RoutineAssignmentConflict as exc:
+        return Response(
+            {'error': {'code': exc.code, 'detail': exc.detail}},
+            status=status.HTTP_409_CONFLICT,
+        )
+
+    return Response(
+        {
+            'mensaje': f"Rutina '{assignment.nombre}' agregada exitosamente",
+            'rutina_cliente_id': assignment.pk,
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+
 class RutinaViewSet(viewsets.ModelViewSet):
     """
     ViewSet para gestionar Rutinas (catálogo de rutinas disponibles).
@@ -3099,25 +3152,35 @@ class RutinaViewSet(viewsets.ModelViewSet):
     search_fields = ['nombre', 'descripcion']
     ordering_fields = ['nombre']
     
+    ADMIN_ACTIONS = {
+        'create',
+        'update',
+        'partial_update',
+        'destroy',
+        'publicar',
+        'obsoletar',
+        'notificar_actualizacion',
+        'usuarios_usando',
+    }
+
     def get_queryset(self):
-        """
-        - Admins ven todas las rutinas
-        - Clientes solo ven las publicadas
-        """
-        if self.request.user.is_staff:
+        if self.request.user.has_perm(BusinessPermission.ASSIGN_ROUTINES):
             return Rutina.objects.all()
-        else:
-            return Rutina.objects.filter(estado='publicada')
+        return Rutina.objects.filter(estado='publicada')
     
     def get_permissions(self):
         """
         - list, retrieve, seleccionar: Clientes autenticados
         - create, update, destroy: Solo staff
         """
-        if self.action in ['list', 'retrieve', 'seleccionar']:
-            permission_classes = [IsAuthenticated]
+        if self.action in self.ADMIN_ACTIONS:
+            permission_classes = [
+                IsAuthenticated,
+                IsActiveUser,
+                CanAssignRoutines,
+            ]
         else:
-            permission_classes = [IsAdminUser]
+            permission_classes = [IsAuthenticated, IsActiveUser]
         return [permission() for permission in permission_classes]
     
     def destroy(self, request, *args, **kwargs):
@@ -3134,7 +3197,7 @@ class RutinaViewSet(viewsets.ModelViewSet):
 
         if tiene_clientes:
             # --- CAMINO ALTERNATIVO: MARCAR OBSOLETA ---
-            rutina.estado = 'OBSOLETA' 
+            rutina.estado = 'obsoleta'
             rutina.save()
             
             # --- NOTIFICACIÓN MASIVA ---
@@ -3173,7 +3236,7 @@ class RutinaViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_204_NO_CONTENT
             )
     
-    @action(detail=True, methods=['post'], permission_classes=[IsAdminUser])
+    @action(detail=True, methods=['post'])
     def publicar(self, request, pk=None):
         """
         Endpoint para PUBLICAR una rutina (cambiar estado a 'publicada').
@@ -3185,7 +3248,7 @@ class RutinaViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(rutina)
         return Response(serializer.data, status=status.HTTP_200_OK)
     
-    @action(detail=True, methods=['post'], permission_classes=[IsAdminUser])
+    @action(detail=True, methods=['post'])
     def obsoletar(self, request, pk=None):
         """
         Endpoint para MARCAR COMO OBSOLETA una rutina.
@@ -3199,7 +3262,7 @@ class RutinaViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(rutina)
         return Response(serializer.data, status=status.HTTP_200_OK)
     
-    @action(detail=True, methods=['post'], permission_classes=[IsAdminUser])
+    @action(detail=True, methods=['post'])
     def notificar_actualizacion(self, request, pk=None):
         """
         Endpoint para NOTIFICAR a los clientes sobre actualización.
@@ -3215,7 +3278,7 @@ class RutinaViewSet(viewsets.ModelViewSet):
             status=status.HTTP_200_OK
         )
     
-    @action(detail=True, methods=['get'], permission_classes=[IsAdminUser])
+    @action(detail=True, methods=['get'])
     def usuarios_usando(self, request, pk=None):
         """
         Endpoint para obtener detalles de usuarios usando una rutina.
@@ -3254,72 +3317,10 @@ class RutinaViewSet(viewsets.ModelViewSet):
         POST /api/gestion/rutinas/seleccionar/
         Body: {"rutina_id": 1}
         """
-        rutina_id = request.data.get('rutina_id')
-        
-        if not rutina_id:
-            return Response(
-                {"error": "ID de rutina requerido"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        try:
-            # Obtener la rutina
-            rutina = Rutina.objects.get(id=rutina_id)
-            
-            # Validar que el usuario tenga perfil de cliente
-            if not hasattr(request.user, 'cliente'):
-                return Response(
-                    {"error": "El usuario no es un cliente"},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-            
-            cliente = request.user.cliente
-            
-            # Crear la copia de la rutina para el cliente con todos los datos necesarios
-            rutina_cliente = RutinaCliente.objects.create(
-                cliente=cliente,
-                rutina_original=rutina,
-                nombre=rutina.nombre,
-                objetivo=rutina.objetivo,
-                descripcion=rutina.descripcion,
-                archivo=rutina.archivo,  # ✅ AGREGADO: Copiar el archivo
-                version_asignada=rutina.version
-            )
-            
-            # Copiar los pasos de la rutina original
-            """
-            for paso_original in rutina.pasos.all():
-                PasoRutinaCliente.objects.create(
-                    rutina_cliente=rutina_cliente,
-                    orden=paso_original.orden,
-                    descripcion=paso_original.descripcion,
-                    frecuencia=paso_original.frecuencia
-                
-            """
-
-            
-            return Response(
-                {
-                    "mensaje": f"Rutina '{rutina.nombre}' agregada exitosamente a Mis Rutinas",
-                    "rutina_cliente_id": rutina_cliente.id
-                },
-                status=status.HTTP_201_CREATED
-            )
-            
-        except Rutina.DoesNotExist:
-            return Response(
-                {"error": "La rutina no existe"},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        except Exception as e:
-            print(f"ERROR en seleccionar rutina: {str(e)}")
-            return Response(
-                {"error": f"Error al agregar la rutina: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+        return _select_owned_routine(request)
 
 
-class RutinaClienteViewSet(viewsets.ReadOnlyModelViewSet):
+class RutinaClienteViewSet(viewsets.ModelViewSet):
     """
     ViewSet para gestionar las COPIAS de rutinas asignadas a clientes.
     - Clientes: Ven solo sus propias rutinas
@@ -3333,13 +3334,17 @@ class RutinaClienteViewSet(viewsets.ReadOnlyModelViewSet):
         - Clientes ven solo sus rutinas
         - Admins ven todas
         """
-        if self.request.user.is_staff:
+        if self.request.user.has_perm(BusinessPermission.ASSIGN_ROUTINES):
             return RutinaCliente.objects.all()
-        else:
-            try:
-                return RutinaCliente.objects.filter(cliente=self.request.user.cliente)
-            except:
-                return RutinaCliente.objects.none()
+        cliente = getattr(self.request.user, 'cliente', None)
+        if cliente is not None and cliente.activo:
+            return RutinaCliente.objects.filter(cliente=cliente)
+        return RutinaCliente.objects.none()
+
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return RutinaClienteAssignCommandSerializer
+        return RutinaClienteSerializer
     
     def get_permissions(self):
         """
@@ -3347,18 +3352,46 @@ class RutinaClienteViewSet(viewsets.ReadOnlyModelViewSet):
         - update, destroy: Usuarios autenticados (solo sus propias rutinas)
         - create: No permitido (se crean automáticamente)
         """
-        if self.action in ['list', 'retrieve', 'destroy']:
-            permission_classes = [IsAuthenticated]
+        if self.action == 'create':
+            permission_classes = [
+                IsAuthenticated,
+                IsActiveUser,
+                CanAssignRoutines,
+            ]
         else:
-            permission_classes = [IsAdminUser]
+            permission_classes = [IsAuthenticated, IsActiveUser]
         return [permission() for permission in permission_classes]
     
     def create(self, request, *args, **kwargs):
-        """Desabilita creación manual."""
+        command = self.get_serializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        try:
+            assignment, _ = assign_routine_copy(
+                **command.validated_data,
+            )
+        except RoutineAssignmentInvalid as exc:
+            return Response(
+                {'error': {'code': exc.code, 'detail': exc.detail}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except RoutineAssignmentConflict as exc:
+            return Response(
+                {'error': {'code': exc.code, 'detail': exc.detail}},
+                status=status.HTTP_409_CONFLICT,
+            )
         return Response(
-            {'error': 'Use POST /rutinas/seleccionar/ para asignar rutinas'},
-            status=status.HTTP_405_METHOD_NOT_ALLOWED
+            RutinaClienteSerializer(
+                assignment,
+                context=self.get_serializer_context(),
+            ).data,
+            status=status.HTTP_201_CREATED,
         )
+
+    def update(self, request, *args, **kwargs):
+        raise MethodNotAllowed(request.method)
+
+    def partial_update(self, request, *args, **kwargs):
+        raise MethodNotAllowed(request.method)
     
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def actualizar_desde_original(self, request, pk=None):
@@ -3369,13 +3402,6 @@ class RutinaClienteViewSet(viewsets.ReadOnlyModelViewSet):
         El cliente usa esto cuando recibe notificación de actualización.
         """
         rutina_cliente = self.get_object()
-        
-        # Verificar que el cliente es el dueño
-        if rutina_cliente.cliente.usuario != request.user and not request.user.is_staff:
-            return Response(
-                {'error': 'No tienes permiso'},
-                status=status.HTTP_403_FORBIDDEN
-            )
         
         if not rutina_cliente.rutina_original:
             return Response(
@@ -3394,13 +3420,6 @@ class RutinaClienteViewSet(viewsets.ReadOnlyModelViewSet):
         DELETE /api/gestion/rutinas-cliente/{id}/
         """
         rutina_cliente = self.get_object()
-        
-        # Verificar que el usuario es el dueño de la rutina o es admin
-        if rutina_cliente.cliente.usuario != request.user and not request.user.is_staff:
-            return Response(
-                {'error': 'No tienes permiso para eliminar esta rutina'},
-                status=status.HTTP_403_FORBIDDEN
-            )
         
         rutina_cliente.delete()
         return Response(
@@ -3524,54 +3543,10 @@ class ReglaDiagnosticoViewSet(viewsets.ModelViewSet):
 class SeleccionarRutinaView(APIView):
     # 2. FORZAR AUTENTICACIÓN JWT (Esto arregla el conflicto con cookies/CSRF)
     authentication_classes = [JWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsActiveUser]
 
     def post(self, request):
-        # Debug para ver en la consola negra quién está entrando
-        print(f"DEBUG AUTH: Usuario detectado -> {request.user}")
-        print(f"DEBUG AUTH: Autenticación usada -> {request.auth}")
-
-        usuario = request.user
-        
-        # Validación de seguridad: ¿Tiene perfil de cliente?
-        if not hasattr(usuario, 'cliente'):
-             return Response(
-                 {"error": "El usuario no es un cliente."}, 
-                 status=status.HTTP_403_FORBIDDEN
-             )
-
-        rutina_id = request.data.get('rutina_id')
-        if not rutina_id:
-            return Response({"error": "Falta el ID de la rutina"}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            # 3. LÓGICA DE GUARDADO
-            rutina = Rutina.objects.get(id=rutina_id)
-            cliente = usuario.cliente
-            
-            # --- ADVERTENCIA DE MODELO ---
-            # En tus archivos models.py NO vi un campo 'rutinas' en Cliente.
-            # Solo vi 'historial_servicios'. 
-            # Si creaste un campo nuevo ManyToMany para rutinas, úsalo aquí:
-            if hasattr(cliente, 'rutinas'):
-                cliente.rutinas.add(rutina)
-            elif hasattr(cliente, 'rutinas_guardadas'):
-                 cliente.rutinas_guardadas.add(rutina)
-            else:
-                # Si no tienes el campo, esto fallará. 
-                # Para la demo de hoy, puedes simular el éxito o imprimirlo:
-                print(f"DEBUG: Simulando guardado de Rutina {rutina.nombre} para {usuario.email}")
-            
-            return Response(
-                {"mensaje": f"Rutina '{rutina.nombre}' agregada a tus favoritos"}, 
-                status=status.HTTP_200_OK
-            )
-
-        except Rutina.DoesNotExist:
-            return Response({"error": "La rutina no existe"}, status=status.HTTP_404_NOT_FOUND)
-        except Exception as e:
-            print(f"ERROR: {str(e)}")
-            return Response({"error": "Error interno del servidor"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return _select_owned_routine(request)
         
 
 # ----------------------------------------------------
@@ -4760,11 +4735,42 @@ def obtener_disponibilidad_calendario(request):
 class FichaTecnicaViewSet(viewsets.ModelViewSet):
     """
     ViewSet para gestionar fichas técnicas de servicios realizados.
-    Solo el personal técnico (is_staff) puede crear/editar fichas.
+    Clientes leen únicamente las propias. El Personal asignado requiere
+    permiso efectivo de ficha técnica y habilidad DIAGNOSTICO activa.
     """
-    queryset = FichaTecnica.objects.all()
+    queryset = FichaTecnica.objects.select_related(
+        'detalle_turno__turno__cliente__usuario',
+        'detalle_turno__turno__profesional__usuario',
+        'detalle_turno__servicio',
+        'profesional_autor',
+        'rutina_recomendada',
+    )
     serializer_class = FichaTecnicaSerializer
-    permission_classes = [IsAuthenticated, IsAdminUser]
+    permission_classes = [IsAuthenticated]
+
+    READ_ACTIONS = {
+        'list',
+        'retrieve',
+        'por_turno',
+        'por_cliente',
+        'mis_fichas',
+    }
+    WRITE_ACTIONS = {'create', 'update', 'partial_update'}
+
+    def get_permissions(self):
+        if self.action in self.READ_ACTIONS:
+            permission_classes = [
+                IsAuthenticated,
+                CanReadOwnedOrManageTechnicalRecord,
+            ]
+        elif self.action in self.WRITE_ACTIONS:
+            permission_classes = [
+                IsAuthenticated,
+                CanManageTechnicalRecordWithSkill,
+            ]
+        else:
+            permission_classes = [IsAuthenticated]
+        return [permission() for permission in permission_classes]
     
     def get_queryset(self):
         """
@@ -4772,16 +4778,24 @@ class FichaTecnicaViewSet(viewsets.ModelViewSet):
         - Admins ven todas las fichas
         - Staff solo ve sus propias fichas redactadas
         """
+        queryset = super().get_queryset()
         user = self.request.user
-        if user.is_superuser:
-            return FichaTecnica.objects.all()
-        elif user.is_staff:
-            return FichaTecnica.objects.filter(profesional_autor=user)
-        else:
-            # No staff no puede ver fichas (la permission_classes lo bloquea igual)
-            return FichaTecnica.objects.none()
+        cliente = getattr(user, 'cliente', None)
+        if cliente is not None and cliente.activo:
+            return queryset.filter(detalle_turno__turno__cliente=cliente)
+
+        personal = getattr(user, 'perfil_profesional', None)
+        if personal is None or not personal.activo:
+            return queryset.none()
+        return queryset.filter(
+            Q(profesional_autor=user)
+            | Q(detalle_turno__turno__profesional=personal)
+        ).distinct()
+
+    def destroy(self, request, *args, **kwargs):
+        raise MethodNotAllowed(request.method)
     
-    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated, IsAdminUser])
+    @action(detail=False, methods=['get'])
     def por_turno(self, request):
         """
         GET /fichas-tecnicas/por-turno/?turno_id=123
@@ -4796,7 +4810,23 @@ class FichaTecnicaViewSet(viewsets.ModelViewSet):
         
         try:
             turno = Turno.objects.get(id=turno_id)
-            fichas = FichaTecnica.objects.filter(detalle_turno__turno=turno)
+            cliente = getattr(request.user, 'cliente', None)
+            personal = getattr(request.user, 'perfil_profesional', None)
+            if cliente is not None and turno.cliente_id != cliente.pk:
+                raise PermissionDenied(
+                    'No puede consultar fichas de Turnos de otro Cliente.'
+                )
+            if (
+                cliente is None
+                and (
+                    personal is None
+                    or turno.profesional_id != personal.pk
+                )
+            ):
+                raise PermissionDenied(
+                    'No puede consultar fichas de Turnos ajenos.'
+                )
+            fichas = self.get_queryset().filter(detalle_turno__turno=turno)
             serializer = self.get_serializer(fichas, many=True)
             return Response(serializer.data)
         except Turno.DoesNotExist:
@@ -4805,7 +4835,7 @@ class FichaTecnicaViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated, IsAdminUser])
+    @action(detail=False, methods=['get'])
     def por_cliente(self, request):
         """
         GET /fichas-tecnicas/por_cliente/?cliente_id=123
@@ -4818,17 +4848,24 @@ class FichaTecnicaViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        fichas = FichaTecnica.objects.filter(detalle_turno__turno__cliente_id=cliente_id).order_by('-fecha_registro')
+        own_client = getattr(request.user, 'cliente', None)
+        if own_client is not None and str(own_client.pk) != str(cliente_id):
+            raise PermissionDenied(
+                'No puede consultar fichas de otro Cliente.'
+            )
+        fichas = self.get_queryset().filter(
+            detalle_turno__turno__cliente_id=cliente_id
+        ).order_by('-fecha_registro')
         serializer = self.get_serializer(fichas, many=True)
         return Response(serializer.data)
     
-    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated, IsAdminUser])
+    @action(detail=False, methods=['get'])
     def mis_fichas(self, request):
         """
         GET /fichas-tecnicas/mis_fichas/
         Obtiene todas las fichas técnicas creadas por el usuario autenticado (profesional).
         """
-        fichas = FichaTecnica.objects.filter(profesional_autor=request.user)
+        fichas = self.get_queryset()
         serializer = self.get_serializer(fichas, many=True)
         return Response(serializer.data)
 
@@ -5102,14 +5139,9 @@ class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
         # 1. Asignar Rutina
         rutina_cliente = None
         if rutina_final:
-            rutina_cliente = RutinaCliente.objects.create(
+            rutina_cliente, _ = ensure_internal_routine_assignment(
                 cliente=diagnostico.cliente,
-                rutina_original=rutina_final,
-                nombre=rutina_final.nombre,
-                objetivo=rutina_final.objetivo,
-                archivo=rutina_final.archivo,
-                version_asignada=rutina_final.version,
-                estado='activa'
+                rutina=rutina_final,
             )
             print(f"\n✅ DEBUG: RutinaCliente creada (ID: {rutina_cliente.id})")
 

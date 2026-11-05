@@ -1357,17 +1357,11 @@ class Rutina(models.Model):
 
     def asignar_a_cliente(self, cliente):
         """Crea una copia de esta rutina para el cliente."""
-        if self.estado != 'publicada':
-            raise ValueError(f"La rutina no está publicada.")
+        from .routine_services import assign_routine_copy
 
-        rutina_cliente = RutinaCliente.objects.create(
-            cliente=cliente,
-            rutina_original=self,
-            nombre=self.nombre,
-            objetivo=self.objetivo,
-            archivo=self.archivo,
-            version_asignada=self.version,
-            estado='activa'
+        rutina_cliente, _ = assign_routine_copy(
+            cliente_id=cliente.pk,
+            rutina_id=self.pk,
         )
         return rutina_cliente
 

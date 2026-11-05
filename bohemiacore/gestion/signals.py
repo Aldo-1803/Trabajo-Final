@@ -6,6 +6,7 @@ from .models import Turno, ReglaCuidado, AgendaCuidados, RutinaCliente, Producto
 from usuarios.models import Usuario
 from .models import Notificacion
 from .middleware import get_current_user, get_current_request
+from .routine_services import ensure_internal_routine_assignment
 import json
 
 # Cache para almacenar valores anteriores en pre_save
@@ -474,16 +475,9 @@ def automatizacion_post_servicio(sender, instance, created, **kwargs):
                 print(f"   📘 Asignando Rutina: {rutina.nombre}")
                 
                 # 1. Crear RutinaCliente (copia personalizada para el cliente)
-                rutina_cliente, created = RutinaCliente.objects.get_or_create(
+                rutina_cliente, created = ensure_internal_routine_assignment(
                     cliente=cliente,
-                    rutina_original=rutina,
-                    defaults={
-                        'nombre': rutina.nombre,
-                        'objetivo': rutina.objetivo,
-                        'descripcion': rutina.descripcion,
-                        'version_asignada': 1,  # Versión inicial
-                        'estado': 'activa'
-                    }
+                    rutina=rutina,
                 )
                 
                 if created:

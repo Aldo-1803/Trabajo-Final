@@ -2,8 +2,12 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { confirmarAccion, notify } from '../../utils/notificaciones';
+import { useSession } from '../../context/SessionContext';
 
 const GestionarServicios = () => {
+    const { hasPermission } = useSession();
+    const canManagePrices = hasPermission('gestion.manage_prices');
+    const canManageFormulas = hasPermission('gestion.manage_formulas');
     const [servicios, setServicios] = useState([]);
     const [categorias, setCategorias] = useState([]);
     
@@ -224,18 +228,23 @@ const GestionarServicios = () => {
             const token = localStorage.getItem('access_token');
             const config = { headers: { 'Authorization': `Bearer ${token}` } };
             
-            const payload = {
-                nombre: formData.nombre,
-                descripcion: formData.descripcion,
-                precio_base: formData.precio_base,
-                duracion_estimada: formData.duracion_estimada || null,
-                categoria: formData.categoria ? parseInt(formData.categoria) : null,
-                rutina_recomendada: formData.rutina_recomendada ? parseInt(formData.rutina_recomendada) : null,
-                impacto_porosidad: formData.impacto_porosidad ? parseInt(formData.impacto_porosidad) : null,
-                impacto_estado: formData.impacto_estado ? parseInt(formData.impacto_estado) : null,
-                plantilla_formula: formulaToString(formData.plantilla_formula),
-                activo: formData.activo
-            };
+            const payload = {};
+            if (canManagePrices) {
+                Object.assign(payload, {
+                    nombre: formData.nombre,
+                    descripcion: formData.descripcion,
+                    precio_base: formData.precio_base,
+                    duracion_estimada: formData.duracion_estimada || null,
+                    categoria: formData.categoria ? parseInt(formData.categoria) : null,
+                    rutina_recomendada: formData.rutina_recomendada ? parseInt(formData.rutina_recomendada) : null,
+                    impacto_porosidad: formData.impacto_porosidad ? parseInt(formData.impacto_porosidad) : null,
+                    impacto_estado: formData.impacto_estado ? parseInt(formData.impacto_estado) : null,
+                    activo: formData.activo
+                });
+            }
+            if (canManageFormulas) {
+                payload.plantilla_formula = formulaToString(formData.plantilla_formula);
+            }
 
             let servicioId = editingId;
 
@@ -245,6 +254,7 @@ const GestionarServicios = () => {
                 
                 // Eliminar requisitos anteriores (opcional - no bloquea si falla)
                 try {
+                    if (!canManagePrices) throw new Error('Sin gestión de precios');
                     const resRequisitos = await axios.get(`http://127.0.0.1:8000/api/gestion/requisitos-servicio/?servicio_id=${editingId}`, config);
                     
                     // Manejar respuesta con o sin paginación
@@ -269,7 +279,7 @@ const GestionarServicios = () => {
             }
 
             // Guardar requisitos de equipamiento (opcional - no bloquea si no hay o falla)
-            if (formData.requisitos_equipamiento && Array.isArray(formData.requisitos_equipamiento) && formData.requisitos_equipamiento.length > 0) {
+            if (canManagePrices && formData.requisitos_equipamiento && Array.isArray(formData.requisitos_equipamiento) && formData.requisitos_equipamiento.length > 0) {
                 const requisitosFiltrados = formData.requisitos_equipamiento
                     .filter(req => {
                         // Validar que tenga tipo_equipamiento válido
@@ -361,7 +371,7 @@ const GestionarServicios = () => {
                         <p style={{ color: '#8B8682' }}>Define precios, rutinas automáticas e impacto en el cabello.</p>
                     </div>
                     <div className="flex gap-2">
-                        <button 
+                        {canManagePrices && <button
                             onClick={() => {
                                 resetForm();
                                 setShowModal(true);
@@ -372,7 +382,7 @@ const GestionarServicios = () => {
                             onMouseLeave={(e) => e.target.style.backgroundColor = '#AB9A91'}
                         >
                             + Nuevo Servicio
-                        </button>
+                        </button>}
                         <button onClick={() => navigate('/admin-dashboard')} className="font-bold transition" style={{ color: '#817773' }} onMouseEnter={(e) => e.target.style.color = '#AB9A91'} onMouseLeave={(e) => e.target.style.color = '#817773'}>
                             ← Volver
                         </button>
@@ -470,7 +480,7 @@ const GestionarServicios = () => {
                             </div>
 
                             {/* Plantilla de Fórmula */}
-                            <div className="md:col-span-2">
+                            {canManageFormulas && <div className="md:col-span-2">
                                 <label className="block text-sm font-bold mb-3" style={{ color: '#817773' }}>Plantilla de Fórmula</label>
                                 
                                 {/* Rubios */}
@@ -697,7 +707,7 @@ const GestionarServicios = () => {
                                         </div>
                                     </div>
                                 </div>
-                            </div>
+                            </div>}
 
                             {/* Requisitos de Equipamiento */}
                             <div className="md:col-span-2">
@@ -926,7 +936,7 @@ const GestionarServicios = () => {
                                     >
                                         Editar
                                     </button>
-                                    <button 
+                                    {canManagePrices && <button
                                         onClick={() => toggleActive(servicio)}
                                         className="flex-1 md:flex-none px-4 py-2 rounded-lg font-bold text-sm text-white transition"
                                         style={{ backgroundColor: servicio.activo ? '#AB9A91' : '#2E7D2E' }}
@@ -934,8 +944,8 @@ const GestionarServicios = () => {
                                         onMouseLeave={(e) => e.target.style.backgroundColor = servicio.activo ? '#AB9A91' : '#2E7D2E'}
                                     >
                                         {servicio.activo ? 'Desactivar' : 'Activar'}
-                                    </button>
-                                    <button 
+                                    </button>}
+                                    {canManagePrices && <button
                                         onClick={() => handleDelete(servicio.id)}
                                         className="flex-1 md:flex-none px-4 py-2 rounded-lg font-bold text-sm text-white transition"
                                         style={{ backgroundColor: '#AB9A91' }}
@@ -943,7 +953,7 @@ const GestionarServicios = () => {
                                         onMouseLeave={(e) => e.target.style.backgroundColor = '#AB9A91'}
                                     >
                                         Eliminar
-                                    </button>
+                                    </button>}
                                 </div>
                             </div>
                         ))

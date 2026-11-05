@@ -5,6 +5,13 @@ from usuarios.roles import BusinessPermission
 from .technical_skill_access import DIAGNOSIS_SKILL_CODE, user_has_active_skill
 
 
+class IsActiveUser(BasePermission):
+    message = 'La cuenta debe estar activa.'
+
+    def has_permission(self, request, view):
+        return bool(getattr(request.user, 'is_active', False))
+
+
 class CanViewGlobalAgenda(BasePermission):
     message = 'No tiene permisos para consultar la agenda global.'
 
@@ -140,6 +147,65 @@ class CanReadOwnedOrManageDiagnosis(BasePermission):
         return (
             user.has_perm(BusinessPermission.MANAGE_TECHNICAL_RECORD)
             and user_has_active_skill(user, DIAGNOSIS_SKILL_CODE)
+        )
+
+
+class CanReadOwnedOrManageTechnicalRecord(BasePermission):
+    message = 'No tiene permisos para consultar fichas técnicas.'
+
+    def has_permission(self, request, view):
+        user = request.user
+        if not getattr(user, 'is_active', False):
+            return False
+        cliente = getattr(user, 'cliente', None)
+        if cliente is not None:
+            return bool(cliente.activo)
+        return bool(
+            user.has_perm(BusinessPermission.MANAGE_TECHNICAL_RECORD)
+            and user_has_active_skill(user, DIAGNOSIS_SKILL_CODE)
+        )
+
+
+class CanManageTechnicalRecordWithSkill(BasePermission):
+    message = (
+        'Se requiere permiso de ficha técnica, Personal activo y la habilidad '
+        'DIAGNOSTICO activa.'
+    )
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            getattr(user, 'is_active', False)
+            and user.has_perm(BusinessPermission.MANAGE_TECHNICAL_RECORD)
+            and user_has_active_skill(user, DIAGNOSIS_SKILL_CODE)
+        )
+
+
+class CanManagePricesOrFormulas(BasePermission):
+    message = 'No tiene permisos para modificar precios ni fórmulas.'
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            getattr(user, 'is_active', False)
+            and (
+                user.has_perm(BusinessPermission.MANAGE_PRICES)
+                or (
+                    user.has_perm(BusinessPermission.MANAGE_FORMULAS)
+                    and user_has_active_skill(user, DIAGNOSIS_SKILL_CODE)
+                )
+            )
+        )
+
+
+class CanAssignRoutines(BasePermission):
+    message = 'No tiene permisos para administrar o asignar rutinas.'
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            getattr(user, 'is_active', False)
+            and user.has_perm(BusinessPermission.ASSIGN_ROUTINES)
         )
 
 

@@ -27,6 +27,8 @@ from datetime import datetime
 from django.db import transaction
 from django.utils import timezone
 
+from .technical_skill_access import DIAGNOSIS_SKILL_CODE, user_has_active_skill
+
 # 1. EL SERIALIZER BASE (El "Molde")
 # Define los campos que TODOS los catálogos compartirán
 class CatalogoBaseSerializer(serializers.ModelSerializer):
@@ -85,6 +87,43 @@ class ServicioSerializer(serializers.ModelSerializer):
         """Retorna los requisitos de equipamiento para este servicio"""
         requisitos = obj.requisitos_equipamiento.all()
         return RequisitoServicioSerializer(requisitos, many=True).data
+
+    def to_representation(self, instance):
+        representation = super().to_representation(instance)
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        can_read_formula = bool(
+            user is not None
+            and user.has_perm(BusinessPermission.MANAGE_FORMULAS)
+            and user_has_active_skill(user, DIAGNOSIS_SKILL_CODE)
+        )
+        if not can_read_formula:
+            representation.pop('plantilla_formula', None)
+        return representation
+
+    def validate(self, attrs):
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        if user is None:
+            return attrs
+
+        formula_changed = 'plantilla_formula' in attrs
+        other_fields_changed = bool(set(attrs) - {'plantilla_formula'})
+        can_manage_formulas = bool(
+            user.has_perm(BusinessPermission.MANAGE_FORMULAS)
+            and user_has_active_skill(user, DIAGNOSIS_SKILL_CODE)
+        )
+        if formula_changed and not can_manage_formulas:
+            raise PermissionDenied(
+                'No tiene permisos técnicos para modificar fórmulas.'
+            )
+        if other_fields_changed and not user.has_perm(
+            BusinessPermission.MANAGE_PRICES
+        ):
+            raise PermissionDenied(
+                'No tiene permisos para modificar el catálogo de Servicios.'
+            )
+        return attrs
    
 class DetalleTurnoSerializer(serializers.ModelSerializer):
     servicio_nombre = serializers.CharField(source='servicio.nombre', read_only=True)
@@ -107,6 +146,19 @@ class DetalleTurnoSerializer(serializers.ModelSerializer):
             'servicio_impacto_porosidad', 'servicio_impacto_porosidad_nombre',
             'servicio_impacto_estado', 'servicio_impacto_estado_nombre'
         ]
+
+    def to_representation(self, instance):
+        representation = super().to_representation(instance)
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        can_read_formula = bool(
+            user is not None
+            and user.has_perm(BusinessPermission.MANAGE_FORMULAS)
+            and user_has_active_skill(user, DIAGNOSIS_SKILL_CODE)
+        )
+        if not can_read_formula:
+            representation.pop('servicio_plantilla_formula', None)
+        return representation
 
 
 class DetalleTurnoClienteReadSerializer(serializers.ModelSerializer):
@@ -397,26 +449,62 @@ class FichaTecnicaSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             'id', 'fecha_registro', 'detalle_turno_id', 'servicio_nombre', 
-            'servicio_id', 'profesional_nombre', 'formula_base_servicio',
+            'servicio_id', 'profesional_autor', 'profesional_nombre',
+            'formula_base_servicio',
             'cliente_id', 'cliente_nombre', 'turno_id', 'turno_fecha', 'turno_hora',
             'porosidad_final_nombre', 'estado_general_final_nombre',
             'rutina_recomendada_nombre'
         ]
+
+    def to_representation(self, instance):
+        representation = super().to_representation(instance)
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        if getattr(user, 'cliente', None) is not None:
+            representation.pop('formula', None)
+            representation.pop('formula_base_servicio', None)
+        return representation
     
     def validate(self, data):
-        # 1. Validar que el usuario sea Staff/Profesional
         user = self.context['request'].user
-        if not user.is_staff:
-            raise serializers.ValidationError("Solo el personal técnico puede registrar fórmulas.")
+        detalle = data.get(
+            'detalle_turno',
+            getattr(self.instance, 'detalle_turno', None),
+        )
+
+        if self.instance is not None and 'detalle_turno' in data:
+            if data['detalle_turno'].pk != self.instance.detalle_turno_id:
+                raise serializers.ValidationError({
+                    'detalle_turno': [
+                        'El Detalle de Turno no puede modificarse.'
+                    ]
+                })
+
+        personal = getattr(user, 'perfil_profesional', None)
+        if (
+            personal is None
+            or not personal.activo
+            or detalle is None
+            or detalle.turno.profesional_id != personal.pk
+        ):
+            raise PermissionDenied(
+                'Sólo el Personal asignado al Turno puede gestionar su ficha.'
+            )
+
+        if 'formula' in data and not user.has_perm(
+            BusinessPermission.MANAGE_FORMULAS
+        ):
+            raise PermissionDenied(
+                'No tiene permisos para modificar fórmulas.'
+            )
         
-        detalle = data.get('detalle_turno')
-        
-        # 2. Validación: Solo se puede crear ficha si el turno está 'confirmado' o 'en_proceso'
         if detalle.turno.estado not in ['confirmado', 'en_proceso']:
             raise serializers.ValidationError("No se puede registrar una ficha para un turno que no ha sido iniciado o confirmado.")
         
-        # 3. Validar que el DetalleTurno no tenga ya una ficha (OneToOneField)
-        if FichaTecnica.objects.filter(detalle_turno=detalle).exists():
+        if (
+            self.instance is None
+            and FichaTecnica.objects.filter(detalle_turno=detalle).exists()
+        ):
             raise serializers.ValidationError("Este servicio ya tiene una ficha técnica registrada.")
             
         return data
@@ -488,32 +576,39 @@ class RutinaClienteCreateSerializer(serializers.Serializer):
     """
     Serializer ESPECÍFICO para que el cliente seleccione una rutina del catálogo.
     """
-    rutina_id = serializers.IntegerField(help_text="ID de la rutina a asignar")
-    
-    def validate_rutina_id(self, value):
-        """Valida que la rutina exista y pueda asignarse."""
-        try:
-            rutina = Rutina.objects.get(id=value)
-        except Rutina.DoesNotExist:
-            raise serializers.ValidationError("La rutina no existe.")
-        
-        if not rutina.puede_asignarse():
-            raise serializers.ValidationError(
-                f"La rutina no puede asignarse en estado '{rutina.get_estado_display()}'."
-            )
-        
-        return value
-    
-    def create(self, validated_data):
-        """
-        Crea una copia de la rutina para el cliente.
-        El cliente se obtiene de la request en la view.
-        """
-        rutina_id = validated_data['rutina_id']
-        rutina = Rutina.objects.get(id=rutina_id)
-        cliente = self.context['cliente']  # Se pasa desde la view
-        
-        return rutina.asignar_a_cliente(cliente)
+    WRITABLE_FIELDS = {'rutina_id'}
+
+    rutina_id = serializers.IntegerField(
+        min_value=1,
+        help_text="ID de la rutina a asignar",
+    )
+
+    def to_internal_value(self, data):
+        if hasattr(data, 'keys'):
+            forbidden = set(data.keys()) - self.WRITABLE_FIELDS
+            if forbidden:
+                raise serializers.ValidationError({
+                    field: ['Este campo no está permitido.']
+                    for field in sorted(forbidden)
+                })
+        return super().to_internal_value(data)
+
+
+class RutinaClienteAssignCommandSerializer(serializers.Serializer):
+    WRITABLE_FIELDS = {'cliente_id', 'rutina_id'}
+
+    cliente_id = serializers.IntegerField(min_value=1)
+    rutina_id = serializers.IntegerField(min_value=1)
+
+    def to_internal_value(self, data):
+        if hasattr(data, 'keys'):
+            forbidden = set(data.keys()) - self.WRITABLE_FIELDS
+            if forbidden:
+                raise serializers.ValidationError({
+                    field: ['Este campo no está permitido.']
+                    for field in sorted(forbidden)
+                })
+        return super().to_internal_value(data)
 
 
 class PersonalSerializer(serializers.ModelSerializer):
