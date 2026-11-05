@@ -89,6 +89,17 @@ class CanManageTechnicalRiskPolicy(BasePermission):
         )
 
 
+class CanManageConfiguration(BasePermission):
+    message = 'No tiene permisos para administrar la configuración.'
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            getattr(user, 'is_active', False)
+            and user.has_perm(BusinessPermission.MANAGE_CONFIGURATION)
+        )
+
+
 class CanReviewTechnicalBooking(BasePermission):
     message = (
         'Se requiere permiso de revisión técnica, Personal activo y la '

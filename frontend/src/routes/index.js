@@ -135,7 +135,7 @@ export const AppRoutes = () => {
                 <Route path={ADMIN_ROUTES.CLIENTES} element={<ProtectedRoute requiredPermission="usuarios.view_clients"><GestionClientes /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.NUEVO_CLIENTE} element={<ProtectedRoute requiredPermission="usuarios.create_walkin_client"><NuevoCliente /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.PERSONAL} element={<ProtectedRoute requiredAnyPermission={['gestion.manage_personal', 'gestion.manage_skills']}><GestionPersonal /></ProtectedRoute>} />
-                <Route path={ADMIN_ROUTES.EQUIPAMIENTO} element={<ProtectedRoute><GestionEquipamiento /></ProtectedRoute>} />
+                <Route path={ADMIN_ROUTES.EQUIPAMIENTO} element={<ProtectedRoute requiredPermission="gestion.manage_configuration"><GestionEquipamiento /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.AGENDA} element={<ProtectedRoute requiredPermission="gestion.view_global_agenda"><AgendaAdmin /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.CONFIGURACION} element={<ProtectedRoute requiredPermission="gestion.manage_configuration"><ConfiguracionAdmin /></ProtectedRoute>} />
 

@@ -109,6 +109,7 @@ from .permissions import (
     CanReprogramAnyTurno,
     CanViewGlobalAgenda,
     CanManagePersonal,
+    CanManageConfiguration,
     CanManageSkills,
     CanManageTechnicalRiskPolicy,
     CanReviewTechnicalBooking,
@@ -583,31 +584,96 @@ class CueroCabelludoView(CatalogoBaseListView):
 class EstadoGeneralView(CatalogoBaseListView):
     queryset = EstadoGeneral.objects.all()
     serializer_class = EstadoGeneralSerializer
-class TipoCabelloViewSet(viewsets.ModelViewSet):
+
+
+class PublicReadManageConfigurationMixin:
+    """Preserva lectura pública y protege toda operación no lectora."""
+
+    def get_permissions(self):
+        permission_classes = (
+            [AllowAny]
+            if self.action in {'list', 'retrieve'}
+            else [IsAuthenticated, CanManageConfiguration]
+        )
+        return [permission() for permission in permission_classes]
+
+
+class AuthenticatedReadManageConfigurationMixin:
+    """Mantiene lectura autenticada y exige autoridad efectiva al escribir."""
+
+    authenticated_read_actions = {'list', 'retrieve'}
+
+    def get_permissions(self):
+        permission_classes = (
+            [IsAuthenticated]
+            if self.action in self.authenticated_read_actions
+            else [IsAuthenticated, CanManageConfiguration]
+        )
+        return [permission() for permission in permission_classes]
+
+
+class SoftDeleteActiveMixin:
+    """Desactiva catálogos para preservar referencias históricas."""
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        instance.activo = False
+        instance.save(update_fields=['activo'])
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class TipoCabelloViewSet(
+    PublicReadManageConfigurationMixin,
+    SoftDeleteActiveMixin,
+    viewsets.ModelViewSet,
+):
     queryset = TipoCabello.objects.all()
     serializer_class = TipoCabelloSerializer
-    permission_classes = [AllowAny]
-class GrosorCabelloViewSet(viewsets.ModelViewSet):
+
+
+class GrosorCabelloViewSet(
+    PublicReadManageConfigurationMixin,
+    SoftDeleteActiveMixin,
+    viewsets.ModelViewSet,
+):
     queryset = GrosorCabello.objects.all()
     serializer_class = GrosorCabelloSerializer
-    permission_classes = [AllowAny]
-class PorosidadCabelloViewSet(viewsets.ModelViewSet):
+
+
+class PorosidadCabelloViewSet(
+    PublicReadManageConfigurationMixin,
+    SoftDeleteActiveMixin,
+    viewsets.ModelViewSet,
+):
     queryset = PorosidadCabello.objects.all()
     serializer_class = PorosidadCabelloSerializer
-    permission_classes = [AllowAny]
-class CueroCabelludoViewSet(viewsets.ModelViewSet):
+
+
+class CueroCabelludoViewSet(
+    PublicReadManageConfigurationMixin,
+    SoftDeleteActiveMixin,
+    viewsets.ModelViewSet,
+):
     queryset = CueroCabelludo.objects.all()
     serializer_class = CueroCabelludoSerializer
-    permission_classes = [AllowAny]
-class EstadoGeneralViewSet(viewsets.ModelViewSet):
+
+
+class EstadoGeneralViewSet(
+    PublicReadManageConfigurationMixin,
+    SoftDeleteActiveMixin,
+    viewsets.ModelViewSet,
+):
     queryset = EstadoGeneral.objects.all()
     serializer_class = EstadoGeneralSerializer
-    permission_classes = [AllowAny]
 
-class CategoriaServicioViewSet(viewsets.ModelViewSet):
+
+class CategoriaServicioViewSet(
+    PublicReadManageConfigurationMixin,
+    SoftDeleteActiveMixin,
+    viewsets.ModelViewSet,
+):
     queryset = CategoriaServicio.objects.all()
     serializer_class = CategoriaServicioSerializer
-    permission_classes = [AllowAny]
 
 class ServicioViewSet(viewsets.ModelViewSet):
     """
@@ -4287,7 +4353,10 @@ class StockMovementCommandViewSet(
 # ----------------------------------------------------
 # D. CRUD TIPO EQUIPAMIENTO
 # ----------------------------------------------------
-class TipoEquipamientoViewSet(viewsets.ModelViewSet):
+class TipoEquipamientoViewSet(
+    AuthenticatedReadManageConfigurationMixin,
+    viewsets.ModelViewSet,
+):
     """
     ViewSet para tipos de equipamiento.
     
@@ -4296,7 +4365,6 @@ class TipoEquipamientoViewSet(viewsets.ModelViewSet):
     - CLIENTES: Solo ven tipos con equipamiento activo (para seleccionar en servicios)
     """
     serializer_class = TipoEquipamientoSerializer
-    permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = TipoEquipamientoFilter
     search_fields = ['nombre']
@@ -4306,8 +4374,8 @@ class TipoEquipamientoViewSet(viewsets.ModelViewSet):
         """
         Lógica inteligente de filtrado según el rol del usuario.
         """
-        # ADMINS/STAFF: Devolver todos los tipos (necesitan crearlos y gestionarlos)
-        if self.request.user.is_staff:
+        # Gestores efectivos ven todos los tipos, incluso los aún no utilizados.
+        if self.request.user.has_perm(BusinessPermission.MANAGE_CONFIGURATION):
             return TipoEquipamiento.objects.all().order_by('nombre')
         
         # CLIENTES NORMALES: Solo tipos con equipamiento activo
@@ -4321,14 +4389,33 @@ class TipoEquipamientoViewSet(viewsets.ModelViewSet):
         logger.info(f"TiposEquipamiento disponibles para servicios: {queryset.count()}")
         
         return queryset
-        
-        return queryset
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if instance.recursos.exists() or instance.servicios_requeridos.exists():
+            return Response(
+                {
+                    'error': {
+                        'code': 'EQUIPMENT_TYPE_IN_USE',
+                        'detail': (
+                            'No se puede eliminar un tipo de equipamiento '
+                            'referenciado por equipos o servicios.'
+                        ),
+                    }
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+        return super().destroy(request, *args, **kwargs)
 
 
 # ----------------------------------------------------
 # E. CRUD EQUIPAMIENTO
 # ----------------------------------------------------
-class EquipamientoViewSet(viewsets.ModelViewSet):
+class EquipamientoViewSet(
+    AuthenticatedReadManageConfigurationMixin,
+    viewsets.ModelViewSet,
+):
+    authenticated_read_actions = {'list', 'retrieve', 'opciones'}
     queryset = Equipamiento.objects.filter(is_active=True) # Solo mostramos los activos
     serializer_class = EquipamientoSerializer
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
@@ -4351,7 +4438,10 @@ class EquipamientoViewSet(viewsets.ModelViewSet):
     def opciones(self, request):
         """Endpoint para que el Front arme los desplegables dinámicamente"""
         return Response({
-            "tipos": [{"id": key, "label": value} for key, value in Equipamiento.TipoRecurso.choices],
+            "tipos": [
+                {"id": item.pk, "label": item.nombre}
+                for item in TipoEquipamiento.objects.order_by('nombre')
+            ],
             "estados": [{"id": key, "label": value} for key, value in Equipamiento.EstadoRecurso.choices],
         })
 
