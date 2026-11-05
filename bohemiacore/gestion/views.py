@@ -60,6 +60,7 @@ from .serializers import (
     UsuarioAdminIdentityUpdateSerializer,
     UsuarioAdminReadSerializer, AgendaCuidadosSerializer,
     UsuarioBusinessRoleChangeCommandSerializer,
+    AgendaBlockCreateCommandSerializer,
     HorarioLaboralSerializer, BloqueoAgendaSerializer, PersonalSerializer,
     HabilidadSerializer, PersonalHabilidadSerializer,
     PersonalSkillDirectorySerializer,
@@ -131,6 +132,12 @@ from .inventory_services import (
     adjust_stock,
     correct_stock_movement,
     receive_stock,
+)
+from .agenda_services import (
+    AgendaBlockConflict,
+    AgendaBlockInvalid,
+    AgendaBlockPermissionDenied,
+    create_agenda_block,
 )
 from .order_inventory_services import (
     OrderInventoryError,
@@ -4528,25 +4535,78 @@ class HorarioLaboralViewSet(viewsets.ModelViewSet):
             return Response({"error": str(e)}, status=500)
 
 
+def _owned_active_personal(user):
+    personal = getattr(user, 'perfil_profesional', None)
+    if (
+        not getattr(user, 'is_active', False)
+        or personal is None
+        or not personal.activo
+    ):
+        return None
+    return personal
+
+
+def _resolve_legacy_agenda_scope(request, *, allow_global_scope):
+    user = request.user
+    owned_personal = _owned_active_personal(user)
+    can_view_global = bool(
+        getattr(user, 'is_active', False)
+        and user.has_perm(BusinessPermission.VIEW_GLOBAL_AGENDA)
+    )
+    raw_personal_id = request.query_params.get('personal_id')
+
+    if raw_personal_id not in (None, ''):
+        try:
+            personal_id = int(raw_personal_id)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError({
+                'personal_id': 'Debe ser un identificador entero válido.'
+            }) from exc
+        if personal_id < 1:
+            raise ValidationError({
+                'personal_id': 'Debe ser un identificador positivo.'
+            })
+
+        if not can_view_global:
+            if owned_personal is None or owned_personal.pk != personal_id:
+                raise PermissionDenied(
+                    'No tiene permisos para consultar la agenda solicitada.'
+                )
+            return owned_personal
+
+        personal = (
+            Personal.objects.select_related('usuario')
+            .filter(pk=personal_id, activo=True)
+            .filter(Q(usuario__isnull=True) | Q(usuario__is_active=True))
+            .first()
+        )
+        if personal is None:
+            raise Http404('No se encontró Personal activo.')
+        return personal
+
+    if owned_personal is not None:
+        return owned_personal
+    if can_view_global and allow_global_scope:
+        return None
+    if can_view_global:
+        raise ValidationError({
+            'personal_id': 'Este parámetro es obligatorio para la agenda general.'
+        })
+    raise PermissionDenied('No tiene permisos para consultar esta agenda.')
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def obtener_agenda_general(request):
     """
     Devuelve la configuración base, horarios y bloqueos para un profesional específico.
-    Query params: ?personal_id=1 (opcional, si no viene usa el primer profesional activo)
+    Query params: ?personal_id=1. Un Personal activo puede omitirlo para
+    consultar únicamente su propia agenda.
     """
-    # 1. Obtenemos el personal (ahora pasamos el ID por parámetro para que sea flexible)
-    # Si no viene ID, buscamos al primer profesional activo
-    personal_id = request.query_params.get('personal_id')
-    
-    if personal_id:
-        personal = Personal.objects.filter(id=personal_id).first()
-    else:
-        # Fallback: buscamos el primer profesional
-        personal = Personal.objects.filter(activo=True).first()
-
-    if not personal:
-        return Response({"error": "No se encontró personal disponible"}, status=404)
+    personal = _resolve_legacy_agenda_scope(
+        request,
+        allow_global_scope=False,
+    )
 
     # 2. Obtenemos la Regla (Horarios Base)
     horarios = HorarioLaboral.objects.filter(personal=personal, activo=True)
@@ -4576,94 +4636,47 @@ def obtener_agenda_general(request):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAuthenticated, CanManageConfiguration])
 def crear_bloqueo(request):
+    command = AgendaBlockCreateCommandSerializer(data=request.data)
+    command.is_valid(raise_exception=True)
+    data = command.validated_data
+
     try:
-        # 1. Identificamos a Yanina (Colorista)
-        personal = Personal.objects.filter(rol='colorista', activo=True).first()
-        if not personal:
-            return Response({"error": "No existe personal colorista activo"}, status=400)
-
-        data = request.data
-        
-        # Convertimos los strings ISO que vienen del React a objetos Datetime
-        # Formato esperado: "2025-12-07T09:00:00"
-        bloqueo_inicio = parse_datetime(data.get('fecha_inicio'))
-        bloqueo_fin = parse_datetime(data.get('fecha_fin'))
-
-        if not bloqueo_inicio or not bloqueo_fin:
-            return Response({"error": "Fechas inválidas"}, status=400)
-
-        # ------------------------------------------------------------------
-        # VALIDACIÓN DE CONFLICTOS (Excepción C.U. Paso 5)
-        # ------------------------------------------------------------------
-        
-        # A. Filtramos primero por FECHA para no traer toda la base de datos
-        # Traemos turnos que ocurran en los días involucrados en el bloqueo
-        turnos_candidatos = Turno.objects.filter(
-            fecha__range=[bloqueo_inicio.date(), bloqueo_fin.date()],
-            estado__in=[
-                Turno.Estado.SOLICITADO,
-                Turno.Estado.ESPERANDO_SENA,
-                Turno.Estado.CONFIRMADO,
-                Turno.Estado.SUGERIDO
-            ]
+        block = create_agenda_block(
+            actor=request.user,
+            personal_id=data['personal_id'],
+            starts_at=data['fecha_inicio'],
+            ends_at=data['fecha_fin'],
+            reason=data['motivo'],
+            blocks_all_day=data['bloquea_todo_el_dia'],
+        )
+    except AgendaBlockPermissionDenied as exc:
+        raise PermissionDenied(exc.detail) from exc
+    except AgendaBlockInvalid as exc:
+        return Response(
+            {'error': {'code': exc.code, 'detail': exc.detail, 'field': exc.field}},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    except AgendaBlockConflict as exc:
+        return Response(
+            {
+                'error': exc.code,
+                'mensaje': exc.detail,
+                'instruccion': 'Resuelva el conflicto antes de crear el bloqueo.',
+                'turnos_afectados': list(exc.conflicts),
+            },
+            status=status.HTTP_409_CONFLICT,
         )
 
-        conflictos = []
-
-        # B. Validación fina de HORARIOS (Memoria)
-        # Como Turno tiene fecha y hora separadas, las combinamos para comparar
-        for turno in turnos_candidatos:
-            # Crear datetime del inicio del turno
-            turno_inicio_dt = datetime.combine(turno.fecha, turno.hora_inicio)
-            # Crear datetime del fin del turno
-            turno_fin_dt = datetime.combine(turno.fecha, turno.hora_fin_calculada)
-            
-            # Hacemos los datetimes "aware" (con zona horaria) si Django lo usa
-            if timezone.is_aware(bloqueo_inicio):
-                turno_inicio_dt = timezone.make_aware(turno_inicio_dt)
-                turno_fin_dt = timezone.make_aware(turno_fin_dt)
-
-            # C. Fórmula de Solapamiento de Rangos:
-            # (StartA < EndB) and (EndA > StartB)
-            if (turno_inicio_dt < bloqueo_fin) and (turno_fin_dt > bloqueo_inicio):
-                # Obtener servicios desde detalles
-                servicios = [d.servicio.nombre for d in turno.detalles.all()]
-                servicios_str = ', '.join(servicios) if servicios else 'Sin servicios'
-                
-                conflictos.append({
-                    "cliente": f"{turno.cliente.nombre} {turno.cliente.apellido}",
-                    "fecha": turno.fecha.strftime('%d/%m'),
-                    "hora": f"{turno.hora_inicio.strftime('%H:%M')} - {turno.hora_fin_calculada.strftime('%H:%M')}",
-                    "servicios": servicios_str
-                })
-
-        # D. Si encontramos conflictos, BLOQUEAMOS el guardado
-        if conflictos:
-            return Response({
-                "error": "CONFLICTO_AGENDA",
-                "mensaje": "No se puede bloquear porque existen turnos activos en ese horario.",
-                "instruccion": "Debes reprogramar o cancelar los siguientes turnos manualmente:",
-                "turnos_afectados": conflictos
-            }, status=409) # 409 Conflict
-
-        # ------------------------------------------------------------------
-        # Si pasa la validación, GUARDAMOS
-        # ------------------------------------------------------------------
-        serializer = BloqueoAgendaSerializer(data=data)
-        if serializer.is_valid():
-            serializer.save(personal=personal)
-            return Response(serializer.data, status=201)
-        
-        return Response(serializer.errors, status=400)
-
-    except Exception as e:
-        return Response({"error": str(e)}, status=500)
+    return Response(
+        BloqueoAgendaSerializer(block).data,
+        status=status.HTTP_201_CREATED,
+    )
 
 
 @api_view(['GET'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def obtener_disponibilidad_calendario(request):
     """
     Cruza Reglas (HorarioLaboral) + Excepciones (BloqueoAgenda) para mostrar disponibilidad en calendario.
@@ -4681,34 +4694,41 @@ def obtener_disponibilidad_calendario(request):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # 1. Traer todas las reglas activas (HorarioLaboral)
-        # Filtramos por profesional si se proporciona
+        personal = _resolve_legacy_agenda_scope(
+            request,
+            allow_global_scope=True,
+        )
+
+        # 1. Traer las reglas activas dentro del alcance autorizado.
         reglas = HorarioLaboral.objects.filter(activo=True)
+        if personal is not None:
+            reglas = reglas.filter(personal=personal)
         
-        personal_id = request.query_params.get('personal_id')
-        if personal_id:
-            reglas = reglas.filter(personal_id=personal_id)
-        
-        # 2. Traer bloqueos del mes especificado
-        # Buscamos bloqueos que se sobrepongan con cualquier día del mes
-        from datetime import date, timedelta
-        
-        primer_dia = date(anio, mes, 1)
+        # 2. Traer bloqueos que se superponen con el mes solicitado.
+        primer_dia = timezone.make_aware(
+            datetime(anio, mes, 1),
+            timezone.get_current_timezone(),
+        )
         if mes == 12:
-            ultimo_dia = date(anio + 1, 1, 1) - timedelta(days=1)
+            siguiente_mes = timezone.make_aware(
+                datetime(anio + 1, 1, 1),
+                timezone.get_current_timezone(),
+            )
         else:
-            ultimo_dia = date(anio, mes + 1, 1) - timedelta(days=1)
+            siguiente_mes = timezone.make_aware(
+                datetime(anio, mes + 1, 1),
+                timezone.get_current_timezone(),
+            )
         
         bloqueos = BloqueoAgenda.objects.filter(
-            fecha_inicio__lte=ultimo_dia,
-            fecha_fin__gte=primer_dia
+            fecha_inicio__lt=siguiente_mes,
+            fecha_fin__gt=primer_dia,
         )
         
-        # Filtrar por personal si se proporciona
-        if personal_id:
-            from django.db.models import Q
+        # Limitar a bloqueos propios/globales cuando no hay scope global.
+        if personal is not None:
             bloqueos = bloqueos.filter(
-                Q(personal_id=personal_id) | Q(personal__isnull=True)
+                Q(personal=personal) | Q(personal__isnull=True)
             )
         
         # 3. Serializar y retornar
@@ -4719,6 +4739,8 @@ def obtener_disponibilidad_calendario(request):
             "bloqueos": BloqueoAgendaSerializer(bloqueos, many=True).data
         }, status=status.HTTP_200_OK)
     
+    except (PermissionDenied, ValidationError, Http404):
+        raise
     except ValueError:
         return Response(
             {"error": "Los parámetros mes y anio deben ser números enteros"},

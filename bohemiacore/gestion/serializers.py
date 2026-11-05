@@ -1228,6 +1228,46 @@ class BloqueoAgendaSerializer(serializers.ModelSerializer):
         return data
 
 
+class AgendaBlockCreateCommandSerializer(serializers.Serializer):
+    WRITABLE_FIELDS = {
+        'personal_id',
+        'fecha_inicio',
+        'fecha_fin',
+        'motivo',
+        'bloquea_todo_el_dia',
+    }
+
+    personal_id = serializers.IntegerField(min_value=1)
+    fecha_inicio = serializers.DateTimeField()
+    fecha_fin = serializers.DateTimeField()
+    motivo = serializers.CharField(max_length=200, allow_blank=False)
+    bloquea_todo_el_dia = serializers.BooleanField(default=False)
+
+    def to_internal_value(self, data):
+        if hasattr(data, 'keys'):
+            forbidden_fields = set(data.keys()) - self.WRITABLE_FIELDS
+            if forbidden_fields:
+                raise serializers.ValidationError({
+                    field: ['Este campo no está permitido.']
+                    for field in sorted(forbidden_fields)
+                })
+        return super().to_internal_value(data)
+
+    def validate(self, attrs):
+        if attrs['fecha_fin'] <= attrs['fecha_inicio']:
+            raise serializers.ValidationError({
+                'fecha_fin': [
+                    'La fecha de fin debe ser posterior a la fecha de inicio.'
+                ]
+            })
+        attrs['motivo'] = attrs['motivo'].strip()
+        if not attrs['motivo']:
+            raise serializers.ValidationError({
+                'motivo': ['El motivo no puede estar vacío.']
+            })
+        return attrs
+
+
 class RequisitoServicioSerializer(serializers.ModelSerializer):
     """
     Serializer para la tabla intermedia RequisitoServicio.
