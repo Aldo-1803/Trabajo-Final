@@ -656,6 +656,7 @@ class ManualPaymentPermissionAndApiTests(ManualPaymentFixtureMixin, TestCase):
                 'es_sena': False,
             },
             format='json',
+            HTTP_IDEMPOTENCY_KEY='legacy-api-b2-payment',
         )
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)

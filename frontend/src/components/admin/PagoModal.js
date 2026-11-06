@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import { notify } from '../../utils/notificaciones';
 
@@ -21,6 +21,7 @@ const PagoModal = ({
     const [comprobante, setComprobante] = useState(null);
     const [esSena, setEsSena] = useState(false);
     const [procesando, setProcesando] = useState(false);
+    const idempotencyKey = useRef('');
 
     const saldoPendiente = useMemo(() => {
         if (!origen || !origen.total) return null;
@@ -31,6 +32,8 @@ const PagoModal = ({
 
     useEffect(() => {
         if (!isOpen) return;
+        idempotencyKey.current = globalThis.crypto?.randomUUID?.()
+            || `order-payment-${Date.now()}-${Math.random().toString(16).slice(2)}`;
         if (defaultMetodoPago) {
             setMetodoPago(defaultMetodoPago);
         } else {
@@ -89,7 +92,8 @@ const PagoModal = ({
             const response = await axios.post(endpoint, formData, {
                 headers: {
                     'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'multipart/form-data'
+                    'Content-Type': 'multipart/form-data',
+                    'Idempotency-Key': idempotencyKey.current
                 }
             });
             notify.success('Pago registrado correctamente.');

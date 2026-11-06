@@ -225,6 +225,13 @@ from .manual_payment_services import (
     reconcile_manual_payment,
     register_manual_payment,
 )
+from .legacy_order_payment_services import (
+    LegacyOrderPaymentConflict,
+    LegacyOrderPaymentError,
+    LegacyOrderPaymentNotFound,
+    LegacyOrderPaymentPermissionDenied,
+    register_legacy_order_payment,
+)
 from .turno_arrival_services import (
     InvalidTurnoArrivalTransition,
     PermissionDeniedForTurnoArrival,
@@ -6906,45 +6913,49 @@ class OrdenCompraViewSet(viewsets.ModelViewSet):
 
         Permite al profesional registrar un pago asociado a la orden.
         """
-        if not request.user.has_perm(BusinessPermission.REGISTER_PAYMENT):
-            raise PermissionDenied("No tienes permisos para registrar pagos.")
-
-        try:
-            orden = OrdenCompra.objects.get(pk=pk)
-        except OrdenCompra.DoesNotExist:
-            raise Http404
         command = LegacyOrderPaymentCommandSerializer(data=request.data)
         command.is_valid(raise_exception=True)
-        now = database_now()
         values = command.validated_data
-        pago = Pago.objects.create(
-            orden=orden,
-            turno=None,
-            payment_intent=None,
-            monto=values['monto'],
-            currency='ARS',
-            metodo_pago=values['metodo_pago'],
-            purpose=(
-                Pago.Purpose.CONFIRMATION
-                if values['es_sena']
-                else Pago.Purpose.BALANCE
-            ),
-            status=Pago.Status.RECONCILED,
-            fecha_pago=values['fecha_pago'],
-            recorded_at=now,
-            recorded_by=request.user,
-            reconciled_at=now,
-            reconciled_by=request.user,
-            comprobante_foto=values.get('comprobante_foto'),
-            es_sena=values['es_sena'],
-        )
+        try:
+            result = register_legacy_order_payment(
+                order_id=pk,
+                amount=values['monto'],
+                method=values['metodo_pago'],
+                occurred_at=values['fecha_pago'],
+                receipt=values.get('comprobante_foto'),
+                is_deposit=values['es_sena'],
+                idempotency_key=request.headers.get('Idempotency-Key', ''),
+                actor=request.user,
+            )
+        except LegacyOrderPaymentPermissionDenied:
+            raise PermissionDenied('No tienes permisos para registrar pagos.')
+        except LegacyOrderPaymentNotFound:
+            raise Http404
+        except LegacyOrderPaymentError as exc:
+            response_status = (
+                status.HTTP_409_CONFLICT
+                if isinstance(exc, LegacyOrderPaymentConflict)
+                else status.HTTP_400_BAD_REQUEST
+            )
+            return Response(
+                {exc.field: [exc.detail], 'code': exc.code},
+                status=response_status,
+            )
 
         return Response(
             {
                 'status': 'Pago registrado',
-                'pago': PagoSerializer(pago, context={'request': request}).data
+                'created': result.created,
+                'pago': PagoSerializer(
+                    result.payment,
+                    context={'request': request},
+                ).data,
             },
-            status=status.HTTP_201_CREATED
+            status=(
+                status.HTTP_201_CREATED
+                if result.created
+                else status.HTTP_200_OK
+            ),
         )
     
     @action(
