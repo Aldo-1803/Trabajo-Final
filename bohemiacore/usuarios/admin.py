@@ -1,8 +1,22 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth.models import Group
-from .models import Usuario, Cliente
 from django.utils.html import format_html
+from rest_framework_simplejwt.token_blacklist.admin import (
+    BlacklistedTokenAdmin as BaseBlacklistedTokenAdmin,
+    OutstandingTokenAdmin as BaseOutstandingTokenAdmin,
+)
+from rest_framework_simplejwt.token_blacklist.models import (
+    BlacklistedToken,
+    OutstandingToken,
+)
+
+from .admin_mixins import (
+    BusinessReadOnlyAdminMixin,
+    TechnicalSuperuserReadOnlyAdminMixin,
+)
+from .models import Cliente, Usuario
+from .roles import BusinessPermission
 
 
 # Role and permission membership is managed only through semantic services.
@@ -10,7 +24,7 @@ if admin.site.is_registered(Group):
     admin.site.unregister(Group)
 
 @admin.register(Usuario)
-class UsuarioAdmin(BaseUserAdmin):
+class UsuarioAdmin(BusinessReadOnlyAdminMixin, BaseUserAdmin):
     """
     Admin personalizado para Usuario (CustomUser)
     ⚠️ IMPORTANTE: "Desactivar" un usuario NO lo elimina, solo lo desactiva temporalmente.
@@ -47,6 +61,7 @@ class UsuarioAdmin(BaseUserAdmin):
         'user_permissions',
     )
     actions = None
+    business_view_permissions = (BusinessPermission.MANAGE_USERS,)
 
     def has_add_permission(self, request):
         """Accounts must be created through a semantic onboarding flow."""
@@ -80,7 +95,7 @@ class UsuarioAdmin(BaseUserAdmin):
     estado_badge.short_description = 'Estado'
     
 @admin.register(Cliente)
-class ClienteAdmin(admin.ModelAdmin):
+class ClienteAdmin(BusinessReadOnlyAdminMixin, admin.ModelAdmin):
     """
     Admin para listar Clientes
     """
@@ -94,6 +109,7 @@ class ClienteAdmin(admin.ModelAdmin):
         'fecha_actualizacion',
     )
     actions = None
+    business_view_permissions = (BusinessPermission.VIEW_CLIENTS,)
 
     def has_add_permission(self, request):
         """Client profiles are created only by semantic onboarding flows."""
@@ -143,3 +159,26 @@ class ClienteAdmin(admin.ModelAdmin):
                 '<span style="background-color: #C73E3E; color: white; padding: 3px 8px; border-radius: 3px; font-size: 11px;">INACTIVO</span>'
             )
     estado_badge.short_description = 'Estado'
+
+
+# SimpleJWT registers these models globally. Keep only immutable technical
+# inspection and prevent token revocation/association through generic forms.
+for token_model in (OutstandingToken, BlacklistedToken):
+    if admin.site.is_registered(token_model):
+        admin.site.unregister(token_model)
+
+
+@admin.register(OutstandingToken)
+class TechnicalOutstandingTokenAdmin(
+    TechnicalSuperuserReadOnlyAdminMixin,
+    BaseOutstandingTokenAdmin,
+):
+    pass
+
+
+@admin.register(BlacklistedToken)
+class TechnicalBlacklistedTokenAdmin(
+    TechnicalSuperuserReadOnlyAdminMixin,
+    BaseBlacklistedTokenAdmin,
+):
+    pass

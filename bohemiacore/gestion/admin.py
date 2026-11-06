@@ -12,11 +12,16 @@ from .models import (
     #PasoRutinaCliente, #PasoRutina,
 )
 from usuarios.roles import BusinessPermission
+from usuarios.admin_mixins import (
+    BusinessPermissionAdminMixin,
+    BusinessReadOnlyAdminMixin,
+    TechnicalSuperuserReadOnlyAdminMixin,
+)
 
 # ----------------------------------------------------
 # 1. CLASE ADMIN PERSONALIZADA (Para Mantenibilidad)
 # ----------------------------------------------------
-class CatalogoAdmin(admin.ModelAdmin):
+class CatalogoAdmin(BusinessPermissionAdminMixin, admin.ModelAdmin):
     """
     Configuración base para mostrar los catálogos en el Admin.
     Permite buscar por 'nombre' y filtrar por 'activo'.
@@ -25,6 +30,7 @@ class CatalogoAdmin(admin.ModelAdmin):
     search_fields = ('nombre',) # Habilita una barra de búsqueda
     #list_filter = ('activo',) # Habilita un filtro lateral
     ordering = ('nombre',)
+    business_view_permissions = (BusinessPermission.MANAGE_CONFIGURATION,)
 
 # ----------------------------------------------------
 # 2. REGISTRO DE MODELOS
@@ -39,12 +45,14 @@ admin.site.register(CueroCabelludo, CatalogoAdmin)
 admin.site.register(EstadoGeneral, CatalogoAdmin)
 
 @admin.register(CategoriaServicio)
-class CategoriaServicioAdmin(admin.ModelAdmin):
+class CategoriaServicioAdmin(BusinessPermissionAdminMixin, admin.ModelAdmin):
+    business_view_permissions = (BusinessPermission.MANAGE_CONFIGURATION,)
     list_display = ('nombre', 'descripcion')
     search_fields = ('nombre',)
 
 @admin.register(ReglaDiagnostico)
-class ReglaDiagnosticoAdmin(admin.ModelAdmin):
+class ReglaDiagnosticoAdmin(BusinessPermissionAdminMixin, admin.ModelAdmin):
+    business_view_permissions = (BusinessPermission.MANAGE_CONFIGURATION,)
     """
     Configuración para mostrar las Reglas de Diagnóstico (Nivel 1)
     en el panel de administrador.
@@ -107,7 +115,7 @@ class PasoRutinaInline(admin.TabularInline):
 
 
 @admin.register(Rutina)
-class RutinaAdmin(admin.ModelAdmin):
+class RutinaAdmin(BusinessReadOnlyAdminMixin, admin.ModelAdmin):
     """
     Admin para gestionar Rutinas con protección de soft-delete.
     """
@@ -116,6 +124,7 @@ class RutinaAdmin(admin.ModelAdmin):
     search_fields = ('nombre', 'objetivo')
     readonly_fields = ('fecha_creacion', 'fecha_obsoleta', 'version')
     filter_horizontal = ('clientes_asignados',)  # Interface visual mejor para M2M
+    business_view_permissions = (BusinessPermission.ASSIGN_ROUTINES,)
     
     fieldsets = (
         ("Información Básica", {
@@ -178,7 +187,7 @@ class PasoRutinaAdmin(admin.ModelAdmin):
 
 
 @admin.register(Notificacion)
-class NotificacionAdmin(admin.ModelAdmin):
+class NotificacionAdmin(TechnicalSuperuserReadOnlyAdminMixin, admin.ModelAdmin):
     """
     Admin para visualizar todas las notificaciones del sistema.
     """
@@ -212,7 +221,7 @@ class PasoRutinaClienteInline(admin.TabularInline):
 
 """
 @admin.register(RutinaCliente)
-class RutinaClienteAdmin(admin.ModelAdmin):
+class RutinaClienteAdmin(BusinessReadOnlyAdminMixin, admin.ModelAdmin):
     """
     Admin para ver las copias de rutinas asignadas a clientes.
     """
@@ -221,6 +230,7 @@ class RutinaClienteAdmin(admin.ModelAdmin):
     search_fields = ('cliente__usuario__email', 'nombre')
     readonly_fields = ('cliente', 'rutina_original', 'nombre', 'objetivo', 'descripcion', 
                        'version_asignada', 'fecha_asignacion', 'fecha_ultima_notificacion')
+    business_view_permissions = (BusinessPermission.ASSIGN_ROUTINES,)
     
     fieldsets = (
         ("Información del Cliente", {
@@ -280,11 +290,12 @@ class PasoRutinaClienteAdmin(admin.ModelAdmin):
 """
 
 @admin.register(Configuracion)
-class ConfiguracionAdmin(admin.ModelAdmin):
+class ConfiguracionAdmin(BusinessReadOnlyAdminMixin, admin.ModelAdmin):
     """
     Controla que solo exista una configuración en el sistema.
     """
     list_display = ('__str__', 'monto_sena', 'max_dias_anticipacion', 'whatsapp_numero')
+    business_view_permissions = (BusinessPermission.MANAGE_CONFIGURATION,)
     fieldsets = (
         ('Reglas Generales', {
             'fields': (
@@ -314,10 +325,7 @@ class ConfiguracionAdmin(admin.ModelAdmin):
     )
 
     def has_add_permission(self, request):
-        # Si ya existe 1 configuración, no deja crear otra.
-        if Configuracion.objects.exists():
-            return False
-        return True
+        return False
 
     def has_delete_permission(self, request, obj=None):
         # No permitir borrar la configuración base
@@ -335,7 +343,7 @@ class HorarioLaboralInline(admin.TabularInline):
     # Tip visual: Mostrar el nombre del día claramente
 
 @admin.register(Personal)
-class PersonalAdmin(admin.ModelAdmin):
+class PersonalAdmin(BusinessReadOnlyAdminMixin, admin.ModelAdmin):
     list_display = ('nombre', 'apellido', 'rol', 'activo', 'skills_resumen')
     list_filter = ('rol', 'activo')
     search_fields = ('nombre', 'apellido', 'email')
@@ -347,6 +355,7 @@ class PersonalAdmin(admin.ModelAdmin):
         'realiza_lavado',
     )
     actions = None
+    business_view_permissions = (BusinessPermission.MANAGE_PERSONAL,)
 
     def has_delete_permission(self, request, obj=None):
         """Personal is retired only through semantic status operations."""
@@ -380,13 +389,14 @@ class PersonalAdmin(admin.ModelAdmin):
     skills_resumen.short_description = "Habilidades"
 
 @admin.register(HorarioLaboral)
-class HorarioLaboralAdmin(admin.ModelAdmin):
+class HorarioLaboralAdmin(BusinessReadOnlyAdminMixin, admin.ModelAdmin):
     """
     Por si se necesita ver todos los horarios juntos.
     """
     list_display = ('personal', 'get_dia', 'hora_inicio', 'hora_fin')
     list_filter = ('personal', 'dia_semana')
     ordering = ('personal', 'dia_semana', 'hora_inicio')
+    business_view_permissions = (BusinessPermission.VIEW_GLOBAL_AGENDA,)
 
     def get_dia(self, obj):
         return obj.get_dia_semana_display()
@@ -394,11 +404,12 @@ class HorarioLaboralAdmin(admin.ModelAdmin):
 
 
 @admin.register(BloqueoAgenda)
-class BloqueoAgendaAdmin(admin.ModelAdmin):
+class BloqueoAgendaAdmin(BusinessReadOnlyAdminMixin, admin.ModelAdmin):
     list_display = ('get_afectado', 'motivo', 'fecha_inicio', 'fecha_fin', 'bloquea_todo_el_dia')
     list_filter = ('bloquea_todo_el_dia', 'personal', 'fecha_inicio')
     search_fields = ('motivo',)
     date_hierarchy = 'fecha_inicio'
+    business_view_permissions = (BusinessPermission.VIEW_GLOBAL_AGENDA,)
 
     def get_afectado(self, obj):
         return obj.personal if obj.personal else "⛔ TODO EL SALÓN"
@@ -406,18 +417,20 @@ class BloqueoAgendaAdmin(admin.ModelAdmin):
 
 
 @admin.register(TipoEquipamiento)
-class TipoEquipamientoAdmin(admin.ModelAdmin):
+class TipoEquipamientoAdmin(BusinessPermissionAdminMixin, admin.ModelAdmin):
     list_display = ('nombre', 'descripcion')
     search_fields = ('nombre',)
     ordering = ('nombre',)
+    business_view_permissions = (BusinessPermission.MANAGE_CONFIGURATION,)
 
 
 @admin.register(Equipamiento)
-class EquipamientoAdmin(admin.ModelAdmin):
+class EquipamientoAdmin(BusinessPermissionAdminMixin, admin.ModelAdmin):
     list_display = ('codigo', 'nombre', 'tipo', 'estado', 'ubicacion', 'is_active')
     list_filter = ('tipo', 'estado', 'is_active')
     search_fields = ('codigo', 'nombre')
     ordering = ('codigo',)
+    business_view_permissions = (BusinessPermission.MANAGE_CONFIGURATION,)
 
 
 class RequisitoServicioInline(admin.TabularInline):
@@ -431,9 +444,28 @@ class RequisitoServicioInline(admin.TabularInline):
     verbose_name = "Requisito de Equipamiento"
     verbose_name_plural = "Requisitos de Equipamiento"
 
+    def has_view_or_change_permission(self, request, obj=None):
+        return bool(
+            request.user.has_perm(BusinessPermission.MANAGE_CONFIGURATION)
+            and super().has_view_or_change_permission(request, obj)
+        )
+
+    def has_add_permission(self, request, obj=None):
+        return bool(
+            request.user.has_perm(BusinessPermission.MANAGE_CONFIGURATION)
+            and super().has_add_permission(request, obj)
+        )
+
+    def has_delete_permission(self, request, obj=None):
+        return bool(
+            request.user.has_perm(BusinessPermission.MANAGE_CONFIGURATION)
+            and super().has_delete_permission(request, obj)
+        )
+
 
 @admin.register(Servicio)
-class ServicioAdminMejorado(admin.ModelAdmin):
+class ServicioAdminMejorado(BusinessPermissionAdminMixin, admin.ModelAdmin):
+    business_view_permissions = (BusinessPermission.MANAGE_PRICES,)
     list_display = ('nombre', 'categoria', 'precio_base', 'duracion_estimada')
     list_filter = ('categoria',)
     search_fields = ('nombre', 'descripcion')
@@ -441,7 +473,8 @@ class ServicioAdminMejorado(admin.ModelAdmin):
 
 
 @admin.register(RequisitoServicio)
-class RequisitoServicioAdmin(admin.ModelAdmin):
+class RequisitoServicioAdmin(BusinessPermissionAdminMixin, admin.ModelAdmin):
+    business_view_permissions = (BusinessPermission.MANAGE_CONFIGURATION,)
     list_display = ('servicio', 'tipo_equipamiento', 'obligatorio', 'cantidad_minima')
     list_filter = ('obligatorio', 'servicio', 'tipo_equipamiento')
     search_fields = ('servicio__nombre', 'tipo_equipamiento__nombre')
@@ -449,7 +482,8 @@ class RequisitoServicioAdmin(admin.ModelAdmin):
 
 
 @admin.register(FichaTecnica)
-class FichaTecnicaAdmin(admin.ModelAdmin):
+class FichaTecnicaAdmin(BusinessReadOnlyAdminMixin, admin.ModelAdmin):
+    business_view_permissions = (BusinessPermission.MANAGE_TECHNICAL_RECORD,)
     list_display = ('detalle_turno', 'profesional_autor', 'porosidad_final', 'estado_general_final', 'fecha_registro')
     list_filter = ('fecha_registro', 'porosidad_final', 'estado_general_final', 'profesional_autor')
     search_fields = ('detalle_turno__turno__cliente__usuario__email', 'profesional_autor__email')
@@ -462,7 +496,8 @@ class FichaTecnicaAdmin(admin.ModelAdmin):
 
 
 @admin.register(DiagnosticoCapilar)
-class DiagnosticoCapilarAdmin(admin.ModelAdmin):
+class DiagnosticoCapilarAdmin(BusinessReadOnlyAdminMixin, admin.ModelAdmin):
+    business_view_permissions = (BusinessPermission.MANAGE_TECHNICAL_RECORD,)
     list_display = ('cliente', 'profesional', 'tipo_cabello', 'porosidad_cabello', 'fecha_diagnostico')
     list_filter = ('fecha_diagnostico', 'tipo_cabello', 'grosor_cabello', 'porosidad_cabello', 'estado_general', 'profesional')
     search_fields = ('cliente__usuario__email', 'profesional__email', 'observaciones')
@@ -489,11 +524,13 @@ class DiagnosticoCapilarAdmin(admin.ModelAdmin):
 # ADMIN PARA CONTENIDO EDUCATIVO
 # ============================================
 @admin.register(ContenidoEducativo)
-class ContenidoEducativoAdmin(admin.ModelAdmin):
+class ContenidoEducativoAdmin(BusinessPermissionAdminMixin, admin.ModelAdmin):
     """
     Admin mejorado para gestionar contenido educativo.
     Permite edición rápida de estado y visualización clara de métricas.
     """
+    business_view_permissions = (BusinessPermission.MANAGE_CONTENT,)
+
     # Qué columnas se ven en la lista principal
     list_display = ('titulo', 'autor', 'tipo_badge', 'estado', 'fecha_publicacion', 'get_likes', 'get_guardados')
     
@@ -558,11 +595,12 @@ class ContenidoEducativoAdmin(admin.ModelAdmin):
 
 
 @admin.register(MeGusta)
-class MeGustaAdmin(admin.ModelAdmin):
+class MeGustaAdmin(BusinessReadOnlyAdminMixin, admin.ModelAdmin):
     """
     Admin para visualizar todas las reacciones "Me Gusta".
     Los likes se crean automáticamente, no deberían editarse manualmente.
     """
+    business_view_permissions = (BusinessPermission.MANAGE_CONTENT,)
     list_display = ('cliente', 'contenido', 'fecha_badge')
     list_filter = ('fecha',)
     search_fields = ('cliente__usuario__email', 'contenido__titulo')
@@ -584,11 +622,12 @@ class MeGustaAdmin(admin.ModelAdmin):
 
 
 @admin.register(ContenidoGuardado)
-class ContenidoGuardadoAdmin(admin.ModelAdmin):
+class ContenidoGuardadoAdmin(BusinessReadOnlyAdminMixin, admin.ModelAdmin):
     """
     Admin para ver qué contenido han guardado los clientes.
     Los guardados se crean automáticamente, no deberían editarse manualmente.
     """
+    business_view_permissions = (BusinessPermission.MANAGE_CONTENT,)
     list_display = ('cliente', 'contenido', 'fecha_badge')
     list_filter = ('fecha',)
     search_fields = ('cliente__usuario__email', 'contenido__titulo')
@@ -613,11 +652,12 @@ class ContenidoGuardadoAdmin(admin.ModelAdmin):
 # ============================================================
 
 @admin.register(Auditoria)
-class AuditoriaAdmin(admin.ModelAdmin):
+class AuditoriaAdmin(BusinessReadOnlyAdminMixin, admin.ModelAdmin):
     """
     Panel de auditoría para ver todos los cambios realizados en el sistema.
     Registra ALTA, MODIFICACION y BAJA de registros.
     """
+    business_view_permissions = (BusinessPermission.VIEW_AUDIT,)
     list_display = (
         'accion_badge', 
         'tabla', 
@@ -816,17 +856,26 @@ class ImagenProductoInline(admin.TabularInline):
     readonly_fields = ('fecha_creacion',)
 
     def has_view_or_change_permission(self, request, obj=None):
-        return request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+        return bool(
+            request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+            and super().has_view_or_change_permission(request, obj)
+        )
 
     def has_add_permission(self, request, obj=None):
-        return request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+        return bool(
+            request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+            and super().has_add_permission(request, obj)
+        )
 
     def has_delete_permission(self, request, obj=None):
-        return request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+        return bool(
+            request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+            and super().has_delete_permission(request, obj)
+        )
 
 
 @admin.register(Producto)
-class ProductoAdmin(admin.ModelAdmin):
+class ProductoAdmin(BusinessPermissionAdminMixin, admin.ModelAdmin):
     """
     Panel de administración para productos
     """
@@ -840,6 +889,11 @@ class ProductoAdmin(admin.ModelAdmin):
     metadata_fields = (
         'sku', 'nombre', 'marca', 'categoria', 'descripcion', 'imagen',
         'compatibilidad', 'estado_publicacion', 'activo',
+    )
+    business_view_permissions = (
+        BusinessPermission.MANAGE_PRODUCTS,
+        BusinessPermission.MANAGE_PRICES,
+        BusinessPermission.VIEW_STOCK,
     )
 
     def get_list_display(self, request):
@@ -885,29 +939,32 @@ class ProductoAdmin(admin.ModelAdmin):
         return super().get_inline_instances(request, obj)
 
     def has_module_permission(self, request):
-        return any(request.user.has_perm(permission) for permission in (
-            BusinessPermission.MANAGE_PRODUCTS,
-            BusinessPermission.MANAGE_PRICES,
-            BusinessPermission.VIEW_STOCK,
-        ))
+        return super().has_module_permission(request)
 
     def has_view_permission(self, request, obj=None):
-        return self.has_module_permission(request)
+        return super().has_view_permission(request, obj)
 
     def has_add_permission(self, request):
         return bool(
-            request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+            super().has_add_permission(request)
+            and request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
             and request.user.has_perm(BusinessPermission.MANAGE_PRICES)
         )
 
     def has_change_permission(self, request, obj=None):
         return bool(
-            request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
-            or request.user.has_perm(BusinessPermission.MANAGE_PRICES)
+            super().has_change_permission(request, obj)
+            and (
+                request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+                or request.user.has_perm(BusinessPermission.MANAGE_PRICES)
+            )
         )
 
     def has_delete_permission(self, request, obj=None):
-        return request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+        return bool(
+            super().has_delete_permission(request, obj)
+            and request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+        )
     
     def stock_disponible(self, obj):
         return obj.stock_disponible
@@ -915,7 +972,8 @@ class ProductoAdmin(admin.ModelAdmin):
 
 
 @admin.register(MovimientoStock)
-class MovimientoStockAdmin(admin.ModelAdmin):
+class MovimientoStockAdmin(BusinessReadOnlyAdminMixin, admin.ModelAdmin):
+    business_view_permissions = (BusinessPermission.VIEW_STOCK,)
     list_display = (
         'id',
         'producto',
@@ -950,7 +1008,8 @@ class MovimientoStockAdmin(admin.ModelAdmin):
 
 
 @admin.register(CompromisoStock)
-class CompromisoStockAdmin(admin.ModelAdmin):
+class CompromisoStockAdmin(BusinessReadOnlyAdminMixin, admin.ModelAdmin):
+    business_view_permissions = (BusinessPermission.VIEW_STOCK,)
     list_display = (
         'id',
         'orden',
@@ -984,7 +1043,7 @@ class CompromisoStockAdmin(admin.ModelAdmin):
 
 
 @admin.register(ImagenProducto)
-class ImagenProductoAdmin(admin.ModelAdmin):
+class ImagenProductoAdmin(BusinessPermissionAdminMixin, admin.ModelAdmin):
     """
     Panel de administración para imágenes de productos
     """
@@ -992,75 +1051,79 @@ class ImagenProductoAdmin(admin.ModelAdmin):
     list_filter = ('producto',)
     search_fields = ('producto__nombre', 'producto__sku')
     ordering = ('producto', 'orden')
+    business_view_permissions = (BusinessPermission.MANAGE_PRODUCTS,)
 
     def has_module_permission(self, request):
-        return request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+        return super().has_module_permission(request)
 
     def has_view_permission(self, request, obj=None):
-        return self.has_module_permission(request)
+        return super().has_view_permission(request, obj)
 
     def has_add_permission(self, request):
-        return self.has_module_permission(request)
+        return super().has_add_permission(request)
 
     def has_change_permission(self, request, obj=None):
-        return self.has_module_permission(request)
+        return super().has_change_permission(request, obj)
 
     def has_delete_permission(self, request, obj=None):
-        return self.has_module_permission(request)
+        return super().has_delete_permission(request, obj)
 
 
 @admin.register(CategoriaProducto)
-class CategoriaProductoAdmin(admin.ModelAdmin):
+class CategoriaProductoAdmin(BusinessPermissionAdminMixin, admin.ModelAdmin):
     list_display = ('nombre', 'activo')
     search_fields = ('nombre',)
     list_filter = ('activo',)
+    business_view_permissions = (BusinessPermission.MANAGE_PRODUCTS,)
 
     def has_module_permission(self, request):
-        return request.user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+        return super().has_module_permission(request)
 
     def has_view_permission(self, request, obj=None):
-        return self.has_module_permission(request)
+        return super().has_view_permission(request, obj)
 
     def has_add_permission(self, request):
-        return self.has_module_permission(request)
+        return super().has_add_permission(request)
 
     def has_change_permission(self, request, obj=None):
-        return self.has_module_permission(request)
+        return super().has_change_permission(request, obj)
 
     def has_delete_permission(self, request, obj=None):
-        return self.has_module_permission(request)
+        return super().has_delete_permission(request, obj)
 
 
 @admin.register(Promocion)
-class PromocionAdmin(admin.ModelAdmin):
+class PromocionAdmin(BusinessPermissionAdminMixin, admin.ModelAdmin):
     list_display = (
         'nombre', 'tipo', 'descuento_porcentaje', 'fecha_inicio', 'fecha_fin',
         'is_active',
     )
     list_filter = ('tipo', 'is_active', 'estado_sugerencia')
     search_fields = ('nombre', 'descripcion')
+    business_view_permissions = (BusinessPermission.MANAGE_PROMOTIONS,)
 
     def has_module_permission(self, request):
-        return request.user.has_perm(BusinessPermission.MANAGE_PROMOTIONS)
+        return super().has_module_permission(request)
 
     def has_view_permission(self, request, obj=None):
-        return self.has_module_permission(request)
+        return super().has_view_permission(request, obj)
 
     def has_add_permission(self, request):
-        return self.has_module_permission(request)
+        return super().has_add_permission(request)
 
     def has_change_permission(self, request, obj=None):
-        return self.has_module_permission(request)
+        return super().has_change_permission(request, obj)
 
     def has_delete_permission(self, request, obj=None):
-        return self.has_module_permission(request)
+        return super().has_delete_permission(request, obj)
 
 
 @admin.register(OrdenPendiente)
-class OrdenPendienteAdmin(admin.ModelAdmin):
+class OrdenPendienteAdmin(BusinessReadOnlyAdminMixin, admin.ModelAdmin):
     """
     Auditoría de órdenes pendientes (intenciones de compra por WhatsApp)
     """
+    business_view_permissions = (BusinessPermission.MANAGE_STOCK,)
     list_display = ('id', 'cliente_nombre', 'estado', 'monto_total', 'fecha_creacion', 'items_count')
     list_filter = ('estado', 'fecha_creacion', 'cliente')
     search_fields = ('cliente__usuario__first_name', 'cliente__usuario__last_name', 'cliente__usuario__email')
