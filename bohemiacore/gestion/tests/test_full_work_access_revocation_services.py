@@ -1,4 +1,4 @@
-from datetime import date, time, timedelta
+from datetime import time, timedelta
 from unittest.mock import patch
 
 from django.contrib.auth.models import Group, Permission
@@ -321,7 +321,7 @@ class FullWorkAccessRevocationServiceTests(TestCase):
         appointment = Turno.objects.create(
             cliente=appointment_client,
             profesional=personal,
-            fecha=date.today() + timedelta(days=3),
+            fecha=timezone.localdate() + timedelta(days=3),
             hora_inicio=time(11, 0),
         )
         history_count = personal.history.count()

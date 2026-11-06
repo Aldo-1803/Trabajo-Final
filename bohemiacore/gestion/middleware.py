@@ -6,21 +6,25 @@ Soporta:
 - Autenticación por sesión (Django estándar)
 - Autenticación por JWT (Django REST Framework)
 """
+import logging
 import threading
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import InvalidToken, AuthenticationFailed
 
 # Almacenar el usuario actual en thread-local storage
 _thread_locals = threading.local()
+logger = logging.getLogger(__name__)
 
 
 def get_current_user():
     """Obtener el usuario actual del request."""
     user = getattr(_thread_locals, 'user', None)
     
-    # DEBUG
-    print(f"👤 get_current_user: {user} (is_authenticated: {user.is_authenticated if user else 'N/A'})")
-    
+    logger.debug(
+        'Usuario de auditoría actual: %s (autenticado=%s)',
+        user,
+        user.is_authenticated if user else False,
+    )
     return user
 
 
@@ -47,7 +51,7 @@ class AuditoriaMiddleware:
         # 1. Intentar autenticar con sesión (Django estándar)
         if request.user.is_authenticated:
             usuario = request.user
-            print(f"🔐 Middleware: Usuario autenticado por SESIÓN: {usuario.email if hasattr(usuario, 'email') else usuario}")
+            logger.debug('Usuario de auditoría autenticado por sesión: %s', usuario)
         
         # 2. Si no hay sesión, intentar con JWT
         if not usuario:
@@ -56,21 +60,32 @@ class AuditoriaMiddleware:
                 auth_info = self.jwt_authenticator.authenticate(request)
                 if auth_info:
                     usuario = auth_info[0]  # El usuario está en la primera posición
-                    print(f"🔐 Middleware: Usuario autenticado por JWT: {usuario.email if hasattr(usuario, 'email') else usuario}")
-            except (InvalidToken, AuthenticationFailed, TypeError) as e:
+                    logger.debug(
+                        'Usuario de auditoría autenticado por JWT: %s',
+                        usuario,
+                    )
+            except (InvalidToken, AuthenticationFailed, TypeError) as error:
                 # TypeError: authenticate retorna None si no hay token
                 # InvalidToken/AuthenticationFailed: Token inválido
-                print(f"⚠️  Middleware: No se pudo validar JWT: {type(e).__name__}")
+                logger.debug(
+                    'No se pudo validar JWT para auditoría: %s',
+                    type(error).__name__,
+                )
                 usuario = None
         
         # 3. Guardar en thread-locals
         _thread_locals.user = usuario
         _thread_locals.request = request
         
-        # DEBUG
-        print(f"🔐 Middleware: user={usuario} authenticated={usuario.is_authenticated if usuario else False}")
-        
-        # Procesar el request
-        response = self.get_response(request)
-        
-        return response
+        logger.debug(
+            'Contexto de auditoría establecido: usuario=%s autenticado=%s',
+            usuario,
+            usuario.is_authenticated if usuario else False,
+        )
+
+        try:
+            return self.get_response(request)
+        finally:
+            for attribute in ('user', 'request'):
+                if hasattr(_thread_locals, attribute):
+                    delattr(_thread_locals, attribute)

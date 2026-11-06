@@ -8,6 +8,10 @@ from .models import Notificacion
 from .middleware import get_current_user, get_current_request
 from .routine_services import ensure_internal_routine_assignment
 import json
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 # Cache para almacenar valores anteriores en pre_save
 _valores_anteriores = {}
@@ -76,8 +80,8 @@ def registrar_auditoria(tabla, registro_id, usuario, accion, valor_anterior=None
             valor_nuevo=valor_nuevo,  # Ya es un dict, JSONField lo maneja
             ip_address=ip_address
         )
-    except Exception as e:
-        print(f"❌ Error registrando auditoría: {e}")
+    except Exception:
+        logger.exception('Error registrando auditoría.')
 
 
 # ============================================================
@@ -102,8 +106,11 @@ def crear_signal_auditoria(modelo):
         except modelo.DoesNotExist:
             # Es un registro nuevo, no hay valores anteriores
             _valores_anteriores[clave] = None
-        except Exception as e:
-            print(f"⚠️  Error capturando valores anteriores en {tabla_modelo}: {e}")
+        except Exception:
+            logger.exception(
+                'Error capturando valores anteriores en %s.',
+                tabla_modelo,
+            )
             _valores_anteriores[clave] = None
     
     @receiver(post_save, sender=modelo)
@@ -120,10 +127,13 @@ def crear_signal_auditoria(modelo):
         # Usar pk en lugar de id para soportar modelos con PKs especiales
         registro_id = instance.pk
         
-        # DEBUG: Registrar información de auditoría
-        print(f"\n🔔 Signal post_save: {tabla}(id={registro_id})")
-        print(f"   Usuario: {usuario}")
-        print(f"   Created: {created}")
+        logger.debug(
+            'Signal post_save: %s(id=%s), usuario=%s, created=%s',
+            tabla,
+            registro_id,
+            usuario,
+            created,
+        )
         
         # Recuperar valores anteriores capturados en pre_save
         clave = f"{tabla}_{instance.pk}"
@@ -147,7 +157,11 @@ def crear_signal_auditoria(modelo):
                 
                 # Solo registrar si hubo cambios reales
                 if valor_anterior != valor_nuevo:
-                    print(f"📝 Cambios detectados en {tabla}(id={registro_id})")
+                    logger.debug(
+                        'Cambios detectados en %s(id=%s).',
+                        tabla,
+                        registro_id,
+                    )
                     registrar_auditoria(
                         tabla=tabla,
                         registro_id=registro_id,
@@ -158,9 +172,17 @@ def crear_signal_auditoria(modelo):
                         ip_address=ip_address
                     )
                 else:
-                    print(f"⏭️  Sin cambios reales en {tabla}(id={registro_id})")
+                    logger.debug(
+                        'Sin cambios reales en %s(id=%s).',
+                        tabla,
+                        registro_id,
+                    )
             else:
-                print(f"⚠️  No hay valores anteriores para {tabla}(id={registro_id})")
+                logger.debug(
+                    'No hay valores anteriores para %s(id=%s).',
+                    tabla,
+                    registro_id,
+                )
     
     return registrar_cambios, capturar_valores_anteriores
 
@@ -297,21 +319,24 @@ def generar_cuidados_post_servicio(sender, instance, created, **kwargs):
     """
     # Verificamos que sea un turno 'realizado' (ajusta el string según tus choices en Turno)
     if instance.estado == 'realizado': 
-        print(f"[SISTEMA] Turno finalizado detectado para {instance.cliente}. Iniciando automatización...")
+        logger.debug(
+            'Turno finalizado detectado para %s; iniciando cuidados.',
+            instance.cliente,
+        )
         
         # 1. Obtener los servicios del turno desde detalles (ahora es relación M2M)
         detalles_turno = instance.detalles.all()
         servicios = [detalle.servicio for detalle in detalles_turno]
         
         if not servicios:
-            print("El turno no tiene servicios asociados.")
+            logger.debug('El turno no tiene servicios asociados.')
             return
 
         # 2. Buscamos reglas para los servicios realizados
         reglas = ReglaCuidado.objects.filter(servicio__in=servicios)
         
         if not reglas.exists():
-            print("Los servicios no tienen reglas automáticas asociadas.")
+            logger.debug('Los servicios no tienen reglas automáticas asociadas.')
             return
 
         # 3. Preparamos las tareas para la agenda
@@ -359,7 +384,11 @@ def generar_cuidados_post_servicio(sender, instance, created, **kwargs):
         # 3. Guardamos todo en la base de datos de una sola vez
         if nuevos_items:
             AgendaCuidados.objects.bulk_create(nuevos_items)
-            print(f"Se generaron automáticamete {len(nuevos_items)} tareas en la agenda de {instance.cliente}.")
+            logger.debug(
+                'Se generaron automáticamente %s tareas para %s.',
+                len(nuevos_items),
+                instance.cliente,
+            )
 
 
 #----------------------------------------------------
@@ -435,7 +464,10 @@ def automatizacion_post_servicio(sender, instance, created, **kwargs):
     2. Asigna la Rutina Recomendada en la Agenda.
     """
     if instance.estado == 'realizado':
-        print(f"[SISTEMA] Finalizando turno {instance.id}. Iniciando automatización...")
+        logger.debug(
+            'Finalizando turno %s; iniciando automatización.',
+            instance.id,
+        )
         
         cliente = instance.cliente
         # Obtener servicios desde detalles
@@ -443,7 +475,7 @@ def automatizacion_post_servicio(sender, instance, created, **kwargs):
         fecha_base = instance.fecha
 
         if not servicios:
-            print("El turno no tiene servicios asociados.")
+            logger.debug('El turno no tiene servicios asociados.')
             return
 
         # --- PASO 1: ACTUALIZACIÓN DE DIAGNÓSTICO (Impacto) ---
@@ -452,12 +484,18 @@ def automatizacion_post_servicio(sender, instance, created, **kwargs):
         # Procesar impactos de todos los servicios
         for servicio in servicios:
             if servicio.impacto_porosidad:
-                print(f"   Diagnóstico: Porosidad cambia a {servicio.impacto_porosidad}")
+                logger.debug(
+                    'Diagnóstico: porosidad cambia a %s.',
+                    servicio.impacto_porosidad,
+                )
                 cliente.porosidad_cabello = servicio.impacto_porosidad
                 cambio_perfil = True
                 
             if servicio.impacto_estado:
-                print(f"   Diagnóstico: Estado cambia a {servicio.impacto_estado}")
+                logger.debug(
+                    'Diagnóstico: estado cambia a %s.',
+                    servicio.impacto_estado,
+                )
             cliente.estado_general = servicio.impacto_estado
             cambio_perfil = True
             
@@ -472,7 +510,7 @@ def automatizacion_post_servicio(sender, instance, created, **kwargs):
             # A. Si el servicio tiene Rutina Recomendada (Prioridad Alta)
             if servicio.rutina_recomendada:
                 rutina = servicio.rutina_recomendada
-                print(f"   📘 Asignando Rutina: {rutina.nombre}")
+                logger.debug('Asignando rutina: %s.', rutina.nombre)
                 
                 # 1. Crear RutinaCliente (copia personalizada para el cliente)
                 rutina_cliente, created = ensure_internal_routine_assignment(
@@ -481,9 +519,15 @@ def automatizacion_post_servicio(sender, instance, created, **kwargs):
                 )
                 
                 if created:
-                    print(f"    RutinaCliente creada: {rutina_cliente.nombre}")
+                    logger.debug(
+                        'RutinaCliente creada: %s.',
+                        rutina_cliente.nombre,
+                    )
                 else:
-                    print(f"    RutinaCliente ya existía: {rutina_cliente.nombre}")
+                    logger.debug(
+                        'RutinaCliente ya existía: %s.',
+                        rutina_cliente.nombre,
+                    )
                 
                 # 2. Verificar y copiar los pasos (tanto para nuevas como existentes)
                 """
@@ -527,7 +571,10 @@ def automatizacion_post_servicio(sender, instance, created, **kwargs):
         # Guardamos todo en la agenda
         if nuevos_items:
             AgendaCuidados.objects.bulk_create(nuevos_items)
-            print(f" Se generaron {len(nuevos_items)} items en la agenda.")
+            logger.debug(
+                'Se generaron %s items en la agenda.',
+                len(nuevos_items),
+            )
 
 
 #----------------------------------------------------
@@ -647,4 +694,4 @@ def crear_combo_automatico(sender, instance, created, **kwargs):
             }
         )
 
-    print(f"DEBUG: Combo sugerido automáticamente para {instance.nombre}")
+    logger.debug('Combo sugerido automáticamente para %s.', instance.nombre)

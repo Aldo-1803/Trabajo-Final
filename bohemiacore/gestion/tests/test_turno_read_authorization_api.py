@@ -1,11 +1,12 @@
 import shutil
 import tempfile
-from datetime import date, time, timedelta
+from datetime import time, timedelta
 
 from django.contrib.auth.models import Group, Permission
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -43,7 +44,7 @@ class TurnoReadAuthorizationApiTests(APITestCase):
             duracion_estimada=60,
             plantilla_formula='FÓRMULA PRIVADA',
         )
-        tomorrow = date.today() + timedelta(days=1)
+        tomorrow = timezone.localdate() + timedelta(days=1)
         self.own_turno = self.create_turno(
             self.client_profile,
             tomorrow,
@@ -190,7 +191,7 @@ class TurnoReadAuthorizationApiTests(APITestCase):
         )
         assigned = self.create_turno(
             self.other_client,
-            date.today() + timedelta(days=2),
+            timezone.localdate() + timedelta(days=2),
             time(9, 0),
             profesional=personal,
         )
@@ -249,7 +250,7 @@ class TurnoReadAuthorizationApiTests(APITestCase):
         )
         assigned = self.create_turno(
             self.other_client,
-            date.today() + timedelta(days=3),
+            timezone.localdate() + timedelta(days=3),
             time(15, 0),
             profesional=personal,
         )
@@ -274,7 +275,7 @@ class TurnoReadAuthorizationApiTests(APITestCase):
     def test_get_turnos_has_no_write_side_effects(self):
         expired = self.create_turno(
             self.client_profile,
-            date.today() - timedelta(days=1),
+            timezone.localdate() - timedelta(days=1),
             time(10, 0),
             estado=Turno.Estado.SOLICITADO,
         )

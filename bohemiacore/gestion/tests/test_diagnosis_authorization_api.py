@@ -1,4 +1,4 @@
-from datetime import date, time, timedelta
+from datetime import time, timedelta
 from unittest.mock import patch
 
 from django.contrib.auth.models import Group, Permission
@@ -249,8 +249,21 @@ class DiagnosisAuthorizationApiTests(APITestCase):
             partial=True,
         )
 
-        self.assertTrue(serializer.is_valid(), serializer.errors)
-        serializer.save()
+        self.assertFalse(serializer.is_valid())
+        self.assertSetEqual(
+            set(serializer.errors),
+            {
+                'realiza_diagnostico',
+                'realiza_lavado',
+                'realiza_color',
+            },
+        )
+        for field in serializer.errors:
+            self.assertEqual(serializer.errors[field][0].code, 'invalid')
+            self.assertEqual(
+                str(serializer.errors[field][0]),
+                'Este campo no está permitido.',
+            )
         personal.refresh_from_db()
         self.assertTrue(personal.realiza_diagnostico)
         self.assertFalse(personal.realiza_lavado)
@@ -437,7 +450,7 @@ class DiagnosisAuthorizationApiTests(APITestCase):
         self.assertEqual(diagnosis.profesional, actor)
 
     def test_diagnosis_recommendation_uses_canonical_availability_not_category_text(self):
-        tomorrow = date.today() + timedelta(days=1)
+        tomorrow = timezone.localdate() + timedelta(days=1)
         category = CategoriaServicio.objects.create(nombre='Diseño y Color legacy')
         service = Servicio.objects.create(
             nombre='Servicio recomendado sin requisito técnico',

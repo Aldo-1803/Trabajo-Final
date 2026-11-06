@@ -53,8 +53,24 @@ const confirmedTurno = {
     estado: 'confirmado'
 };
 
+const TEST_NOW = new Date('2026-06-15T15:00:00-05:00');
+const TEST_LOCAL_DATE = [
+    TEST_NOW.getFullYear(),
+    String(TEST_NOW.getMonth() + 1).padStart(2, '0'),
+    String(TEST_NOW.getDate()).padStart(2, '0')
+].join('-');
+
 
 describe('Operaciones por permisos efectivos', () => {
+    beforeAll(() => {
+        jest.useFakeTimers();
+        jest.setSystemTime(TEST_NOW);
+    });
+
+    afterAll(() => {
+        jest.useRealTimers();
+    });
+
     beforeEach(() => {
         jest.clearAllMocks();
         localStorage.setItem('access_token', 'test-token');
@@ -188,7 +204,7 @@ describe('Operaciones por permisos efectivos', () => {
         axios.get.mockResolvedValue({
             data: [{
                 ...confirmedTurno,
-                fecha: new Date().toISOString().slice(0, 10)
+                fecha: TEST_LOCAL_DATE
             }]
         });
         renderOperations({
@@ -225,7 +241,7 @@ describe('Operaciones por permisos efectivos', () => {
         axios.get.mockResolvedValue({
             data: [{
                 ...confirmedTurno,
-                fecha: new Date().toISOString().slice(0, 10)
+                fecha: TEST_LOCAL_DATE
             }]
         });
         renderOperations({ permissions: [permission], personalActive: true });

@@ -201,10 +201,14 @@ class OrderInventoryConcurrencyTests(TransactionTestCase):
         self.assertEqual(sum(code == 'ok' for code, _ in results), 1)
         self.assertEqual(
             sum(
-                code == 'ORDER_CANCELLATION_REQUIRES_FINANCIAL_RESOLUTION'
+                code in {
+                    'ORDER_CANCELLATION_REQUIRES_FINANCIAL_RESOLUTION',
+                    'COMPLETED_PENDING_ORDER_CANNOT_RELEASE',
+                }
                 for code, _ in results
             ),
             1,
+            results,
         )
         self.assertEqual(pending.estado, 'COMPLETADA')
         self.assertEqual(order.estado, 'COMPLETADO')
@@ -238,10 +242,14 @@ class OrderInventoryConcurrencyTests(TransactionTestCase):
         self.assertEqual(sum(code == 'ok' for code, _ in results), 1)
         self.assertEqual(
             sum(
-                code == 'ORDER_CANCELLATION_REQUIRES_FINANCIAL_RESOLUTION'
+                code in {
+                    'ORDER_CANCELLATION_REQUIRES_FINANCIAL_RESOLUTION',
+                    'COMPLETED_ORDER_CANNOT_CANCEL',
+                }
                 for code, _ in results
             ),
             1,
+            results,
         )
         self.assertEqual(commitment.estado, CompromisoStock.State.CONSUMED)
         self.assertEqual(

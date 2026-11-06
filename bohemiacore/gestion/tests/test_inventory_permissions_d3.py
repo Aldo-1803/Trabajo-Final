@@ -1,9 +1,10 @@
-from datetime import date, timedelta
+from datetime import timedelta
 from decimal import Decimal
 
 from django.contrib.auth.models import Permission
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from gestion.models import (
@@ -162,7 +163,7 @@ class InventoryPermissionMatrixD3Tests(TestCase):
 
     def test_manage_promotions_manages_promotions_but_not_stock(self):
         client = self.client_for('promotion_manager')
-        today = date.today()
+        today = timezone.localdate()
         created = client.post(
             reverse('promocion-list'),
             {
