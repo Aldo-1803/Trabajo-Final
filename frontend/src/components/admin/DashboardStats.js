@@ -14,14 +14,18 @@ import {
     Legend
 } from 'recharts';
 import { IconSparkles } from '../common/Icons';
+import { useSession } from '../../context/SessionContext';
 
 const COLORS = ['#C9B07A', '#E3D5CA', '#A68C72', '#8B8682', '#F5F0EB'];
 
 const DashboardStats = () => {
+    const { hasPermission } = useSession();
+    const canViewGeneral = hasPermission('gestion.view_reports');
+    const canViewFinancial = hasPermission('gestion.view_financial_reports');
     const [periodo, setPeriodo] = useState('mes');
     const [valor, setValor] = useState(new Date().getMonth() + 1);
     const [anio, setAnio] = useState(new Date().getFullYear());
-    const [data, setData] = useState({ servicios: [], productos: [], rutinas: [], total_ingresos: 0, ordenes_count: 0, cliente_mes: null });
+    const [data, setData] = useState({});
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
@@ -75,18 +79,18 @@ const DashboardStats = () => {
         return [actual - 1, actual, actual + 1];
     }, []);
 
-    const servicios = (data.servicios || []).map((item) => ({
+    const servicios = (canViewFinancial ? data.servicios || [] : []).map((item) => ({
         name: item.producto__nombre,
         value: parseFloat(item.valor)
     }));
 
-    const productos = (data.productos || []).map((item) => ({
+    const productos = (canViewGeneral ? data.productos || [] : []).map((item) => ({
         name: item.producto__nombre,
         value: item.valor
     }));
 
-    const rutinas = (data.rutinas || []).map((item) => ({
-        name: item.rutina__nombre,
+    const rutinas = (canViewGeneral ? data.rutinas || [] : []).map((item) => ({
+        name: item.rutina_original__nombre,
         value: item.valor
     }));
 
@@ -101,9 +105,15 @@ const DashboardStats = () => {
     const exportarExcel = () => {
         const rows = [
             ['Seccion', 'Nombre', 'Valor'],
-            ...servicios.map((item) => ['Ingresos por Servicio', item.name, item.value]),
-            ...productos.map((item) => ['Productos mas vendidos', item.name, item.value]),
-            ...rutinas.map((item) => ['Diagnosticos frecuentes', item.name, item.value])
+            ...(canViewFinancial
+                ? servicios.map((item) => ['Ingresos por Servicio', item.name, item.value])
+                : []),
+            ...(canViewGeneral
+                ? productos.map((item) => ['Productos mas vendidos', item.name, item.value])
+                : []),
+            ...(canViewGeneral
+                ? rutinas.map((item) => ['Rutinas frecuentes', item.name, item.value])
+                : [])
         ];
 
         const csv = rows.map((row) => row.map(toCsvValue).join(',')).join('\n');
@@ -118,10 +128,10 @@ const DashboardStats = () => {
         URL.revokeObjectURL(url);
     };
 
-    const totalIngresos = Number(data.total_ingresos || 0);
-    const ordenesCount = Number(data.ordenes_count || 0);
+    const totalIngresos = canViewFinancial ? Number(data.total_ingresos || 0) : 0;
+    const ordenesCount = canViewGeneral ? Number(data.ordenes_count || 0) : 0;
     const ticketPromedio = ordenesCount > 0 ? totalIngresos / ordenesCount : 0;
-    const clienteMes = data.cliente_mes?.nombre || 'Sin datos';
+    const clienteMes = canViewGeneral ? data.cliente_mes?.nombre || 'Sin datos' : null;
 
     const hasServicios = servicios.length > 0;
     const hasProductos = productos.length > 0;
@@ -141,7 +151,11 @@ const DashboardStats = () => {
                 <div>
                     <h2 className="text-2xl font-bold" style={{ color: '#817773' }}>Estadisticas</h2>
                     <p className="text-sm" style={{ color: '#8B8682' }}>
-                        Resumen de ventas y diagnosticos por periodo
+                        {canViewFinancial && canViewGeneral
+                            ? 'Resumen general y financiero por periodo'
+                            : canViewFinancial
+                                ? 'Resumen financiero por periodo'
+                                : 'Tendencias operativas por periodo'}
                     </p>
                 </div>
 
@@ -215,26 +229,26 @@ const DashboardStats = () => {
             ) : (
                 <div className="space-y-6">
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                        <div className="rounded-xl p-4 text-white" style={{ background: 'linear-gradient(135deg, #C9B07A 0%, #A68C72 100%)' }}>
+                        {canViewFinancial && <div className="rounded-xl p-4 text-white" style={{ background: 'linear-gradient(135deg, #C9B07A 0%, #A68C72 100%)' }}>
                             <p className="text-xs uppercase tracking-wider">Total Ingresos</p>
                             <p className="text-2xl font-bold mt-2">${totalIngresos.toLocaleString('es-AR')}</p>
-                        </div>
-                        <div className="rounded-xl p-4 text-white" style={{ background: 'linear-gradient(135deg, #A68C72 0%, #8B8682 100%)' }}>
+                        </div>}
+                        {canViewFinancial && canViewGeneral && <div className="rounded-xl p-4 text-white" style={{ background: 'linear-gradient(135deg, #A68C72 0%, #8B8682 100%)' }}>
                             <p className="text-xs uppercase tracking-wider">Ticket Promedio</p>
                             <p className="text-2xl font-bold mt-2">${ticketPromedio.toFixed(2)}</p>
-                        </div>
-                        <div className="rounded-xl p-4 text-white" style={{ background: 'linear-gradient(135deg, #E3D5CA 0%, #C1B4A4 100%)' }}>
+                        </div>}
+                        {canViewGeneral && <div className="rounded-xl p-4 text-white" style={{ background: 'linear-gradient(135deg, #E3D5CA 0%, #C1B4A4 100%)' }}>
                             <p className="text-xs uppercase tracking-wider">Cliente del Mes</p>
                             <p className="text-lg font-bold mt-2">{clienteMes}</p>
-                        </div>
-                        <div className="rounded-xl p-4 text-white" style={{ background: 'linear-gradient(135deg, #C1B4A4 0%, #817773 100%)' }}>
+                        </div>}
+                        {canViewGeneral && <div className="rounded-xl p-4 text-white" style={{ background: 'linear-gradient(135deg, #C1B4A4 0%, #817773 100%)' }}>
                             <p className="text-xs uppercase tracking-wider">Ordenes</p>
                             <p className="text-2xl font-bold mt-2">{ordenesCount}</p>
-                        </div>
+                        </div>}
                     </div>
 
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                        <div className="bg-[#F9F6F2] rounded-lg p-4">
+                        {canViewFinancial && <div className="bg-[#F9F6F2] rounded-lg p-4">
                             <h3 className="text-sm font-semibold mb-3" style={{ color: '#817773' }}>Ingresos por Servicio</h3>
                             <div className="h-64">
                                 {hasServicios ? (
@@ -257,9 +271,9 @@ const DashboardStats = () => {
                                     emptyState
                                 )}
                             </div>
-                        </div>
+                        </div>}
 
-                        <div className="bg-[#F9F6F2] rounded-lg p-4">
+                        {canViewGeneral && <div className="bg-[#F9F6F2] rounded-lg p-4">
                             <h3 className="text-sm font-semibold mb-3" style={{ color: '#817773' }}>Productos mas vendidos</h3>
                             <div className="h-64">
                                 {hasProductos ? (
@@ -285,10 +299,10 @@ const DashboardStats = () => {
                                     emptyState
                                 )}
                             </div>
-                        </div>
+                        </div>}
 
-                        <div className="bg-[#F9F6F2] rounded-lg p-4">
-                            <h3 className="text-sm font-semibold mb-3" style={{ color: '#817773' }}>Diagnosticos frecuentes</h3>
+                        {canViewGeneral && <div className="bg-[#F9F6F2] rounded-lg p-4">
+                            <h3 className="text-sm font-semibold mb-3" style={{ color: '#817773' }}>Rutinas frecuentes</h3>
                             <div className="h-64">
                                 {hasRutinas ? (
                                     <ResponsiveContainer width="100%" height="100%">
@@ -314,11 +328,11 @@ const DashboardStats = () => {
                                     emptyState
                                 )}
                             </div>
-                        </div>
+                        </div>}
                     </div>
 
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                        <div className="bg-white border rounded-lg overflow-hidden">
+                        {canViewFinancial && <div className="bg-white border rounded-lg overflow-hidden">
                             <div className="px-4 py-3 border-b" style={{ backgroundColor: '#F9F6F2' }}>
                                 <h4 className="text-sm font-semibold" style={{ color: '#817773' }}>Ingresos por Servicio</h4>
                             </div>
@@ -340,9 +354,9 @@ const DashboardStats = () => {
                                     </tbody>
                                 </table>
                             </div>
-                        </div>
+                        </div>}
 
-                        <div className="bg-white border rounded-lg overflow-hidden">
+                        {canViewGeneral && <div className="bg-white border rounded-lg overflow-hidden">
                             <div className="px-4 py-3 border-b" style={{ backgroundColor: '#F9F6F2' }}>
                                 <h4 className="text-sm font-semibold" style={{ color: '#817773' }}>Productos mas vendidos</h4>
                             </div>
@@ -364,11 +378,11 @@ const DashboardStats = () => {
                                     </tbody>
                                 </table>
                             </div>
-                        </div>
+                        </div>}
 
-                        <div className="bg-white border rounded-lg overflow-hidden">
+                        {canViewGeneral && <div className="bg-white border rounded-lg overflow-hidden">
                             <div className="px-4 py-3 border-b" style={{ backgroundColor: '#F9F6F2' }}>
-                                <h4 className="text-sm font-semibold" style={{ color: '#817773' }}>Diagnosticos frecuentes</h4>
+                                <h4 className="text-sm font-semibold" style={{ color: '#817773' }}>Rutinas frecuentes</h4>
                             </div>
                             <div className="overflow-x-auto">
                                 <table className="min-w-full text-sm">
@@ -388,7 +402,7 @@ const DashboardStats = () => {
                                     </tbody>
                                 </table>
                             </div>
-                        </div>
+                        </div>}
                     </div>
                 </div>
             )}

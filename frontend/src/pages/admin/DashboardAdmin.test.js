@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react';
 import axios from 'axios';
 
 import DashboardAdmin from './DashboardAdmin';
+import { useSession } from '../../context/SessionContext';
 
 
 const mockNavigate = jest.fn();
@@ -16,6 +17,9 @@ jest.mock('react-router-dom', () => ({
 }), { virtual: true });
 jest.mock('./Calendario', () => () => <div>Calendario</div>);
 jest.mock('../../components/AlertasCriticas', () => () => <div>Alertas</div>);
+jest.mock('../../context/SessionContext', () => ({
+    useSession: jest.fn()
+}));
 
 
 describe('DashboardAdmin con backend legacy', () => {
@@ -23,6 +27,10 @@ describe('DashboardAdmin con backend legacy', () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
+        useSession.mockReturnValue({
+            hasPermission: () => false,
+            hasAnyPermission: () => false
+        });
         localStorage.setItem('access_token', 'access-token');
         consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
     });
@@ -41,5 +49,23 @@ describe('DashboardAdmin con backend legacy', () => {
             'El dashboard administrativo todavía no está disponible para esta cuenta.'
         )).toBeInTheDocument();
         expect(mockNavigate).not.toHaveBeenCalledWith('/perfil');
+    });
+
+    test('view_reports no muestra accesos rápidos sin sus permisos propios', async () => {
+        axios.get.mockResolvedValue({
+            data: {
+                turnos_hoy: 0,
+                pendientes_accion: 0,
+                esperando_sena: 0,
+                proximos_turnos: []
+            }
+        });
+
+        render(<DashboardAdmin />);
+
+        expect(await screen.findByText('Gestión Rápida')).toBeInTheDocument();
+        expect(screen.queryByText('Configuración del Sistema')).not.toBeInTheDocument();
+        expect(screen.queryByText('Gestionar Rutinas')).not.toBeInTheDocument();
+        expect(screen.queryByText('Alertas')).not.toBeInTheDocument();
     });
 });

@@ -116,6 +116,7 @@ from .permissions import (
     CanManageTechnicalRiskPolicy,
     CanReviewTechnicalBooking,
     CanViewFinancialReports,
+    CanViewReports,
     CanManageStock,
     CanViewStock,
     CanManageProducts,
@@ -526,7 +527,7 @@ class WebhookMercadoPagoView(APIView):
 class ConfiguracionViewSet(viewsets.ModelViewSet):
     queryset = Configuracion.objects.all()
     serializer_class = ConfiguracionSerializer
-    permission_classes = [IsAdminUser]  # Solo administradores
+    permission_classes = [IsAuthenticated, CanManageConfiguration]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = ConfiguracionFilter
     
@@ -558,16 +559,34 @@ class ConfiguracionViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='publica', permission_classes=[AllowAny])
     def configuracion_publica(self, request):
-        config = self._ensure_singleton_exists()
+        config = Configuracion.objects.filter(pk=1).first() or Configuracion()
         return Response({
             'empresa_nombre': config.empresa_nombre or 'Bohemia Hair'
+        })
+
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path='comprobante',
+        permission_classes=[IsAuthenticated, CanViewFinancialReports],
+    )
+    def configuracion_comprobante(self, request):
+        """Proyección fiscal mínima para comprobantes financieros."""
+        config = Configuracion.objects.filter(pk=1).first() or Configuracion()
+        return Response({
+            'empresa_nombre': config.empresa_nombre or 'Bohemia Hair',
+            'comprobante_razon_social': config.comprobante_razon_social,
+            'comprobante_cuil': config.comprobante_cuil,
+            'comprobante_fecha_inicio_actividad': (
+                config.comprobante_fecha_inicio_actividad
+            ),
         })
 
 
 class ConfiguracionDiagnosticoViewSet(viewsets.ModelViewSet):
     queryset = ConfiguracionDiagnostico.objects.all()
     serializer_class = ConfiguracionDiagnosticoSerializer
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsAuthenticated, CanManageConfiguration]
 
     def _ensure_singleton_exists(self):
         ConfiguracionDiagnostico.get_singleton()
@@ -3048,7 +3067,7 @@ class AdminDashboardStatsView(APIView):
     """
     Devuelve estadísticas rápidas para la Pantalla Home del Administrador.
     """
-    permission_classes = [IsAdminUser] # Solo para Staff/Yani
+    permission_classes = [IsAuthenticated, CanViewReports]
 
     def get(self, request):
         today = timezone.now().date()
@@ -3536,9 +3555,7 @@ class ReglaDiagnosticoViewSet(viewsets.ModelViewSet):
     
     serializer_class = ReglaDiagnosticoSerializer
     
-    # Restricción de seguridad: Solo usuarios Administradores (Yani) pueden tocar esto.
-    # Si quieres que cualquier usuario logueado acceda (para pruebas), usa IsAuthenticated.
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsAuthenticated, CanManageConfiguration]
 
 class SeleccionarRutinaView(APIView):
     # 2. FORZAR AUTENTICACIÓN JWT (Esto arregla el conflicto con cookies/CSRF)

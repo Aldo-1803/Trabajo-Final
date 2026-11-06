@@ -3,13 +3,15 @@ from datetime import datetime, date
 from django.db.models import Sum, Count, F, DecimalField, ExpressionWrapper
 from rest_framework import viewsets
 from rest_framework.response import Response
-from rest_framework.permissions import IsAdminUser
+from rest_framework.permissions import IsAuthenticated
 
 from gestion.models import OrdenCompra, OrdenItem, RutinaCliente
+from gestion.permissions import CanViewGeneralOrFinancialReports
+from usuarios.roles import BusinessPermission
 
 
 class DashboardStatsViewSet(viewsets.ViewSet):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsAuthenticated, CanViewGeneralOrFinancialReports]
 
     def get_date_range(self, periodo, valor, anio):
         """Calcula fecha inicio y fin segun el filtro."""
@@ -43,72 +45,84 @@ class DashboardStatsViewSet(viewsets.ViewSet):
 
         start_date, end_date = self.get_date_range(periodo, valor, anio)
 
-        # 1. Top Servicios (Ingresos por categoria de servicio/producto)
-        ingresos_expr = ExpressionWrapper(
-            F('precio_historico') * F('cantidad'),
-            output_field=DecimalField(max_digits=12, decimal_places=2)
-        )
-
-        servicios_stats = OrdenItem.objects.filter(
-            orden__estado='COMPLETADO',
-            orden__creado_at__date__range=[start_date, end_date]
-        ).values('producto__nombre').annotate(
-            valor=Sum(ingresos_expr)
-        ).order_by('-valor')[:5]
-
-        # 2. Productos mas vendidos (Cantidad)
-        productos_stats = OrdenItem.objects.filter(
-            orden__estado='COMPLETADO',
-            orden__creado_at__date__range=[start_date, end_date]
-        ).values('producto__nombre').annotate(
-            valor=Sum('cantidad')
-        ).order_by('-valor')[:5]
-
-        # 3. Rutinas mas frecuentes
-        rutinas_stats = RutinaCliente.objects.filter(
-            fecha_asignacion__date__range=[start_date, end_date]
-        ).values('rutina_original__nombre').annotate(
-            valor=Count('id')
-        ).order_by('-valor')[:5]
-
-        resumen = OrdenCompra.objects.filter(
+        orders = OrdenCompra.objects.filter(
             estado='COMPLETADO',
             creado_at__date__range=[start_date, end_date]
-        ).aggregate(
-            total_ingresos=Sum('total'),
-            ordenes_count=Count('id')
+        )
+        can_view_general = request.user.has_perm(BusinessPermission.VIEW_REPORTS)
+        can_view_financial = request.user.has_perm(
+            BusinessPermission.VIEW_FINANCIAL_REPORTS
         )
 
-        cliente_mes = OrdenCompra.objects.filter(
-            estado='COMPLETADO',
-            creado_at__date__range=[start_date, end_date]
-        ).values(
-            'cliente__usuario__id',
-            'cliente__usuario__first_name',
-            'cliente__usuario__last_name',
-            'cliente__usuario__email'
-        ).annotate(
-            total_ordenes=Count('id')
-        ).order_by('-total_ordenes').first()
+        response_data = {
+            'rango': {'inicio': start_date, 'fin': end_date},
+        }
 
-        cliente_nombre = None
-        if cliente_mes:
-            nombre = f"{cliente_mes.get('cliente__usuario__first_name', '').strip()} {cliente_mes.get('cliente__usuario__last_name', '').strip()}".strip()
-            if nombre:
-                cliente_nombre = nombre
-            else:
-                cliente_nombre = cliente_mes.get('cliente__usuario__email') or f"Cliente #{cliente_mes.get('cliente__id')}"
+        if can_view_general:
+            productos_stats = OrdenItem.objects.filter(
+                orden__in=orders,
+            ).values('producto__nombre').annotate(
+                valor=Sum('cantidad')
+            ).order_by('-valor')[:5]
 
-        return Response({
-            'servicios': servicios_stats,
-            'productos': productos_stats,
-            'rutinas': rutinas_stats,
-            'total_ingresos': float(resumen.get('total_ingresos') or 0),
-            'ordenes_count': int(resumen.get('ordenes_count') or 0),
-            'cliente_mes': {
-                'id': cliente_mes.get('cliente__usuario__id') if cliente_mes else None,
-                'nombre': cliente_nombre,
-                'total_ordenes': cliente_mes.get('total_ordenes') if cliente_mes else 0,
-            },
-            'rango': {'inicio': start_date, 'fin': end_date}
-        })
+            rutinas_stats = RutinaCliente.objects.filter(
+                fecha_asignacion__date__range=[start_date, end_date]
+            ).values('rutina_original__nombre').annotate(
+                valor=Count('id')
+            ).order_by('-valor')[:5]
+
+            cliente_mes = orders.values(
+                'cliente__usuario__id',
+                'cliente__usuario__first_name',
+                'cliente__usuario__last_name',
+            ).annotate(
+                total_ordenes=Count('id')
+            ).order_by('-total_ordenes', 'cliente__usuario__id').first()
+
+            cliente_nombre = None
+            if cliente_mes:
+                cliente_nombre = (
+                    f"{cliente_mes.get('cliente__usuario__first_name', '').strip()} "
+                    f"{cliente_mes.get('cliente__usuario__last_name', '').strip()}"
+                ).strip()
+                if not cliente_nombre:
+                    cliente_nombre = (
+                        f"Cliente #{cliente_mes['cliente__usuario__id']}"
+                    )
+
+            response_data.update({
+                'productos': productos_stats,
+                'rutinas': rutinas_stats,
+                'ordenes_count': orders.count(),
+                'cliente_mes': {
+                    'id': (
+                        cliente_mes.get('cliente__usuario__id')
+                        if cliente_mes else None
+                    ),
+                    'nombre': cliente_nombre,
+                    'total_ordenes': (
+                        cliente_mes.get('total_ordenes')
+                        if cliente_mes else 0
+                    ),
+                },
+            })
+
+        if can_view_financial:
+            ingresos_expr = ExpressionWrapper(
+                F('precio_historico') * F('cantidad'),
+                output_field=DecimalField(max_digits=12, decimal_places=2),
+            )
+            servicios_stats = OrdenItem.objects.filter(
+                orden__in=orders,
+            ).values('producto__nombre').annotate(
+                valor=Sum(ingresos_expr)
+            ).order_by('-valor')[:5]
+            resumen = orders.aggregate(total_ingresos=Sum('total'))
+            response_data.update({
+                'servicios': servicios_stats,
+                'total_ingresos': float(
+                    resumen.get('total_ingresos') or 0
+                ),
+            })
+
+        return Response(response_data)

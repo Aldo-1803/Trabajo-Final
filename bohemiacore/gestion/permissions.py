@@ -107,6 +107,31 @@ class CanManageConfiguration(BasePermission):
         )
 
 
+class CanViewReports(BasePermission):
+    message = 'No tiene permisos para consultar reportes generales.'
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            getattr(user, 'is_active', False)
+            and user.has_perm(BusinessPermission.VIEW_REPORTS)
+        )
+
+
+class CanViewGeneralOrFinancialReports(BasePermission):
+    message = 'No tiene permisos para consultar reportes.'
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            getattr(user, 'is_active', False)
+            and (
+                user.has_perm(BusinessPermission.VIEW_REPORTS)
+                or user.has_perm(BusinessPermission.VIEW_FINANCIAL_REPORTS)
+            )
+        )
+
+
 class CanReviewTechnicalBooking(BasePermission):
     message = (
         'Se requiere permiso de revisión técnica, Personal activo y la '

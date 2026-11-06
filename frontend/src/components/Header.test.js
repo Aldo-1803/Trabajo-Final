@@ -135,7 +135,7 @@ describe('Header basado en SessionContext', () => {
     test('ADMINISTRADOR no depende de is_staff y filtra por permisos', () => {
         renderHeader({
             businessRole: 'ADMINISTRADOR',
-            permissions: ['usuarios.manage_users'],
+            permissions: ['usuarios.manage_users', 'gestion.view_reports'],
             user: { is_staff: false }
         });
 
@@ -172,7 +172,7 @@ describe('Header basado en SessionContext', () => {
         'gestion.view_financial_reports'
     ])('Reportes aparece con %s para el módulo habilitado', (permission) => {
         renderHeader({
-            businessRole: 'ADMINISTRADOR',
+            businessRole: 'PROFESIONAL',
             permissions: [permission]
         });
 
@@ -268,7 +268,7 @@ describe('Header basado en SessionContext', () => {
         })).toHaveAttribute('href', '/operaciones');
     });
 
-    test('permisos técnicos legacy no habilitan módulos pendientes', () => {
+    test('view_reports habilita Reportes sin habilitar diagnóstico por rol', () => {
         renderHeader({
             businessRole: 'PROFESIONAL',
             permissions: [
@@ -277,7 +277,7 @@ describe('Header basado en SessionContext', () => {
             ]
         });
 
-        expect(screen.queryByRole('link', { name: 'Reportes' })).not.toBeInTheDocument();
+        expect(screen.getByRole('link', { name: 'Reportes' })).toBeInTheDocument();
         expect(screen.queryByText('Diagnóstico')).not.toBeInTheDocument();
     });
 });

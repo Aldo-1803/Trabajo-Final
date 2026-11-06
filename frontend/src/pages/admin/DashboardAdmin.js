@@ -3,8 +3,34 @@ import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import Calendario from './Calendario';
 import AlertasCriticas from '../../components/AlertasCriticas';
+import { useSession } from '../../context/SessionContext';
 
 const DashboardAdmin = () => {
+    const { hasPermission, hasAnyPermission } = useSession();
+    const canAssignRoutines = hasPermission('gestion.assign_routines');
+    const canViewClients = hasPermission('usuarios.view_clients');
+    const canManageUsers = hasPermission('usuarios.manage_users');
+    const canManagePersonal = hasAnyPermission([
+        'gestion.manage_personal',
+        'gestion.manage_skills'
+    ]);
+    const canManageServices = hasAnyPermission([
+        'gestion.manage_prices',
+        'gestion.manage_formulas'
+    ]);
+    const canManageProducts = hasAnyPermission([
+        'gestion.view_stock',
+        'gestion.manage_stock',
+        'gestion.manage_products',
+        'gestion.manage_prices',
+        'gestion.manage_promotions'
+    ]);
+    const canManageConfiguration = hasPermission('gestion.manage_configuration');
+    const canViewAgenda = hasPermission('gestion.view_global_agenda');
+    const canManageOrders = hasPermission('gestion.manage_stock');
+    const canViewAudit = hasPermission('gestion.view_audit');
+    const canViewAlerts = hasPermission('gestion.view_stock')
+        && hasPermission('gestion.manage_promotions');
     const [stats, setStats] = useState(null);
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState('');
@@ -103,7 +129,7 @@ const DashboardAdmin = () => {
                 </div>
 
                 {/* --- ALERTAS Y PROMOS (COLAPSABLE) --- */}
-                <div className="mb-8">
+                {canViewAlerts && <div className="mb-8">
                     <details className="bg-white rounded-xl shadow-md">
                         <summary
                             className="cursor-pointer select-none px-5 py-4 text-sm font-semibold"
@@ -115,7 +141,7 @@ const DashboardAdmin = () => {
                             <AlertasCriticas />
                         </div>
                     </details>
-                </div>
+                </div>}
 
                 {/* --- SECCIÓN DE ACCESOS RÁPIDOS Y AGENDA --- */}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -124,7 +150,7 @@ const DashboardAdmin = () => {
                     <div className="lg:col-span-1 space-y-4">
                         <h3 className="text-xl font-bold mb-4" style={{ color: '#817773' }}>Gestión Rápida</h3>
                         
-                        <button 
+                        {canAssignRoutines && <button
                             onClick={() => navigate('/admin/gestionar-rutinas')}
                             className="w-full p-4 rounded-lg shadow hover:shadow-md flex items-center gap-4 transition-all"
                             style={{ backgroundColor: 'white' }}
@@ -136,9 +162,9 @@ const DashboardAdmin = () => {
                                 <h4 className="font-bold" style={{ color: '#817773' }}>Gestionar Rutinas</h4>
                                 <p className="text-xs" style={{ color: '#8B8682' }}>Crear o editar recomendaciones</p>
                             </div>
-                        </button>
+                        </button>}
 
-                        <button 
+                        {canViewClients && <button
                             onClick={() => navigate('/admin/clientes')}
                             className="w-full p-4 rounded-lg shadow hover:shadow-md flex items-center gap-4 transition-all"
                             style={{ backgroundColor: 'white' }}
@@ -150,9 +176,9 @@ const DashboardAdmin = () => {
                                 <h4 className="font-bold" style={{ color: '#817773' }}>Clientes</h4>
                                 <p className="text-xs" style={{ color: '#8B8682' }}>Ver base de datos y perfiles</p>
                             </div>
-                        </button>
+                        </button>}
 
-                        <button 
+                        {canManageUsers && <button
                             onClick={() => navigate('/admin/usuarios')}
                             className="w-full p-4 rounded-lg shadow hover:shadow-md flex items-center gap-4 transition-all"
                             style={{ backgroundColor: 'white' }}
@@ -164,9 +190,9 @@ const DashboardAdmin = () => {
                                 <h4 className="font-bold" style={{ color: '#817773' }}>Gestionar Usuarios</h4>
                                 <p className="text-xs" style={{ color: '#8B8682' }}>Permisos y cuentas de staff</p>
                             </div>
-                        </button>
+                        </button>}
 
-                        <button 
+                        {canManagePersonal && <button
                             onClick={() => navigate('/admin/personal')}
                             className="w-full p-4 rounded-lg shadow hover:shadow-md flex items-center gap-4 transition-all"
                             style={{ backgroundColor: 'white' }}
@@ -178,9 +204,9 @@ const DashboardAdmin = () => {
                                 <h4 className="font-bold" style={{ color: '#817773' }}>Personal & Profesionales</h4>
                                 <p className="text-xs" style={{ color: '#8B8682' }}>Equipo, roles y habilidades</p>
                             </div>
-                        </button>
+                        </button>}
 
-                        <button 
+                        {canManageServices && <button
                             onClick={() => navigate('/admin/servicios')}
                             className="w-full p-4 rounded-lg shadow hover:shadow-md flex items-center gap-4 transition-all"
                             style={{ backgroundColor: 'white' }}
@@ -192,9 +218,9 @@ const DashboardAdmin = () => {
                                 <h4 className="font-bold" style={{ color: '#817773' }}>Servicios & Impacto</h4>
                                 <p className="text-xs" style={{ color: '#8B8682' }}>Configurar precios y reglas</p>
                             </div>
-                        </button>
+                        </button>}
 
-                        <button 
+                        {canManageProducts && <button
                             onClick={() => navigate('/admin/productos')}
                             className="w-full p-4 rounded-lg shadow hover:shadow-md flex items-center gap-4 transition-all"
                             style={{ backgroundColor: 'white' }}
@@ -206,9 +232,9 @@ const DashboardAdmin = () => {
                                 <h4 className="font-bold" style={{ color: '#817773' }}>Gestionar Productos</h4>
                                 <p className="text-xs" style={{ color: '#8B8682' }}>Inventario y catálogo</p>
                             </div>
-                        </button>
+                        </button>}
 
-                        <button 
+                        {canManageConfiguration && <button
                             onClick={() => navigate('/admin/equipamiento')}
                             className="w-full p-4 rounded-lg shadow hover:shadow-md flex items-center gap-4 transition-all"
                             style={{ backgroundColor: 'white' }}
@@ -220,9 +246,9 @@ const DashboardAdmin = () => {
                                 <h4 className="font-bold" style={{ color: '#817773' }}>Gestionar Equipamiento</h4>
                                 <p className="text-xs" style={{ color: '#8B8682' }}>Herramientas y estado</p>
                             </div>
-                        </button>
+                        </button>}
 
-                        <button 
+                        {canManageConfiguration && <button
                             onClick={() => navigate('/admin/reglas')}
                             className="w-full p-4 rounded-lg shadow hover:shadow-md flex items-center gap-4 transition-all"
                             style={{ backgroundColor: 'white' }}
@@ -234,9 +260,9 @@ const DashboardAdmin = () => {
                                 <h4 className="font-bold" style={{ color: '#817773' }}>Motor de Diagnóstico</h4>
                                 <p className="text-xs" style={{ color: '#8B8682' }}>Reglas para asignar rutinas</p>
                             </div>
-                        </button>
+                        </button>}
 
-                        <button 
+                        {canViewAgenda && <button
                             onClick={() => navigate('/admin/agenda')}
                             className="w-full p-4 rounded-lg shadow hover:shadow-md flex items-center gap-4 transition-all"
                             style={{ backgroundColor: 'white' }}
@@ -248,9 +274,9 @@ const DashboardAdmin = () => {
                                 <h4 className="font-bold" style={{ color: '#817773' }}>Gestión de Agenda</h4>
                                 <p className="text-xs" style={{ color: '#8B8682' }}>Horarios y disponibilidad</p>
                             </div>
-                        </button>
+                        </button>}
 
-                        <button 
+                        {canManageConfiguration && <button
                             onClick={() => navigate('/admin/configuracion')}
                             className="w-full p-4 rounded-lg shadow hover:shadow-md flex items-center gap-4 transition-all"
                             style={{ backgroundColor: 'white' }}
@@ -262,9 +288,9 @@ const DashboardAdmin = () => {
                                 <h4 className="font-bold" style={{ color: '#817773' }}>Configuración del Sistema</h4>
                                 <p className="text-xs" style={{ color: '#8B8682' }}>Parámetros y catálogos</p>
                             </div>
-                        </button>
+                        </button>}
 
-                        <button 
+                        {canManageOrders && <button
                             onClick={() => navigate('/admin/ordenes')}
                             className="w-full p-4 rounded-lg shadow hover:shadow-md flex items-center gap-4 transition-all"
                             style={{ backgroundColor: 'white' }}
@@ -276,9 +302,9 @@ const DashboardAdmin = () => {
                                 <h4 className="font-bold" style={{ color: '#817773' }}>Gestión de Órdenes</h4>
                                 <p className="text-xs" style={{ color: '#8B8682' }}>Órdenes de compra de clientes</p>
                             </div>
-                        </button>
+                        </button>}
 
-                        <button 
+                        {canViewAudit && <button
                             onClick={() => navigate('/admin/auditoria')}
                             className="w-full p-4 rounded-lg shadow hover:shadow-md flex items-center gap-4 transition-all"
                             style={{ backgroundColor: 'white' }}
@@ -290,7 +316,7 @@ const DashboardAdmin = () => {
                                 <h4 className="font-bold" style={{ color: '#817773' }}>Auditoría del Sistema</h4>
                                 <p className="text-xs" style={{ color: '#8B8682' }}>Registro de cambios y acciones</p>
                             </div>
-                        </button>
+                        </button>}
                     </div>
 
                     {/* COLUMNA DERECHA: PRÓXIMOS TURNOS CON CALENDARIO */}

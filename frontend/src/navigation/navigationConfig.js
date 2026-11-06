@@ -131,7 +131,7 @@ export const navigationItems = [
         label: 'Dashboard',
         path: ADMIN_ROUTES.DASHBOARD,
         placement: NAVIGATION_PLACEMENT.PRIMARY,
-        allowedRoles: ['ADMINISTRADOR']
+        requiredPermission: 'gestion.view_reports'
     },
     {
         id: 'admin-users',
@@ -190,7 +190,6 @@ export const navigationItems = [
         label: 'Reportes',
         path: ADMIN_ROUTES.REPORTES,
         placement: NAVIGATION_PLACEMENT.PRIMARY,
-        allowedRoles: ['ADMINISTRADOR'],
         anyPermissions: [
             'gestion.view_reports',
             'gestion.view_financial_reports'
@@ -209,7 +208,6 @@ export const navigationItems = [
         label: 'Configuración',
         path: ADMIN_ROUTES.CONFIGURACION,
         placement: NAVIGATION_PLACEMENT.PRIMARY,
-        allowedRoles: ['ADMINISTRADOR'],
         requiredPermission: 'gestion.manage_configuration'
     }
 ];

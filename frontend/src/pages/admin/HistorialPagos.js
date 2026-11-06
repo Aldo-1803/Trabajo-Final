@@ -44,20 +44,10 @@ const HistorialPagos = () => {
         const cargarConfiguracion = async () => {
             try {
                 const token = localStorage.getItem('access_token');
-                const res = await axios.get('/api/gestion/configuracion/', {
+                const res = await axios.get('/api/gestion/configuracion/comprobante/', {
                     headers: token ? { 'Authorization': `Bearer ${token}` } : {}
                 });
-                let configData = null;
-
-                if (res.data?.results?.length) {
-                    configData = res.data.results[0];
-                } else if (Array.isArray(res.data) && res.data.length > 0) {
-                    configData = res.data[0];
-                } else if (res.data && typeof res.data === 'object' && res.data.id) {
-                    configData = res.data;
-                }
-
-                setConfiguracion(configData || null);
+                setConfiguracion(res.data || null);
             } catch (error) {
                 console.error('Error cargando configuracion:', error);
             }

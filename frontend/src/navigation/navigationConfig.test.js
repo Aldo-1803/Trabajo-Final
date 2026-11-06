@@ -96,6 +96,51 @@ describe('navegación de incidencias financieras', () => {
 });
 
 
+describe('navegación de configuración y reportes', () => {
+    test('view_reports muestra Dashboard y Reportes sin depender del rol', () => {
+        const visible = getVisibleNavigationItems(
+            access({
+                permissions: ['gestion.view_reports'],
+                businessRole: 'PROFESIONAL'
+            }),
+            NAVIGATION_PLACEMENT.PRIMARY
+        );
+
+        expect(visible.map((item) => item.id)).toEqual(expect.arrayContaining([
+            'admin-dashboard',
+            'admin-reports'
+        ]));
+    });
+
+    test('view_financial_reports muestra Reportes pero no Dashboard general', () => {
+        const visible = getVisibleNavigationItems(
+            access({
+                permissions: ['gestion.view_financial_reports'],
+                businessRole: 'EMPLEADO'
+            }),
+            NAVIGATION_PLACEMENT.PRIMARY
+        );
+
+        expect(visible.map((item) => item.id)).toContain('admin-reports');
+        expect(visible.map((item) => item.id)).not.toContain('admin-dashboard');
+    });
+
+    test('manage_configuration muestra Configuración sin habilitar reportes', () => {
+        const visible = getVisibleNavigationItems(
+            access({
+                permissions: ['gestion.manage_configuration'],
+                businessRole: 'EMPLEADO'
+            }),
+            NAVIGATION_PLACEMENT.PRIMARY
+        );
+
+        expect(visible.map((item) => item.id)).toContain('admin-configuration');
+        expect(visible.map((item) => item.id)).not.toContain('admin-reports');
+        expect(visible.map((item) => item.id)).not.toContain('admin-dashboard');
+    });
+});
+
+
 describe('navegación de inventario por permisos', () => {
     test.each([
         'gestion.view_stock',

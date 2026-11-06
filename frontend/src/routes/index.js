@@ -122,14 +122,14 @@ export const AppRoutes = () => {
                 <Route path={CLIENTE_ROUTES.CONTENIDO_DETALLE} element={<ProtectedRoute requiredProfile="cliente"><DetalleContenido /></ProtectedRoute>} />
 
                 {/* Admin Routes */}
-                <Route path={ADMIN_ROUTES.DASHBOARD} element={<ProtectedRoute><DashboardAdmin /></ProtectedRoute>} />
+                <Route path={ADMIN_ROUTES.DASHBOARD} element={<ProtectedRoute requiredPermission="gestion.view_reports"><DashboardAdmin /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.REPORTES} element={<ProtectedRoute requiredAnyPermission={['gestion.view_reports', 'gestion.view_financial_reports']}><Reportes /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.NUEVO_TURNO} element={<ProtectedRoute requiredPermission="gestion.create_turno_for_client"><NuevoTurno /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.TURNOS} element={<ProtectedRoute requiredPermission="gestion.view_global_agenda"><GestionTurnos /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.GESTIONAR_RUTINAS} element={<ProtectedRoute requiredPermission="gestion.assign_routines"><GestionarRutinas /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.RUTINA_DETALLE} element={<ProtectedRoute requiredPermission="gestion.assign_routines"><DetalleRutina /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.SERVICIOS} element={<ProtectedRoute requiredAnyPermission={['gestion.manage_prices', 'gestion.manage_formulas']}><GestionarServicios /></ProtectedRoute>} />
-                <Route path={ADMIN_ROUTES.REGLAS} element={<ProtectedRoute><GestionarReglas /></ProtectedRoute>} />
+                <Route path={ADMIN_ROUTES.REGLAS} element={<ProtectedRoute requiredPermission="gestion.manage_configuration"><GestionarReglas /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.PRODUCTOS} element={<ProtectedRoute requiredAnyPermission={['gestion.view_stock', 'gestion.manage_stock', 'gestion.manage_products', 'gestion.manage_prices', 'gestion.manage_promotions']}><GestionProductos /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.USUARIOS} element={<ProtectedRoute requiredPermission="usuarios.manage_users"><GestionUsuarios /></ProtectedRoute>} />
                 <Route path={ADMIN_ROUTES.CLIENTES} element={<ProtectedRoute requiredPermission="usuarios.view_clients"><GestionClientes /></ProtectedRoute>} />
