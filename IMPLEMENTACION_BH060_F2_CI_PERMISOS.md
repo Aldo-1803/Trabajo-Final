@@ -8,7 +8,7 @@
 
 **Implementación local:** VALIDADA
 
-**Ejecución real en GitHub Actions:** PENDIENTE DE PUBLICACIÓN
+**Ejecución real en GitHub Actions:** EN VALIDACIÓN
 
 > **BH-060 F2 = PENDIENTE DE VALIDACION REMOTA**
 
@@ -103,9 +103,12 @@ npm test -- --watchAll=false --runInBand
 npm run build
 ```
 
-`CI=true` impide modo watch. Jest y build se ejecutan ambos; el job falla si
-cualquiera devuelve código no cero. No se usa `|| true` ni se silencian
-aserciones o warnings.
+Jest se ejecuta con `CI=true` para impedir modo watch. El build se ejecuta con
+`CI=false` porque Create React App convierte todos los warnings preexistentes en
+errores cuando esa variable vale `true`; los warnings permanecen visibles en el
+log y cualquier error real de compilación conserva un código distinto de cero.
+Jest y build se ejecutan ambos y el job falla si cualquiera devuelve código no
+cero. No se usa `|| true` ni se silencian aserciones, errores o warnings.
 
 ### 4.4 Resultado global
 
@@ -178,6 +181,7 @@ tokens, media ni datos de aplicación como artifacts.
 | Conteo de labels | B1 36, B2 10, B3 15, B4 9, B5 13, B6 4, B7 17. |
 | Resolución Python | `pip install --dry-run -r requirements-ci.txt`: conforme. |
 | Resolución frontend | `npm ci --dry-run`: conforme. |
+| Frontend con entorno corregido | Jest 34/34 suites y 289/289 tests; build exitoso con warnings visibles. |
 | Matriz F1 previa | 11/11 y regresión afectada 217/217 sobre PostgreSQL. |
 | Matriz BH-060.7 previa | 1.068/1.068 backend y 289/289 frontend. |
 | Whitespace | Sin errores en archivos F2. |
@@ -187,15 +191,30 @@ run remoto requerido.
 
 ## 9. Resultado remoto
 
-Pendiente después del primer push del workflow. Esta sección se actualizará con:
+### 9.1 Primera ejecución
 
-- URL e ID del run;
-- evento/disparo;
-- commit;
-- resultado B1–B7;
-- resultado Jest/build;
-- duración total y por job;
-- fallos o ajustes exclusivos de CI, si los hubiera.
+- Run: [42404318264](https://github.com/Aldo-1803/Trabajo-Final/actions/runs/42404318264).
+- Evento: `push` automático.
+- Commit: `9138a689652f2f054f1165264082eb880d864bbd`.
+- Resultado global: fallido después de 5 min 20 s de pared.
+- B1–B6: aprobados; ejecutaron los 1.015 tests funcionales esperados, incluidos
+  los 11 casos F1 distribuidos entre B3 y B4.
+- Duraciones de pared por job: B1 5 min 13 s; B2 1 min 41 s; B3 2 min 36 s;
+  B4 1 min 34 s; B5 4 min 24 s; B6 2 min 3 s; B7 2 min 54 s; frontend
+  1 min 34 s.
+- Frontend: Jest aprobó 34 suites y 289 tests; build falló porque
+  Create React App recibió `CI=true` y convirtió warnings preexistentes en
+  errores. Los warnings fueron visibles y correspondieron a dependencia
+  dinámica, Browserslist y ESLint; no hubo un error real de compilación.
+- B7: encontró y ejecutó los 64 tests esperados en proceso único, pero un test
+  terminó con un deadlock PostgreSQL en
+  `test_refund_execution_concurrency`; el resto del bloque aprobó. No se cambia
+  negocio ni el test dentro de F2.
+
+Corrección exclusiva de CI para frontend: `CI=true` queda limitado a Jest y el
+build usa `CI=false`, manteniendo sus warnings en la salida y propagando el
+código de error real. Una nueva ejecución completa deberá aprobar B1–B7, Jest,
+build y el resultado global antes de validar F2.
 
 ## 10. Riesgos y limitaciones
 

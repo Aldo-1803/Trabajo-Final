@@ -367,8 +367,6 @@ jobs:
     defaults:
       run:
         working-directory: frontend
-    env:
-      CI: 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -393,9 +391,9 @@ jobs:
           set -o pipefail
           started=$(date +%s)
           set +e
-          npm test -- --watchAll=false --runInBand 2>&1 | tee "${TEST_LOG}"
+          CI=true npm test -- --watchAll=false --runInBand 2>&1 | tee "${TEST_LOG}"
           test_status=${PIPESTATUS[0]}
-          npm run build 2>&1 | tee "${BUILD_LOG}"
+          CI=false npm run build 2>&1 | tee "${BUILD_LOG}"
           build_status=${PIPESTATUS[0]}
           set -e
           finished=$(date +%s)
