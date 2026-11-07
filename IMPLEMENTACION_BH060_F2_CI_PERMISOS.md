@@ -8,9 +8,9 @@
 
 **Implementación local:** VALIDADA
 
-**Ejecución real en GitHub Actions:** BLOQUEADA POR B7
+**Ejecución real en GitHub Actions:** APROBADA
 
-> **BH-060 F2 = BLOQUEADO**
+> **BH-060 F2 = VALIDADO**
 
 Este estado sólo puede cambiar a VALIDADO después de que una ejecución remota
 complete B1–B7, Jest y build con resultado global exitoso.
@@ -209,7 +209,7 @@ run remoto requerido.
 - B7: encontró y ejecutó los 64 tests esperados en proceso único, pero un test
   terminó con un deadlock PostgreSQL en
   `test_refund_execution_concurrency`; el resto del bloque aprobó. No se cambia
-  negocio ni el test dentro de F2.
+  negocio ni el test como parte de esa corrección exclusiva del workflow.
 
 Corrección exclusiva de CI para frontend: `CI=true` queda limitado a Jest y el
 build usa `CI=false`, manteniendo sus warnings en la salida y propagando el
@@ -241,8 +241,30 @@ verde para B7.
 No se agregan reintentos, tolerancia al error ni serialización artificial: esas
 medidas podrían ocultar el defecto que B7 debe detectar. Su investigación puede
 requerir cambios en el orden de locks, límites transaccionales o en la prueba de
-concurrencia; todos están fuera del alcance autorizado de F2, que permite
-corregir únicamente workflow y entorno CI.
+concurrencia. En ese punto quedaron fuera del alcance de la implementación del
+workflow; después se autorizó y ejecutó la corrección focal descrita en 9.3.
+
+### 9.3 Ejecución después de la corrección focal del deadlock
+
+- Run: [42411231934](https://github.com/Aldo-1803/Trabajo-Final/actions/runs/42411231934).
+- Evento: `push` automático.
+- Commit: `3a6640b9cce2345d64e5498b884ed506b44c017d`.
+- Resultado global: aprobado después de 4 min 28 s de pared.
+- B1–B6: aprobados; 1.015 tests funcionales.
+- B7: aprobado 64/64 en proceso único y sin `--parallel`; el log informa
+  `Ran 64 tests in 103.227s` y `OK`.
+- Backend total: 1.079/1.079.
+- Frontend: 34/34 suites y 289/289 tests Jest; build productivo aprobado con
+  warnings preexistentes visibles.
+- Duraciones de pared por job: B1 4 min 13 s; B2 1 min 53 s; B3 2 min 37 s;
+  B4 1 min 25 s; B5 4 min 21 s; B6 1 min 53 s; B7 2 min 53 s; frontend
+  1 min 29 s; resultado global 3 s.
+
+La causa y corrección se documentan en
+`ANALISIS_DEADLOCK_REFUND_BH060_F2.md` e
+`IMPLEMENTACION_FIX_DEADLOCK_REFUND_BH060_F2.md`. El lock de TX3 quedó limitado
+a `FinancialRefundOperation` mediante `select_for_update(of=('self',))`; no se
+agregaron retries, sleeps ni tolerancia a errores.
 
 ## 10. Riesgos y limitaciones
 
@@ -251,8 +273,9 @@ corregir únicamente workflow y entorno CI.
 - Los seis jobs funcionales privilegian aislamiento y tiempo de pared sobre
   ahorro de minutos de runner.
 - Los warnings preexistentes del frontend seguirán visibles en build/Jest.
-- B7 reproduce de forma consistente en Linux CI un deadlock de ejecución de
-  refunds que no se resuelve mediante configuración del workflow.
+- El deadlock histórico de B7 exigió corregir el alcance del lock en la lógica
+  transaccional; la matriz posterior lo valida, pero otros joins bloqueados
+  deben conservar órdenes explícitos y auditables.
 - Los artifacts de fallo pueden contener emails y valores sintéticos de tests,
   pero no credenciales reales ni dumps. La retención se limita a 7 días.
 - F2 no resuelve configuración de producción ni implementa BH-061/BH-062.
@@ -260,8 +283,8 @@ corregir únicamente workflow y entorno CI.
 ## 11. Veredicto
 
 El workflow está implementado, publicado y ejecuta toda la matriz con bases
-PostgreSQL independientes. B1–B6 y frontend están validados remotamente, pero
-B7 falla de forma reproducible en GitHub Actions por el deadlock descrito. El
-resultado global permanece rojo y BH-060 no se declara cerrado.
+PostgreSQL independientes. B1–B7, Jest, build y el resultado global están
+validados remotamente en el run `42411231934`. Esto valida F2; no inicia
+BH-061/BH-062 ni declara por sí solo otro cierre funcional.
 
-> **BH-060 F2 = BLOQUEADO**
+> **BH-060 F2 = VALIDADO**

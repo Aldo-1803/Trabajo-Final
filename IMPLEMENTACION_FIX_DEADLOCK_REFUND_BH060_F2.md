@@ -6,10 +6,9 @@
 - **Baseline:** `41d7e29c43a1f33affd4d563a13ae63df98810f8`
 - **Diagnóstico:** `ANALISIS_DEADLOCK_REFUND_BH060_F2.md`
 - **Validación local:** APROBADA
-- **Validación remota:** PENDIENTE
+- **Validación remota:** APROBADA
 
-> **BH-060 F2 = BLOQUEADO** hasta que una matriz completa de GitHub Actions
-> termine con todos sus jobs aprobados.
+> **BH-060 F2 = VALIDADO**
 
 ## 2. Causa corregida
 
@@ -217,13 +216,30 @@ La suite de 55 incluye:
 
 ## 10. Estado remoto
 
-Pendiente del push y de una ejecución completa de GitHub Actions. Deben aprobar:
+- **Run:** [42411231934](https://github.com/Aldo-1803/Trabajo-Final/actions/runs/42411231934)
+- **Evento:** `push` automático
+- **Commit validado:** `3a6640b9cce2345d64e5498b884ed506b44c017d`
+- **Resultado global:** `success`
+- **Duración total de pared:** 4 min 28 s
 
-- B1–B6;
-- B7 con sus 64 tests;
-- Jest y build;
-- resultado global.
+Resultados:
 
-Hasta obtener esa evidencia:
+| Componente | Resultado | Duración de pared |
+|---|---:|---:|
+| B1 — roles, usuarios y Personal | Aprobado | 4 min 13 s |
+| B2 — diagnóstico, ficha y rutinas | Aprobado | 1 min 53 s |
+| B3 — agenda, turnos y CU-27 | Aprobado | 2 min 37 s |
+| B4 — catálogos, inventario y órdenes | Aprobado | 1 min 25 s |
+| B5 — Caja, pagos e incidencias | Aprobado | 4 min 21 s |
+| B6 — Django Admin y auditoría | Aprobado | 1 min 53 s |
+| B7 — concurrencia PostgreSQL | 64/64, aprobado | 2 min 53 s |
+| Frontend — Jest y build | Aprobado | 1 min 29 s |
+| Resultado global | Aprobado | 3 s |
 
-> **BH-060 F2 = BLOQUEADO**
+El log completo de B7 confirma `Found 64 test(s)`, `Ran 64 tests in 103.227s`
+y `OK`. No se generaron artifacts de fallo.
+
+La corrección focal elimina el deadlock sin retries ni tolerancia al error y la
+matriz completa valida 1.079 tests backend, 289 tests frontend y el build.
+
+> **BH-060 F2 = VALIDADO**
