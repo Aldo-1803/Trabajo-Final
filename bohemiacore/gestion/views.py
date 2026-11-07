@@ -1,6 +1,6 @@
 from rest_framework import mixins, viewsets, status, serializers
 from rest_framework.decorators import api_view, permission_classes, action
-from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.exceptions import (
     MethodNotAllowed,
@@ -110,6 +110,7 @@ from .permissions import (
     CanRegisterTurnoArrival,
     CanReprogramAnyTurno,
     CanViewGlobalAgenda,
+    CanViewGlobalAgendaOrManageConfiguration,
     CanManagePersonal,
     CanManageConfiguration,
     CanManageSkills,
@@ -351,7 +352,7 @@ from .filters import (
 
 # --- UPLOAD DE IMÁGENES ---
 @api_view(['POST'])
-@permission_classes([IsAdminUser])
+@permission_classes([IsAuthenticated, CanManageProducts])
 def upload_imagen(request):
     """
     Endpoint para subir imágenes de productos.
@@ -365,9 +366,14 @@ def upload_imagen(request):
     
     imagen = request.FILES['imagen']
     
-    # Validar tipo de archivo
-    archivo_valido = imagen.content_type in ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
-    if not archivo_valido:
+    extensiones_por_tipo = {
+        'image/jpeg': '.jpg',
+        'image/png': '.png',
+        'image/gif': '.gif',
+        'image/webp': '.webp',
+    }
+    extension = extensiones_por_tipo.get(imagen.content_type)
+    if extension is None:
         return Response(
             {'error': 'Solo se permiten archivos de imagen (JPEG, PNG, GIF, WebP)'},
             status=status.HTTP_400_BAD_REQUEST
@@ -380,10 +386,10 @@ def upload_imagen(request):
             status=status.HTTP_400_BAD_REQUEST
         )
     
+    ruta = None
     try:
         # Generar nombre único para el archivo
-        ext = os.path.splitext(imagen.name)[1]
-        nombre_archivo = f'productos/{uuid4()}{ext}'
+        nombre_archivo = f'productos/{uuid4()}{extension}'
         
         # Guardar archivo en el storage (local o cloud)
         ruta = default_storage.save(nombre_archivo, ContentFile(imagen.read()))
@@ -399,10 +405,18 @@ def upload_imagen(request):
             'tamano': imagen.size
         }, status=status.HTTP_201_CREATED)
         
-    except Exception as e:
-        logger.error(f'Error al subir imagen: {str(e)}')
+    except Exception:
+        if ruta is not None:
+            try:
+                if default_storage.exists(ruta):
+                    default_storage.delete(ruta)
+            except Exception:
+                logger.exception(
+                    'No se pudo limpiar la imagen después de un error de storage.'
+                )
+        logger.exception('Error al subir una imagen de producto.')
         return Response(
-            {'error': f'Error al guardar la imagen: {str(e)}'},
+            {'error': 'Error al guardar la imagen'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
@@ -4457,8 +4471,18 @@ class HorarioLaboralViewSet(viewsets.ModelViewSet):
     """
     queryset = HorarioLaboral.objects.all().order_by('dia_semana', 'hora_inicio')
     serializer_class = HorarioLaboralSerializer
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsAuthenticated, CanManageConfiguration]
     pagination_class = None
+
+    def get_permissions(self):
+        if self.action in {'list', 'retrieve'}:
+            permission_classes = [
+                IsAuthenticated,
+                CanViewGlobalAgendaOrManageConfiguration,
+            ]
+        else:
+            permission_classes = [IsAuthenticated, CanManageConfiguration]
+        return [permission() for permission in permission_classes]
 
     @action(detail=False, methods=['post'])
     def configurar_rango(self, request):
@@ -4468,14 +4492,45 @@ class HorarioLaboralViewSet(viewsets.ModelViewSet):
         # Nuevo: recibir si es para todos o un ID específico
         seleccionar_todos = request.data.get('todos_profesionales', False) 
 
+        if not isinstance(patron, list) or not patron:
+            return Response(
+                {'error': 'Se requiere un patrón de horarios no vacío.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         try:
             # VALIDACIÓN ESTRICTA: Si no es "todos", verificar que NO haya personal_id nulo
             if not seleccionar_todos:
-                has_null_personal = any(item.get('personal_id') is None for item in patron)
+                has_invalid_item = any(not isinstance(item, dict) for item in patron)
+                has_null_personal = has_invalid_item or any(
+                    item.get('personal_id') is None
+                    for item in patron
+                    if isinstance(item, dict)
+                )
                 if has_null_personal:
                     return Response(
                         {"error": "No se pueden crear horarios sin asignar personal. Selecciona profesionales específicos o usa 'Todos'."},
                         status=400
+                    )
+
+                personal_ids = {item['personal_id'] for item in patron}
+                active_personal_ids = set(
+                    Personal.objects.filter(
+                        id__in=personal_ids,
+                        activo=True,
+                    ).values_list('id', flat=True)
+                )
+                missing_personal_ids = personal_ids - active_personal_ids
+                if missing_personal_ids:
+                    invalid_id = sorted(missing_personal_ids, key=str)[0]
+                    return Response(
+                        {
+                            'error': (
+                                f'El profesional con ID {invalid_id} no existe '
+                                'o está inactivo.'
+                            )
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
                     )
             
             with transaction.atomic():
@@ -4488,13 +4543,6 @@ class HorarioLaboralViewSet(viewsets.ModelViewSet):
                         # Solo al ID que viene en el item
                         personal_id = item.get('personal_id')
                         profesionales = Personal.objects.filter(id=personal_id, activo=True)
-                        
-                        # Validar que el personal existe y está activo
-                        if not profesionales.exists():
-                            return Response(
-                                {"error": f"El profesional con ID {personal_id} no existe o está inactivo."},
-                                status=400
-                            )
 
                     # 2. Creamos la regla para cada profesional identificado
                     for prof in profesionales:
@@ -4897,7 +4945,7 @@ class FichaTecnicaViewSet(viewsets.ModelViewSet):
 class RequisitoServicioViewSet(viewsets.ModelViewSet):
     """
     ViewSet para gestionar los requisitos de equipamiento por servicio.
-    Solo administradores pueden ver/crear/editar/eliminar.
+    Requiere el permiso efectivo manage_configuration para todo el CRUD.
     
     Validaciones:
     - El tipo_equipamiento debe existir en la BD antes de asignarlo
@@ -4906,7 +4954,7 @@ class RequisitoServicioViewSet(viewsets.ModelViewSet):
     """
     queryset = RequisitoServicio.objects.all()
     serializer_class = RequisitoServicioSerializer
-    permission_classes = [IsAuthenticated, IsAdminUser]
+    permission_classes = [IsAuthenticated, CanManageConfiguration]
     
     def get_queryset(self):
         """
@@ -4961,14 +5009,27 @@ class RequisitoServicioViewSet(viewsets.ModelViewSet):
         Actualizar un requisito de servicio con validaciones.
         """
         try:
+            tipo_equipamiento = serializer.validated_data.get(
+                'tipo_equipamiento',
+                serializer.instance.tipo_equipamiento,
+            )
+            if not Equipamiento.objects.filter(
+                tipo=tipo_equipamiento,
+                is_active=True,
+            ).exists():
+                raise ValidationError(
+                    f"El tipo de equipamiento '{tipo_equipamiento.nombre}' "
+                    'no tiene instancias activas.'
+                )
+
             # Ejecutar validaciones del modelo
-            if hasattr(serializer.validated_data.get('tipo_equipamiento'), 'clean'):
-                serializer.validated_data['tipo_equipamiento'].clean()
-            serializer.save()
+            if hasattr(tipo_equipamiento, 'clean'):
+                tipo_equipamiento.clean()
+            instance = serializer.save()
             logger.info(
                 f"Requisito de equipamiento actualizado: "
-                f"Servicio {serializer.validated_data['servicio'].nombre} "
-                f"requiere {serializer.validated_data['tipo_equipamiento'].nombre}"
+                f"Servicio {instance.servicio.nombre} "
+                f"requiere {instance.tipo_equipamiento.nombre}"
             )
         except Exception as e:
             logger.error(f"Error al actualizar requisito de equipamiento: {str(e)}")

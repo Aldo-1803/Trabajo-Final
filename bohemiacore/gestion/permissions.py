@@ -107,6 +107,20 @@ class CanManageConfiguration(BasePermission):
         )
 
 
+class CanViewGlobalAgendaOrManageConfiguration(BasePermission):
+    message = 'No tiene permisos para consultar la configuración de horarios.'
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            getattr(user, 'is_active', False)
+            and (
+                user.has_perm(BusinessPermission.VIEW_GLOBAL_AGENDA)
+                or user.has_perm(BusinessPermission.MANAGE_CONFIGURATION)
+            )
+        )
+
+
 class CanViewReports(BasePermission):
     message = 'No tiene permisos para consultar reportes generales.'
 
