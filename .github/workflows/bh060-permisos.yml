@@ -1,0 +1,484 @@
+name: BH-060 permisos por rol
+
+on:
+  push:
+    branches:
+      - save/work-in-progress
+  pull_request:
+    branches:
+      - save/work-in-progress
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bh060-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: '3.13.7'
+  NODE_VERSION: '24.11.0'
+  DB_HOST: 127.0.0.1
+  DB_PORT: '5432'
+  DB_USER: bh060_ci
+  DB_PASSWORD: bh060_ci_password
+  SECRET_KEY: bh060-ci-only-key-not-for-production
+  TZ: America/Bogota
+  PYTHONUNBUFFERED: '1'
+  MERCADO_PAGO_PUBLIC_BASE_URL: http://testserver
+
+jobs:
+  backend:
+    name: Backend ${{ matrix.block }} — ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ matrix.timeout }}
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        include:
+          - block: B1
+            name: roles, usuarios y Personal
+            expected: 411
+            timeout: 30
+            database: test_bohemia_hair_ci_b1
+            labels: >-
+              usuarios.test_roles
+              usuarios.test_public_registration
+              usuarios.test_inactive_login
+              usuarios.test_current_session_api
+              usuarios.test_client_account_creation_services
+              usuarios.test_client_account_creation_api
+              usuarios.test_client_access_api
+              usuarios.test_administrator_account_creation_services
+              usuarios.test_administrator_account_creation_api
+              usuarios.test_bh059_c_role_change_services
+              usuarios.test_account_reactivation_services
+              usuarios.test_account_deactivation_services
+              usuarios.test_access_services
+              usuarios.tests
+              gestion.tests.test_account_deactivation_api
+              gestion.tests.test_account_reactivation_api
+              gestion.tests.test_bh059_a_access_surfaces
+              gestion.tests.test_bh059_b_capability_read
+              gestion.tests.test_bh059_c_business_role_change
+              gestion.tests.test_personal_access_api
+              gestion.tests.test_personal_access_creation_api
+              gestion.tests.test_personal_access_creation_services
+              gestion.tests.test_personal_access_services
+              gestion.tests.test_personal_business_role_api
+              gestion.tests.test_personal_business_role_services
+              gestion.tests.test_personal_delete_disabled_api
+              gestion.tests.test_personal_security
+              gestion.tests.test_personal_status_api
+              gestion.tests.test_personal_status_services
+              gestion.tests.test_work_access_revocation_api
+              gestion.tests.test_work_access_revocation_services
+              gestion.tests.test_full_work_access_revocation_api
+              gestion.tests.test_full_work_access_revocation_services
+              gestion.tests.test_state_residual_aliases_bh060_6
+              gestion.tests.test_test_harness
+              gestion.tests.test_audit_middleware
+          - block: B2
+            name: diagnóstico, ficha y rutinas
+            expected: 155
+            timeout: 20
+            database: test_bohemia_hair_ci_b2
+            labels: >-
+              gestion.tests.test_diagnosis_authorization_api
+              gestion.tests.test_skills_api
+              gestion.tests.test_skills_migration
+              gestion.tests.test_technical_record_formula_routine_permissions_bh060_3
+              gestion.tests.test_technical_booking_blockers
+              gestion.tests.test_technical_booking_requests
+              gestion.tests.test_technical_risk_evaluator
+              gestion.tests.test_technical_risk_models
+              gestion.tests.test_technical_risk_policy_api
+              gestion.tests.test_technical_risk_profiles
+          - block: B3
+            name: agenda, turnos y CU-27
+            expected: 158
+            timeout: 25
+            database: test_bohemia_hair_ci_b3
+            labels: >-
+              gestion.tests.test_booking_frontend_api
+              gestion.tests.test_legacy_agenda_permissions_bh060_2.LegacyAgendaPermissionTests
+              gestion.tests.test_slot_holds
+              gestion.tests.test_slot_hold_consumption
+              gestion.tests.test_turno_arrival_api
+              gestion.tests.test_turno_creation_api
+              gestion.tests.test_turno_management_api
+              gestion.tests.test_turno_read_authorization_api
+              gestion.tests.test_turno_skill_compatibility
+              gestion.tests.test_residual_authorization_closure_bh060_f1.ResidualAuthorizationClosureBh060F1Tests.test_anonymous_cannot_read_or_mutate_any_closed_surface
+              gestion.tests.test_residual_authorization_closure_bh060_f1.ResidualAuthorizationClosureBh060F1Tests.test_client_staff_and_inactive_grants_have_zero_authority
+              gestion.tests.test_residual_authorization_closure_bh060_f1.ResidualAuthorizationClosureBh060F1Tests.test_employee_and_professional_have_schedule_read_only
+              gestion.tests.test_residual_authorization_closure_bh060_f1.ResidualAuthorizationClosureBh060F1Tests.test_configuration_grant_without_staff_controls_schedule_crud
+              gestion.tests.test_residual_authorization_closure_bh060_f1.ResidualAuthorizationClosureBh060F1Tests.test_configuration_grant_controls_mass_actions_atomically
+              gestion.tests.test_residual_authorization_closure_bh060_f1.ResidualAuthorizationClosureBh060F1Tests.test_administrator_role_works_without_staff_on_all_three_surfaces
+          - block: B4
+            name: catálogos, inventario y órdenes
+            expected: 79
+            timeout: 15
+            database: test_bohemia_hair_ci_b4
+            labels: >-
+              gestion.tests.test_catalog_equipment_permissions_bh060_1
+              gestion.tests.test_inventory_permissions_d3
+              gestion.tests.test_inventory_stock
+              gestion.tests.test_order_inventory
+              gestion.tests.test_residual_authorization_closure_bh060_f1.ResidualAuthorizationClosureBh060F1Tests.test_configuration_grant_without_staff_controls_requirement_crud
+              gestion.tests.test_residual_authorization_closure_bh060_f1.ResidualAuthorizationClosureBh060F1Tests.test_requirement_rejects_type_without_active_equipment_without_mutation
+              gestion.tests.test_residual_authorization_closure_bh060_f1.ResidualAuthorizationClosureBh060F1Tests.test_product_grant_without_staff_uploads_only_to_safe_generated_path
+              gestion.tests.test_residual_authorization_closure_bh060_f1.ResidualAuthorizationClosureBh060F1Tests.test_upload_rejects_invalid_type_and_size_without_storage_write
+              gestion.tests.test_residual_authorization_closure_bh060_f1.ResidualAuthorizationClosureBh060F1Tests.test_upload_cleans_saved_file_when_storage_url_fails
+          - block: B5
+            name: Caja, pagos e incidencias
+            expected: 170
+            timeout: 35
+            database: test_bohemia_hair_ci_b5
+            labels: >-
+              gestion.tests.test_manual_payments
+              gestion.tests.test_payment_confirmation
+              gestion.tests.test_payment_intents
+              gestion.tests.test_payment_providers
+              gestion.tests.test_provider_checkout
+              gestion.tests.test_provider_events
+              gestion.tests.test_provider_event_pipeline
+              gestion.tests.test_provider_reconciliation
+              gestion.tests.test_financial_adjustments
+              gestion.tests.test_financial_case_closure
+              gestion.tests.test_financial_case_read_api
+              gestion.tests.test_financial_resolution
+              gestion.tests.test_refund_execution
+          - block: B6
+            name: Django Admin y auditoría
+            expected: 42
+            timeout: 20
+            database: test_bohemia_hair_ci_b6
+            labels: >-
+              gestion.tests.test_admin_usuario_crud_containment
+              gestion.tests.test_auditoria
+              gestion.tests.test_configuration_reports_permissions_bh060_4
+              gestion.tests.test_django_admin_security_bh060_5
+    services:
+      postgres:
+        image: postgres:16.9
+        env:
+          POSTGRES_USER: bh060_ci
+          POSTGRES_PASSWORD: bh060_ci_password
+          POSTGRES_DB: bohemia_hair_clean
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bh060_ci -d bohemia_hair_clean"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: bohemiacore
+    env:
+      BH_TEST_DB_NAME: ${{ matrix.database }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: bohemiacore/requirements-ci.txt
+
+      - name: Instalar dependencias backend
+        run: python -m pip install --disable-pip-version-check -r requirements-ci.txt
+
+      - name: Verificar configuración y migraciones
+        run: |
+          python -X utf8 manage.py check --settings=bohemiacore.test_settings
+          python -X utf8 manage.py makemigrations --check --dry-run --settings=bohemiacore.test_settings
+
+      - name: Ejecutar ${{ matrix.block }}
+        id: tests
+        shell: bash
+        env:
+          TEST_LABELS: ${{ matrix.labels }}
+          TEST_LOG: ${{ runner.temp }}/bh060-${{ matrix.block }}.log
+        run: |
+          set -o pipefail
+          started=$(date +%s)
+          set +e
+          python -X utf8 manage.py test ${TEST_LABELS} \
+            --settings=bohemiacore.test_settings \
+            --verbosity 1 --buffer --noinput 2>&1 | tee "${TEST_LOG}"
+          test_status=${PIPESTATUS[0]}
+          set -e
+          finished=$(date +%s)
+          duration=$((finished - started))
+          echo "status=${test_status}" >> "${GITHUB_OUTPUT}"
+          echo "duration=${duration}" >> "${GITHUB_OUTPUT}"
+          exit "${test_status}"
+
+      - name: Resumen ${{ matrix.block }}
+        if: always()
+        shell: bash
+        env:
+          TEST_STATUS: ${{ steps.tests.outputs.status }}
+          TEST_DURATION: ${{ steps.tests.outputs.duration }}
+        run: |
+          if [[ "${TEST_STATUS}" == "0" ]]; then
+            result='APROBADO'
+          else
+            result='FALLIDO'
+          fi
+          duration=${TEST_DURATION:-no-disponible}
+          {
+            echo "### ${{ matrix.block }} — ${{ matrix.name }}"
+            echo
+            echo '| Bloque | Tests esperados | Resultado | Duración | Referencia |'
+            echo '|---|---:|---|---:|---|'
+            echo "| ${{ matrix.block }} | ${{ matrix.expected }} | ${result} | ${duration} s | [run ${GITHUB_RUN_ID}](https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) / job ${GITHUB_JOB} |"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Guardar log de fallo ${{ matrix.block }}
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bh060-${{ matrix.block }}-failure-log
+          path: ${{ runner.temp }}/bh060-${{ matrix.block }}.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  concurrency-tests:
+    name: Backend B7 — concurrencia PostgreSQL
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16.9
+        env:
+          POSTGRES_USER: bh060_ci
+          POSTGRES_PASSWORD: bh060_ci_password
+          POSTGRES_DB: bohemia_hair_clean
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bh060_ci -d bohemia_hair_clean"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: bohemiacore
+    env:
+      BH_TEST_DB_NAME: test_bohemia_hair_ci_b7
+      TEST_LABELS: >-
+        usuarios.test_bh059_c_business_role_concurrency
+        gestion.tests.test_legacy_agenda_permissions_bh060_2.AgendaBlockConcurrencyTests
+        gestion.tests.test_financial_adjustments_concurrency
+        gestion.tests.test_inventory_stock_concurrency
+        gestion.tests.test_manual_payment_concurrency
+        gestion.tests.test_legacy_order_payment_concurrency_bh060_6
+        gestion.tests.test_order_inventory_concurrency
+        gestion.tests.test_payment_confirmation_concurrency
+        gestion.tests.test_payment_intent_concurrency
+        gestion.tests.test_financial_resolution_concurrency
+        gestion.tests.test_provider_reconciliation_concurrency
+        gestion.tests.test_provider_event_pipeline_concurrency
+        gestion.tests.test_provider_event_concurrency
+        gestion.tests.test_slot_hold_consumption_concurrency
+        gestion.tests.test_provider_checkout_concurrency
+        gestion.tests.test_refund_execution_concurrency
+        gestion.tests.test_slot_hold_concurrency
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: bohemiacore/requirements-ci.txt
+
+      - name: Instalar dependencias backend
+        run: python -m pip install --disable-pip-version-check -r requirements-ci.txt
+
+      - name: Verificar configuración y migraciones
+        run: |
+          python -X utf8 manage.py check --settings=bohemiacore.test_settings
+          python -X utf8 manage.py makemigrations --check --dry-run --settings=bohemiacore.test_settings
+
+      - name: Ejecutar B7 aislado y sin --parallel
+        id: tests
+        shell: bash
+        env:
+          TEST_LOG: ${{ runner.temp }}/bh060-B7.log
+        run: |
+          set -o pipefail
+          started=$(date +%s)
+          set +e
+          python -X utf8 manage.py test ${TEST_LABELS} \
+            --settings=bohemiacore.test_settings \
+            --verbosity 1 --buffer --noinput 2>&1 | tee "${TEST_LOG}"
+          test_status=${PIPESTATUS[0]}
+          set -e
+          finished=$(date +%s)
+          duration=$((finished - started))
+          echo "status=${test_status}" >> "${GITHUB_OUTPUT}"
+          echo "duration=${duration}" >> "${GITHUB_OUTPUT}"
+          exit "${test_status}"
+
+      - name: Resumen B7
+        if: always()
+        shell: bash
+        env:
+          TEST_STATUS: ${{ steps.tests.outputs.status }}
+          TEST_DURATION: ${{ steps.tests.outputs.duration }}
+        run: |
+          if [[ "${TEST_STATUS}" == "0" ]]; then
+            result='APROBADO'
+          else
+            result='FALLIDO'
+          fi
+          duration=${TEST_DURATION:-no-disponible}
+          {
+            echo '### B7 — concurrencia PostgreSQL'
+            echo
+            echo '| Bloque | Tests esperados | Resultado | Duración | Referencia |'
+            echo '|---|---:|---|---:|---|'
+            echo "| B7 | 64 | ${result} | ${duration} s | [run ${GITHUB_RUN_ID}](https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) / job ${GITHUB_JOB} |"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Guardar log de fallo B7
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bh060-B7-failure-log
+          path: ${{ runner.temp }}/bh060-B7.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  frontend:
+    name: Frontend — Jest y build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      CI: 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Instalar dependencias frontend
+        run: npm ci
+
+      - name: Ejecutar Jest y build
+        id: frontend-validation
+        shell: bash
+        env:
+          TEST_LOG: ${{ runner.temp }}/bh060-frontend-tests.log
+          BUILD_LOG: ${{ runner.temp }}/bh060-frontend-build.log
+        run: |
+          set -o pipefail
+          started=$(date +%s)
+          set +e
+          npm test -- --watchAll=false --runInBand 2>&1 | tee "${TEST_LOG}"
+          test_status=${PIPESTATUS[0]}
+          npm run build 2>&1 | tee "${BUILD_LOG}"
+          build_status=${PIPESTATUS[0]}
+          set -e
+          finished=$(date +%s)
+          duration=$((finished - started))
+          status=0
+          if [[ "${test_status}" -ne 0 || "${build_status}" -ne 0 ]]; then
+            status=1
+          fi
+          echo "status=${status}" >> "${GITHUB_OUTPUT}"
+          echo "test_status=${test_status}" >> "${GITHUB_OUTPUT}"
+          echo "build_status=${build_status}" >> "${GITHUB_OUTPUT}"
+          echo "duration=${duration}" >> "${GITHUB_OUTPUT}"
+          exit "${status}"
+
+      - name: Resumen frontend
+        if: always()
+        shell: bash
+        env:
+          TEST_STATUS: ${{ steps.frontend-validation.outputs.test_status }}
+          BUILD_STATUS: ${{ steps.frontend-validation.outputs.build_status }}
+          TOTAL_DURATION: ${{ steps.frontend-validation.outputs.duration }}
+        run: |
+          if [[ "${TEST_STATUS}" == "0" ]]; then
+            tests='APROBADO'
+          else
+            tests='FALLIDO'
+          fi
+          if [[ "${BUILD_STATUS}" == "0" ]]; then
+            build='APROBADO'
+          else
+            build='FALLIDO'
+          fi
+          duration=${TOTAL_DURATION:-no-disponible}
+          {
+            echo '### Frontend'
+            echo
+            echo '| Bloque | Tests esperados | Jest | Build | Duración | Referencia |'
+            echo '|---|---:|---|---|---:|---|'
+            echo "| Frontend | 289 | ${tests} | ${build} | ${duration} s | [run ${GITHUB_RUN_ID}](https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) / job ${GITHUB_JOB} |"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Guardar logs de fallo frontend
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bh060-frontend-failure-logs
+          path: |
+            ${{ runner.temp }}/bh060-frontend-tests.log
+            ${{ runner.temp }}/bh060-frontend-build.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  result:
+    name: Resultado global BH-060
+    if: always()
+    needs:
+      - backend
+      - concurrency-tests
+      - frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Publicar resultado global
+        shell: bash
+        env:
+          BACKEND_RESULT: ${{ needs.backend.result }}
+          CONCURRENCY_RESULT: ${{ needs.concurrency-tests.result }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+        run: |
+          {
+            echo '## Resultado global BH-060'
+            echo
+            echo '| Componente | Resultado |'
+            echo '|---|---|'
+            echo "| Backend B1–B6 | ${BACKEND_RESULT} |"
+            echo "| Concurrencia B7 | ${CONCURRENCY_RESULT} |"
+            echo "| Frontend | ${FRONTEND_RESULT} |"
+            echo
+            echo "Run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          if [[ "${BACKEND_RESULT}" != 'success' \
+             || "${CONCURRENCY_RESULT}" != 'success' \
+             || "${FRONTEND_RESULT}" != 'success' ]]; then
+            exit 1
+          fi
