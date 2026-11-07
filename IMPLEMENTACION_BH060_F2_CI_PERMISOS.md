@@ -8,9 +8,9 @@
 
 **Implementación local:** VALIDADA
 
-**Ejecución real en GitHub Actions:** EN VALIDACIÓN
+**Ejecución real en GitHub Actions:** BLOQUEADA POR B7
 
-> **BH-060 F2 = PENDIENTE DE VALIDACION REMOTA**
+> **BH-060 F2 = BLOQUEADO**
 
 Este estado sólo puede cambiar a VALIDADO después de que una ejecución remota
 complete B1–B7, Jest y build con resultado global exitoso.
@@ -216,6 +216,34 @@ build usa `CI=false`, manteniendo sus warnings en la salida y propagando el
 código de error real. Una nueva ejecución completa deberá aprobar B1–B7, Jest,
 build y el resultado global antes de validar F2.
 
+### 9.2 Segunda ejecución completa
+
+- Run: [42405102458](https://github.com/Aldo-1803/Trabajo-Final/actions/runs/42405102458).
+- Evento: `push` automático.
+- Commit: `3d0a90daece78d999466391317debcb725b40142`.
+- Resultado global: fallido después de 5 min 26 s de pared.
+- B1–B6: aprobados nuevamente; 1.015 tests funcionales esperados.
+- Frontend: aprobado; 34/34 suites, 289/289 tests Jest y build productivo. Los
+  warnings preexistentes quedaron visibles y no ocultaron el resultado.
+- B7: ejecutó los 64 tests esperados, en proceso único y sin `--parallel`, pero
+  volvió a producir el mismo deadlock en
+  `RefundExecutionConcurrencyTests.test_two_operators_create_one_operation_and_one_external_call`.
+- Duraciones de pared por job: B1 5 min 7 s; B2 2 min 6 s; B3 2 min 37 s;
+  B4 1 min 31 s; B5 5 min 16 s; B6 2 min 2 s; B7 2 min 56 s; frontend
+  1 min 8 s.
+
+El caso focal que falla en Linux CI aprobó localmente 1/1 sobre PostgreSQL 16.9
+en 22,144 s, sin `--parallel` ni `--keepdb`. No obstante, dos runners remotos
+limpios reprodujeron el mismo ciclo de bloqueo sobre
+`gestion_financialresolutionrequest`, por lo que no existe evidencia remota
+verde para B7.
+
+No se agregan reintentos, tolerancia al error ni serialización artificial: esas
+medidas podrían ocultar el defecto que B7 debe detectar. Su investigación puede
+requerir cambios en el orden de locks, límites transaccionales o en la prueba de
+concurrencia; todos están fuera del alcance autorizado de F2, que permite
+corregir únicamente workflow y entorno CI.
+
 ## 10. Riesgos y limitaciones
 
 - Las etiquetas largas se mantienen explícitas en YAML para trazabilidad; un
@@ -223,13 +251,17 @@ build y el resultado global antes de validar F2.
 - Los seis jobs funcionales privilegian aislamiento y tiempo de pared sobre
   ahorro de minutos de runner.
 - Los warnings preexistentes del frontend seguirán visibles en build/Jest.
+- B7 reproduce de forma consistente en Linux CI un deadlock de ejecución de
+  refunds que no se resuelve mediante configuración del workflow.
 - Los artifacts de fallo pueden contener emails y valores sintéticos de tests,
   pero no credenciales reales ni dumps. La retención se limita a 7 días.
 - F2 no resuelve configuración de producción ni implementa BH-061/BH-062.
 
-## 11. Veredicto provisional
+## 11. Veredicto
 
-El workflow está implementado y validado localmente. Falta evidencia de una
-ejecución completa en GitHub Actions.
+El workflow está implementado, publicado y ejecuta toda la matriz con bases
+PostgreSQL independientes. B1–B6 y frontend están validados remotamente, pero
+B7 falla de forma reproducible en GitHub Actions por el deadlock descrito. El
+resultado global permanece rojo y BH-060 no se declara cerrado.
 
-> **BH-060 F2 = PENDIENTE DE VALIDACION REMOTA**
+> **BH-060 F2 = BLOQUEADO**
