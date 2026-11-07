@@ -426,7 +426,9 @@ def _claim_submission(operation_id, actor):
 
 @transaction.atomic
 def _record_provider_result(operation_id, actor, *, submitted=None, error=None):
-    operation = FinancialRefundOperation.objects.select_for_update().select_related(
+    operation = FinancialRefundOperation.objects.select_for_update(
+        of=('self',),
+    ).select_related(
         'decision__resolution_request__case',
         'payment',
         'created_by',

@@ -61,6 +61,30 @@ class RefundExecutionConcurrencyTests(
             results = [future.result(timeout=30) for future in futures]
 
         self.assertEqual(sum(result.provider_called for result in results), 1)
+        self.assertEqual(sum(result.created for result in results), 1)
         self.assertEqual(adapter.submit_refund.call_count, 1)
         self.assertEqual(FinancialRefundOperation.objects.count(), 1)
+        operation = FinancialRefundOperation.objects.get()
+        self.assertEqual(
+            {result.operation.pk for result in results},
+            {operation.pk},
+        )
+        self.assertEqual(
+            operation.status,
+            FinancialRefundOperation.Status.SUBMITTED,
+        )
+        self.assertEqual(operation.provider_call_count, 1)
+        self.assertEqual(operation.external_refund_id, 'REF-F73-1')
+        self.assertIsNone(operation.confirmed_at)
         self.assertEqual(FinancialRefundOperationEvent.objects.count(), 3)
+        self.assertCountEqual(
+            FinancialRefundOperationEvent.objects.values_list(
+                'event_type',
+                flat=True,
+            ),
+            (
+                FinancialRefundOperationEvent.Type.CREATED,
+                FinancialRefundOperationEvent.Type.SUBMISSION_STARTED,
+                FinancialRefundOperationEvent.Type.SUBMITTED,
+            ),
+        )

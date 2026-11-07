@@ -326,20 +326,25 @@ class RefundOperationConfirmationTests(RefundExecutionFixtureMixin, TestCase):
         )
 
         reconcile_verified_provider_event(event.pk)
+        idempotent_retry = reconcile_verified_provider_event(event.pk)
         execution.operation.refresh_from_db()
         adjustment = FinancialAdjustment.objects.get()
 
+        self.assertFalse(idempotent_retry.changed)
         self.assertEqual(
             execution.operation.status,
             FinancialRefundOperation.Status.CONFIRMED,
         )
         self.assertEqual(adjustment.refund_operation_id, execution.operation.pk)
-        self.assertTrue(
+        self.assertEqual(FinancialAdjustment.objects.count(), 1)
+        self.assertEqual(
             FinancialRefundOperationEvent.objects.filter(
                 operation=execution.operation,
                 event_type=FinancialRefundOperationEvent.Type.CONFIRMED,
-            ).exists()
+            ).count(),
+            1,
         )
+        self.assertEqual(adapter.submit_refund.call_count, 1)
         self.assertEqual(
             project_payment_finances(self.provider_payment).refund_pending,
             Decimal('0.00'),
