@@ -398,7 +398,7 @@ def reactivate_account(actor, target_user, reason):
 
 
 @transaction.atomic
-def deactivate_account(actor, target_user, reason):
+def deactivate_account(actor, target_user, reason, *, operation_id=None):
     """Deactivate one account without changing roles, profiles, or flags."""
     normalized_reason = _validate_account_deactivation_reason(reason)
     user_model = get_user_model()
@@ -484,6 +484,11 @@ def deactivate_account(actor, target_user, reason):
             'business_roles': list(roles),
             'refresh_tokens_revoked': refresh_tokens_revoked,
             'reason': normalized_reason,
+            **(
+                {'operation_id': operation_id}
+                if operation_id is not None
+                else {}
+            ),
         },
     )
 
@@ -522,7 +527,14 @@ def _blacklist_outstanding_refresh_tokens(user):
 
 
 @transaction.atomic
-def assign_validated_business_role(actor, target_user, target_role, reason):
+def assign_validated_business_role(
+    actor,
+    target_user,
+    target_role,
+    reason,
+    *,
+    operation_id=None,
+):
     """
     Assign one validated business role and write its semantic audit event.
 
@@ -587,6 +599,11 @@ def assign_validated_business_role(actor, target_user, target_role, reason):
             'reason': normalized_reason,
             'removed_business_groups': removed_groups,
             'added_business_group': target_role,
+            **(
+                {'operation_id': operation_id}
+                if operation_id is not None
+                else {}
+            ),
             **build_business_role_audit_metadata(
                 previous_role=previous_role,
                 new_role=target_role,

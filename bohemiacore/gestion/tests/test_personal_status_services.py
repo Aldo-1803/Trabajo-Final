@@ -264,6 +264,7 @@ class PersonalStatusServiceTests(TestCase):
         )
         self.assertTrue(deactivate_audit.valor_nuevo['previous_active'])
         self.assertFalse(deactivate_audit.valor_nuevo['current_active'])
+        self.assertNotIn('operation_id', deactivate_audit.valor_nuevo)
 
         reactivation = reactivate_personal(
             self.actor,

@@ -192,6 +192,7 @@ class AuditEffectivePermissionTests(APITestCase):
             'role_contract_version',
             response.data['valor_nuevo'],
         )
+        self.assertNotIn('operation_id', response.data['valor_nuevo'])
 
     def test_generic_history_rejects_personal_access_reversal(self):
         personal = Personal.objects.create(

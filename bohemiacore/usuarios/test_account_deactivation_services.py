@@ -241,6 +241,7 @@ class AccountDeactivationServiceTests(TestCase):
             audit.valor_nuevo['current_business_role'],
             BusinessRole.EMPLEADO,
         )
+        self.assertNotIn('operation_id', audit.valor_nuevo)
 
         rollback_target = self.create_user('account-rollback@test.com')
         with patch(

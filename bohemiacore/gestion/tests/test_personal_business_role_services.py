@@ -1,4 +1,5 @@
 from unittest.mock import patch
+from uuid import UUID
 
 from django.contrib.auth.models import Group, Permission
 from django.test import TestCase
@@ -100,6 +101,20 @@ class PersonalBusinessRoleChangeServiceTests(TestCase):
             audit = Auditoria.objects.get(pk=audit_id)
             for key, value in expected_metadata.items():
                 self.assertEqual(audit.valor_nuevo[key], value)
+        component_audits = list(
+            Auditoria.objects.filter(
+                pk__in=(result.role_audit_id, result.audit_id)
+            )
+        )
+        self.assertEqual(len(component_audits), 2)
+        operation_ids = {
+            audit.valor_nuevo['operation_id']
+            for audit in component_audits
+        }
+        self.assertEqual(len(operation_ids), 1)
+        operation_id = operation_ids.pop()
+        self.assertEqual(UUID(operation_id).hex, operation_id)
+        self.assertEqual(UUID(operation_id).version, 4)
         return result, personal, user, client
 
     def test_cliente_to_empleado_preserves_both_profiles(self):
@@ -133,6 +148,26 @@ class PersonalBusinessRoleChangeServiceTests(TestCase):
             BusinessRole.EMPLEADO,
             'professional-employee',
         )
+
+    def test_independent_changes_have_distinct_operation_ids(self):
+        first, _, _, _ = self.assert_transition(
+            BusinessRole.CLIENTE,
+            BusinessRole.EMPLEADO,
+            'independent-first',
+        )
+        second, _, _, _ = self.assert_transition(
+            BusinessRole.CLIENTE,
+            BusinessRole.PROFESIONAL,
+            'independent-second',
+        )
+
+        first_operation_id = Auditoria.objects.get(
+            pk=first.audit_id
+        ).valor_nuevo['operation_id']
+        second_operation_id = Auditoria.objects.get(
+            pk=second.audit_id
+        ).valor_nuevo['operation_id']
+        self.assertNotEqual(first_operation_id, second_operation_id)
 
     def test_same_role_is_noop_without_audit(self):
         personal, user, _ = self.create_context(

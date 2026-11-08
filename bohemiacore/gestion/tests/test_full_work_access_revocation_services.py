@@ -1,5 +1,6 @@
 from datetime import time, timedelta
 from unittest.mock import patch
+from uuid import UUID
 
 from django.contrib.auth.models import Group, Permission
 from django.test import TestCase
@@ -15,12 +16,16 @@ from gestion.models import (
 from gestion.personal_access_services import (
     FULL_WORK_ACCESS_REVOCATION_AUDIT_TABLE,
     FULL_WORK_ACCESS_REVOCATION_SOURCE,
+    PERSONAL_DEACTIVATED_EVENT,
+    PERSONAL_STATUS_AUDIT_TABLE,
     PermissionDeniedForFullWorkAccessRevocation,
     PersonalHasNoUser,
     WORK_ACCESS_REVOKED_ACCOUNT_DISABLED_EVENT,
     revoke_work_access_and_disable_account,
 )
 from usuarios.access_services import (
+    ACCOUNT_DEACTIVATED_EVENT,
+    ACCOUNT_DEACTIVATION_AUDIT_TABLE,
     LastActiveAdministrator,
     ProtectedSuperuser,
     SelfDeactivationNotAllowed,
@@ -156,6 +161,7 @@ class FullWorkAccessRevocationServiceTests(TestCase):
             BusinessRole.ADMINISTRADOR,
         )
 
+        audit_count = Auditoria.objects.count()
         with self.assertRaises(LastActiveAdministrator):
             self.revoke(personal)
 
@@ -163,6 +169,7 @@ class FullWorkAccessRevocationServiceTests(TestCase):
         user.refresh_from_db()
         self.assertTrue(personal.activo)
         self.assertTrue(user.is_active)
+        self.assertEqual(Auditoria.objects.count(), audit_count)
 
     def test_client_role_is_preserved_while_both_states_are_deactivated(self):
         personal, user, client = self.create_linked_context(
@@ -192,6 +199,14 @@ class FullWorkAccessRevocationServiceTests(TestCase):
         self.assertTrue(result.previous_user_active)
         self.assertIsNone(result.status_audit_id)
         self.assertIsNotNone(result.account_audit_id)
+        self.assertEqual(
+            Auditoria.objects.get(pk=result.account_audit_id).valor_nuevo[
+                'operation_id'
+            ],
+            Auditoria.objects.get(pk=result.audit_id).valor_nuevo[
+                'operation_id'
+            ],
+        )
         self.assert_final_state(personal, user, BusinessRole.EMPLEADO)
 
     def test_inactive_account_only_deactivates_personal(self):
@@ -208,6 +223,14 @@ class FullWorkAccessRevocationServiceTests(TestCase):
         self.assertFalse(result.previous_user_active)
         self.assertIsNotNone(result.status_audit_id)
         self.assertIsNone(result.account_audit_id)
+        self.assertEqual(
+            Auditoria.objects.get(pk=result.status_audit_id).valor_nuevo[
+                'operation_id'
+            ],
+            Auditoria.objects.get(pk=result.audit_id).valor_nuevo[
+                'operation_id'
+            ],
+        )
         self.assert_final_state(personal, user, BusinessRole.PROFESIONAL)
 
     def test_both_inactive_is_noop_without_audit(self):
@@ -449,6 +472,39 @@ class FullWorkAccessRevocationServiceTests(TestCase):
             audit.valor_nuevo['account_audit_id'],
             result.account_audit_id,
         )
+        component_audits = {
+            component.pk: component
+            for component in Auditoria.objects.filter(
+                pk__in=(
+                    result.status_audit_id,
+                    result.account_audit_id,
+                    result.audit_id,
+                )
+            )
+        }
+        self.assertEqual(len(component_audits), 3)
+        self.assertEqual(
+            component_audits[result.status_audit_id].valor_nuevo['event'],
+            PERSONAL_DEACTIVATED_EVENT,
+        )
+        self.assertEqual(
+            component_audits[result.account_audit_id].valor_nuevo['event'],
+            ACCOUNT_DEACTIVATED_EVENT,
+        )
+        operation_ids = {
+            component.valor_nuevo['operation_id']
+            for component in component_audits.values()
+        }
+        self.assertEqual(len(operation_ids), 1)
+        operation_id = operation_ids.pop()
+        self.assertEqual(UUID(operation_id).hex, operation_id)
+        self.assertEqual(UUID(operation_id).version, 4)
+        for component in component_audits.values():
+            self.assertEqual(component.usuario, self.actor)
+            self.assertEqual(
+                component.valor_nuevo['reason'],
+                'Fin de relacion laboral y acceso digital',
+            )
 
     def test_compound_audit_failure_rolls_back_both_states(self):
         personal, user, _ = self.create_linked_context(
@@ -474,3 +530,15 @@ class FullWorkAccessRevocationServiceTests(TestCase):
         self.assertTrue(personal.activo)
         self.assertTrue(user.is_active)
         self.assertFalse(self.audits().exists())
+        self.assertFalse(
+            Auditoria.objects.filter(
+                tabla=PERSONAL_STATUS_AUDIT_TABLE,
+                registro_id=personal.pk,
+            ).exists()
+        )
+        self.assertFalse(
+            Auditoria.objects.filter(
+                tabla=ACCOUNT_DEACTIVATION_AUDIT_TABLE,
+                registro_id=user.pk,
+            ).exists()
+        )

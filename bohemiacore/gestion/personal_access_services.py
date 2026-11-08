@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from uuid import uuid4
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
@@ -439,12 +440,14 @@ def change_personal_business_role(actor, personal, target_role, reason):
             audit_id=None,
         )
 
+    operation_id = uuid4().hex
     try:
         role_result = assign_validated_business_role(
             actor=current_actor,
             target_user=locked_user,
             target_role=target_role,
             reason=normalized_reason,
+            operation_id=operation_id,
         )
     except PermissionDeniedForRoleAssignment as exc:
         raise PermissionDeniedForPersonalBusinessRoleChange(
@@ -472,6 +475,7 @@ def change_personal_business_role(actor, personal, target_role, reason):
         new_role=target_role,
         reason=normalized_reason,
         role_audit_id=role_result.audit_id,
+        operation_id=operation_id,
     )
     return PersonalBusinessRoleChangeResult(
         changed=True,
@@ -495,6 +499,7 @@ def _write_personal_business_role_audit(
     new_role,
     reason,
     role_audit_id,
+    operation_id,
 ):
     return Auditoria.objects.create(
         tabla=PERSONAL_BUSINESS_ROLE_AUDIT_TABLE,
@@ -524,6 +529,7 @@ def _write_personal_business_role_audit(
             'personal_active': personal.activo,
             'user_active': user.is_active,
             'role_audit_id': role_audit_id,
+            'operation_id': operation_id,
             **build_business_role_audit_metadata(
                 previous_role=previous_role,
                 new_role=new_role,
@@ -563,10 +569,12 @@ def revoke_work_access_and_disable_account(actor, personal, reason):
         ) from exc
 
     try:
+        operation_id = uuid4().hex
         account_result = deactivate_account(
             actor=current_actor,
             target_user=target_user,
             reason=normalized_reason,
+            operation_id=operation_id,
         )
     except PermissionDeniedForAccountDeactivation as exc:
         raise PermissionDeniedForFullWorkAccessRevocation(
@@ -599,6 +607,7 @@ def revoke_work_access_and_disable_account(actor, personal, reason):
                 actor=current_actor,
                 personal=locked_personal,
                 reason=normalized_reason,
+                operation_id=operation_id,
             )
         except PermissionDeniedForPersonalStatusChange as exc:
             raise PermissionDeniedForFullWorkAccessRevocation(
@@ -663,6 +672,7 @@ def revoke_work_access_and_disable_account(actor, personal, reason):
             ),
             'account_audit_id': account_result.audit_id,
             'refresh_tokens_revoked': account_result.refresh_tokens_revoked,
+            'operation_id': operation_id,
         },
     )
 
@@ -789,6 +799,7 @@ def revoke_work_access_keep_client(actor, personal, reason):
             warnings=(),
         )
 
+    operation_id = uuid4().hex
     status_result = None
     if personal_needs_change:
         try:
@@ -796,6 +807,7 @@ def revoke_work_access_keep_client(actor, personal, reason):
                 actor=current_actor,
                 personal=locked_personal,
                 reason=normalized_reason,
+                operation_id=operation_id,
             )
         except PermissionDeniedForPersonalStatusChange as exc:
             raise PermissionDeniedForWorkAccessRevocation(
@@ -814,6 +826,7 @@ def revoke_work_access_keep_client(actor, personal, reason):
                 target_user=locked_user,
                 target_role=BusinessRole.CLIENTE,
                 reason=normalized_reason,
+                operation_id=operation_id,
             )
         except PermissionDeniedForRoleAssignment as exc:
             raise PermissionDeniedForWorkAccessRevocation(
@@ -864,6 +877,7 @@ def revoke_work_access_keep_client(actor, personal, reason):
             'role_audit_id': (
                 role_result.audit_id if role_result is not None else None
             ),
+            'operation_id': operation_id,
             **(
                 build_business_role_audit_metadata(
                     previous_role=previous_role,
@@ -896,7 +910,7 @@ def revoke_work_access_keep_client(actor, personal, reason):
     )
 
 
-def deactivate_personal(actor, personal, reason):
+def deactivate_personal(actor, personal, reason, *, operation_id=None):
     return _change_personal_status(
         actor=actor,
         personal=personal,
@@ -904,6 +918,7 @@ def deactivate_personal(actor, personal, reason):
         target_active=False,
         event=PERSONAL_DEACTIVATED_EVENT,
         source=PERSONAL_DEACTIVATED_SOURCE,
+        operation_id=operation_id,
     )
 
 
@@ -927,6 +942,7 @@ def _change_personal_status(
     target_active,
     event,
     source,
+    operation_id=None,
 ):
     normalized_reason = _validate_reason(
         reason,
@@ -976,6 +992,11 @@ def _change_personal_status(
             'previous_active': previous_active,
             'current_active': target_active,
             'reason': normalized_reason,
+            **(
+                {'operation_id': operation_id}
+                if operation_id is not None
+                else {}
+            ),
         },
     )
 
@@ -1031,6 +1052,7 @@ def create_access_for_personal(
         is_superuser=False,
     )
     _validate_temporary_password(raw_password, candidate_user)
+    operation_id = uuid4().hex
 
     try:
         with transaction.atomic():
@@ -1057,12 +1079,14 @@ def create_access_for_personal(
         personal=locked_personal,
         user=created_user,
         reason=normalized_reason,
+        operation_id=operation_id,
     )
     role_result = assign_validated_business_role(
         actor=current_actor,
         target_user=created_user,
         target_role=role,
         reason=normalized_reason,
+        operation_id=operation_id,
     )
     access_audit = Auditoria.objects.create(
         tabla=PERSONAL_ACCESS_AUDIT_TABLE,
@@ -1082,6 +1106,7 @@ def create_access_for_personal(
             'reason': normalized_reason,
             'link_audit_id': link_result.audit_id,
             'role_audit_id': role_result.audit_id,
+            'operation_id': operation_id,
             **build_business_role_audit_metadata(
                 previous_role=None,
                 new_role=role,
@@ -1104,7 +1129,14 @@ def create_access_for_personal(
 
 
 @transaction.atomic
-def link_user_to_personal(actor, personal, user, reason):
+def link_user_to_personal(
+    actor,
+    personal,
+    user,
+    reason,
+    *,
+    operation_id=None,
+):
     """Link an existing user and personnel record without changing access."""
     normalized_reason = _validate_reason(reason)
     user_model = get_user_model()
@@ -1180,6 +1212,11 @@ def link_user_to_personal(actor, personal, user, reason):
             'new_user_id': locked_user.pk,
             'user_email': locked_user.email,
             'reason': normalized_reason,
+            **(
+                {'operation_id': operation_id}
+                if operation_id is not None
+                else {}
+            ),
         },
     )
 

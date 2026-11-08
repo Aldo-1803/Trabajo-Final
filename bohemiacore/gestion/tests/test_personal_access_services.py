@@ -413,6 +413,7 @@ class PersonalAccessServiceTests(TestCase):
             audit.valor_nuevo['reason'],
             'Vinculacion aprobada por administracion',
         )
+        self.assertNotIn('operation_id', audit.valor_nuevo)
 
     def test_semantic_audit_contains_no_credentials_or_tokens(self):
         user = self.create_user('audit-secret-link@test.com')

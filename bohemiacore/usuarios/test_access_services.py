@@ -322,6 +322,7 @@ class ValidatedBusinessRoleAssignmentTests(TestCase):
         )
         for key, value in expected_metadata.items():
             self.assertEqual(audit.valor_nuevo[key], value)
+        self.assertNotIn('operation_id', audit.valor_nuevo)
 
     def test_audit_contains_no_password_hash_or_tokens(self):
         target = self.create_user('audit-secrets@test.com')

@@ -1,5 +1,6 @@
 import json
 from unittest.mock import patch
+from uuid import UUID
 
 from django.contrib.auth.models import Group
 from django.db import IntegrityError
@@ -13,12 +14,14 @@ from gestion.personal_access_services import (
     PERSONAL_ACCESS_AUDIT_EVENT,
     PERSONAL_ACCESS_AUDIT_SOURCE,
     PERSONAL_ACCESS_AUDIT_TABLE,
+    PERSONAL_LINK_AUDIT_EVENT,
     PersonalAccessConflict,
     PersonalAlreadyHasAccess,
     PersonalInactiveForAccess,
     PermissionDeniedForPersonalLink,
     create_access_for_personal,
 )
+from usuarios.access_services import ROLE_AUDIT_EVENT
 from usuarios.models import Cliente, Usuario
 from usuarios.roles import (
     BusinessRole,
@@ -323,6 +326,9 @@ class PersonalAccessCreationServiceTests(TestCase):
         ))
         self.assertNotIn(raw_password, payload)
         self.assertNotIn('password_hash', payload.lower())
+        self.assertNotIn('access_token', payload.lower())
+        self.assertNotIn('refresh_token', payload.lower())
+        self.assertNotIn('"jwt"', payload.lower())
 
     def test_password_is_persisted_as_hash(self):
         personal = self.create_personal('hashed-password')
@@ -365,10 +371,43 @@ class PersonalAccessCreationServiceTests(TestCase):
         self.assertEqual(audit.valor_nuevo['reason'], 'Alta inicial de acceso laboral')
         self.assertEqual(audit.valor_nuevo['link_audit_id'], result.link_audit_id)
         self.assertEqual(audit.valor_nuevo['role_audit_id'], result.role_audit_id)
+        component_audits = {
+            component.pk: component
+            for component in Auditoria.objects.filter(
+                pk__in=(
+                    result.link_audit_id,
+                    result.role_audit_id,
+                    result.access_audit_id,
+                )
+            )
+        }
+        self.assertEqual(len(component_audits), 3)
+        self.assertEqual(
+            component_audits[result.link_audit_id].valor_nuevo['event'],
+            PERSONAL_LINK_AUDIT_EVENT,
+        )
+        self.assertEqual(
+            component_audits[result.role_audit_id].valor_nuevo['event'],
+            ROLE_AUDIT_EVENT,
+        )
+        operation_ids = {
+            component.valor_nuevo['operation_id']
+            for component in component_audits.values()
+        }
+        self.assertEqual(len(operation_ids), 1)
+        operation_id = operation_ids.pop()
+        self.assertEqual(UUID(operation_id).hex, operation_id)
+        self.assertEqual(UUID(operation_id).version, 4)
+        for component in component_audits.values():
+            self.assertEqual(component.usuario, self.actor)
         expected_metadata = build_business_role_audit_metadata(
             previous_role=None,
             new_role=BusinessRole.PROFESIONAL,
         )
-        for key, value in expected_metadata.items():
-            self.assertEqual(audit.valor_nuevo[key], value)
+        for role_audit in (
+            audit,
+            component_audits[result.role_audit_id],
+        ):
+            for key, value in expected_metadata.items():
+                self.assertEqual(role_audit.valor_nuevo[key], value)
         self.assertEqual(audit.pk, result.access_audit_id)
