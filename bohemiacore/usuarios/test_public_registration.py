@@ -1,7 +1,7 @@
 import json
 from unittest.mock import patch
 
-from django.contrib.auth.models import Group
+from django.contrib.auth.models import Group, Permission
 from django.test import TestCase
 from django.urls import reverse
 from rest_framework import status
@@ -22,7 +22,11 @@ from usuarios.access_services import (
     assign_initial_client_role,
 )
 from usuarios.models import Cliente, Usuario
-from usuarios.roles import BusinessRole, get_business_roles
+from usuarios.roles import (
+    BusinessRole,
+    build_business_role_audit_metadata,
+    get_business_roles,
+)
 
 
 class InitialClientRoleAssignmentTests(TestCase):
@@ -63,6 +67,62 @@ class InitialClientRoleAssignmentTests(TestCase):
         self.assertEqual(
             audit.valor_nuevo['business_role'],
             BusinessRole.CLIENTE,
+        )
+        self.assertEqual(audit.valor_anterior['business_roles'], [])
+        expected_metadata = build_business_role_audit_metadata(
+            previous_role=None,
+            new_role=BusinessRole.CLIENTE,
+        )
+        for key, value in expected_metadata.items():
+            self.assertEqual(audit.valor_nuevo[key], value)
+
+    def test_second_client_assignment_is_noop_without_duplicate_audit(self):
+        user = self.create_user(is_active=False, is_staff=True)
+        cliente = Cliente.objects.create(usuario=user, activo=False)
+        first = assign_initial_client_role(user, 'public_registration')
+        technical_group = Group.objects.create(name='INITIAL_CLIENT_TECHNICAL')
+        individual_permission = Permission.objects.get(
+            content_type__app_label='gestion',
+            codename='view_audit',
+        )
+        user.groups.add(technical_group)
+        user.user_permissions.add(individual_permission)
+        expected_groups = set(user.groups.values_list('pk', flat=True))
+        expected_permissions = set(
+            user.user_permissions.values_list('pk', flat=True)
+        )
+
+        with patch('usuarios.access_services.assign_business_role') as assign:
+            second = assign_initial_client_role(user, 'public_registration')
+
+        user.refresh_from_db()
+        cliente.refresh_from_db()
+        self.assertTrue(first.changed)
+        self.assertIsNotNone(first.audit_id)
+        self.assertFalse(second.changed)
+        self.assertIsNone(second.audit_id)
+        self.assertEqual(second.user_id, user.pk)
+        self.assertEqual(second.cliente_id, cliente.pk)
+        self.assertEqual(second.role, BusinessRole.CLIENTE)
+        assign.assert_not_called()
+        self.assertEqual(get_business_roles(user), (BusinessRole.CLIENTE,))
+        self.assertSetEqual(
+            set(user.groups.values_list('pk', flat=True)),
+            expected_groups,
+        )
+        self.assertSetEqual(
+            set(user.user_permissions.values_list('pk', flat=True)),
+            expected_permissions,
+        )
+        self.assertFalse(user.is_active)
+        self.assertTrue(user.is_staff)
+        self.assertFalse(cliente.activo)
+        self.assertEqual(
+            Auditoria.objects.filter(
+                tabla=INITIAL_CLIENT_ROLE_AUDIT_TABLE,
+                valor_nuevo__event=INITIAL_CLIENT_ROLE_AUDIT_EVENT,
+            ).count(),
+            1,
         )
 
     def test_requires_client_profile(self):

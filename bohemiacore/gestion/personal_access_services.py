@@ -25,6 +25,7 @@ from usuarios.access_services import (
 from usuarios.roles import (
     BusinessPermission,
     BusinessRole,
+    build_business_role_audit_metadata,
     get_business_role,
     get_business_roles,
     has_inconsistent_business_roles,
@@ -523,6 +524,10 @@ def _write_personal_business_role_audit(
             'personal_active': personal.activo,
             'user_active': user.is_active,
             'role_audit_id': role_audit_id,
+            **build_business_role_audit_metadata(
+                previous_role=previous_role,
+                new_role=new_role,
+            ),
         },
     )
 
@@ -859,6 +864,14 @@ def revoke_work_access_keep_client(actor, personal, reason):
             'role_audit_id': (
                 role_result.audit_id if role_result is not None else None
             ),
+            **(
+                build_business_role_audit_metadata(
+                    previous_role=previous_role,
+                    new_role=BusinessRole.CLIENTE,
+                )
+                if role_needs_change
+                else {}
+            ),
         },
     )
 
@@ -1069,6 +1082,10 @@ def create_access_for_personal(
             'reason': normalized_reason,
             'link_audit_id': link_result.audit_id,
             'role_audit_id': role_result.audit_id,
+            **build_business_role_audit_metadata(
+                previous_role=None,
+                new_role=role,
+            ),
         },
     )
 

@@ -16,7 +16,11 @@ from gestion.personal_access_services import (
     change_personal_business_role,
 )
 from usuarios.models import Cliente, Usuario
-from usuarios.roles import BusinessRole, get_business_roles
+from usuarios.roles import (
+    BusinessRole,
+    build_business_role_audit_metadata,
+    get_business_roles,
+)
 
 
 class PersonalBusinessRoleChangeServiceTests(TestCase):
@@ -88,6 +92,14 @@ class PersonalBusinessRoleChangeServiceTests(TestCase):
         self.assertEqual(personal.usuario, user)
         self.assertEqual(personal.rol, 'asistente')
         self.assertEqual(client.usuario, user)
+        expected_metadata = build_business_role_audit_metadata(
+            previous_role=source,
+            new_role=target,
+        )
+        for audit_id in (result.role_audit_id, result.audit_id):
+            audit = Auditoria.objects.get(pk=audit_id)
+            for key, value in expected_metadata.items():
+                self.assertEqual(audit.valor_nuevo[key], value)
         return result, personal, user, client
 
     def test_cliente_to_empleado_preserves_both_profiles(self):
@@ -293,6 +305,12 @@ class PersonalBusinessRoleChangeServiceTests(TestCase):
         self.assertEqual(audit.valor_nuevo['reason'], self.reason)
         self.assertTrue(audit.valor_nuevo['client_profile_preserved'])
         self.assertTrue(audit.valor_nuevo['personal_profile_preserved'])
+        expected_metadata = build_business_role_audit_metadata(
+            previous_role=BusinessRole.CLIENTE,
+            new_role=BusinessRole.PROFESIONAL,
+        )
+        for key, value in expected_metadata.items():
+            self.assertEqual(audit.valor_nuevo[key], value)
 
     def test_audit_failure_rolls_back_role_change(self):
         personal, user, client = self.create_context(

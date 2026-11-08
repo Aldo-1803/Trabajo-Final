@@ -141,7 +141,7 @@ class AuditEffectivePermissionTests(APITestCase):
         self.viewer.user_permissions.add(self.permission('view_audit'))
         self.reverter = self.create_user('audit-reverter@test.com')
         self.reverter.user_permissions.add(self.permission('revert_audit'))
-        Auditoria.objects.create(
+        self.legacy_audit = Auditoria.objects.create(
             tabla='AccessSurface',
             registro_id=1,
             usuario=self.viewer,
@@ -178,6 +178,20 @@ class AuditEffectivePermissionTests(APITestCase):
 
         self.assertEqual(denied.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(allowed.status_code, status.HTTP_200_OK)
+
+    def test_legacy_audit_without_role_contract_metadata_is_readable(self):
+        self.client.force_authenticate(self.viewer)
+
+        response = self.client.get(
+            reverse('auditoria-detail', args=[self.legacy_audit.pk])
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['valor_nuevo']['event'], 'TEST')
+        self.assertNotIn(
+            'role_contract_version',
+            response.data['valor_nuevo'],
+        )
 
     def test_generic_history_rejects_personal_access_reversal(self):
         personal = Personal.objects.create(

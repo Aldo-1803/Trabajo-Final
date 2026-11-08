@@ -15,6 +15,7 @@ from usuarios.models import Cliente, Usuario
 from usuarios.roles import (
     BusinessPermission,
     BusinessRole,
+    build_business_role_audit_metadata,
     get_business_role,
 )
 
@@ -123,6 +124,13 @@ class AdministrativeBusinessRoleChangeServiceTests(TestCase):
         self.assertTrue(personal.activo)
         self.assertFalse(target.is_staff)
         self.assertFalse(target.is_superuser)
+        audit = Auditoria.objects.get(pk=result.audit_id)
+        expected_metadata = build_business_role_audit_metadata(
+            previous_role=BusinessRole.EMPLEADO,
+            new_role=BusinessRole.ADMINISTRADOR,
+        )
+        for key, value in expected_metadata.items():
+            self.assertEqual(audit.valor_nuevo[key], value)
 
     def test_last_active_administrator_ignores_technical_backups(self):
         target = self.create_user('last-admin@test.com')
@@ -185,6 +193,10 @@ class AdministrativeBusinessRoleChangeServiceTests(TestCase):
                     BusinessPermission.MANAGE_USERS,
                 )
                 self.assertEqual(get_business_role(target), BusinessRole.ADMINISTRADOR)
+                self.assertFalse(Auditoria.objects.filter(
+                    tabla=ROLE_AUDIT_TABLE,
+                    registro_id=target.pk,
+                ).exists())
 
     def test_non_escalating_technical_permissions_are_preserved(self):
         target = self.create_user('legitimate-technical@test.com')
@@ -203,6 +215,13 @@ class AdministrativeBusinessRoleChangeServiceTests(TestCase):
         self.assertEqual(get_business_role(target), BusinessRole.CLIENTE)
         self.assertTrue(target.groups.filter(pk=group.pk).exists())
         self.assertTrue(target.has_perm(BusinessPermission.VIEW_STOCK))
+        audit = Auditoria.objects.get(pk=result.audit_id)
+        expected_metadata = build_business_role_audit_metadata(
+            previous_role=BusinessRole.ADMINISTRADOR,
+            new_role=BusinessRole.CLIENTE,
+        )
+        for key, value in expected_metadata.items():
+            self.assertEqual(audit.valor_nuevo[key], value)
 
     def test_noop_does_not_duplicate_audit(self):
         target = self.create_user('role-noop@test.com')

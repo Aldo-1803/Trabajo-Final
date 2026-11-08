@@ -18,6 +18,7 @@ from usuarios.roles import (
     BusinessPermission,
     BusinessRole,
     assign_business_role,
+    build_business_role_audit_metadata,
     get_business_role,
     get_business_roles,
     has_inconsistent_business_roles,
@@ -165,7 +166,7 @@ class InitialClientRoleAssignmentResult:
     user_id: int
     cliente_id: int
     role: str
-    audit_id: int
+    audit_id: int | None
 
 
 @dataclass(frozen=True)
@@ -224,8 +225,16 @@ def assign_initial_client_role(
         )
 
     changed = not current_roles
-    if changed:
-        assign_business_role(locked_user, BusinessRole.CLIENTE)
+    if not changed:
+        return InitialClientRoleAssignmentResult(
+            changed=False,
+            user_id=locked_user.pk,
+            cliente_id=cliente.pk,
+            role=BusinessRole.CLIENTE,
+            audit_id=None,
+        )
+
+    assign_business_role(locked_user, BusinessRole.CLIENTE)
 
     if get_business_roles(locked_user) != (BusinessRole.CLIENTE,):
         raise InconsistentBusinessRoleState(
@@ -249,6 +258,10 @@ def assign_initial_client_role(
             'user_id': locked_user.pk,
             'cliente_id': cliente.pk,
             'business_role': BusinessRole.CLIENTE,
+            **build_business_role_audit_metadata(
+                previous_role=None,
+                new_role=BusinessRole.CLIENTE,
+            ),
         },
     )
 
@@ -574,6 +587,10 @@ def assign_validated_business_role(actor, target_user, target_role, reason):
             'reason': normalized_reason,
             'removed_business_groups': removed_groups,
             'added_business_group': target_role,
+            **build_business_role_audit_metadata(
+                previous_role=previous_role,
+                new_role=target_role,
+            ),
         },
     )
 

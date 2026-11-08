@@ -12,6 +12,7 @@ from usuarios.roles import (
     BusinessPermission,
     BusinessRole,
     assign_business_role,
+    build_business_role_audit_metadata,
     get_business_roles,
 )
 
@@ -164,6 +165,10 @@ def create_client_account_by_staff(
                 'user_active': created_user.is_active,
                 'client_active': cliente.activo,
                 'reason': normalized_reason,
+                **build_business_role_audit_metadata(
+                    previous_role=None,
+                    new_role=BusinessRole.CLIENTE,
+                ),
             },
         )
     except ClientAccountCreationConflict:

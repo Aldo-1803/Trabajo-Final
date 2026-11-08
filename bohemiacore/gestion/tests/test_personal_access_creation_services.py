@@ -20,7 +20,11 @@ from gestion.personal_access_services import (
     create_access_for_personal,
 )
 from usuarios.models import Cliente, Usuario
-from usuarios.roles import BusinessRole, get_business_role
+from usuarios.roles import (
+    BusinessRole,
+    build_business_role_audit_metadata,
+    get_business_role,
+)
 
 
 class PersonalAccessCreationServiceTests(TestCase):
@@ -361,4 +365,10 @@ class PersonalAccessCreationServiceTests(TestCase):
         self.assertEqual(audit.valor_nuevo['reason'], 'Alta inicial de acceso laboral')
         self.assertEqual(audit.valor_nuevo['link_audit_id'], result.link_audit_id)
         self.assertEqual(audit.valor_nuevo['role_audit_id'], result.role_audit_id)
+        expected_metadata = build_business_role_audit_metadata(
+            previous_role=None,
+            new_role=BusinessRole.PROFESIONAL,
+        )
+        for key, value in expected_metadata.items():
+            self.assertEqual(audit.valor_nuevo[key], value)
         self.assertEqual(audit.pk, result.access_audit_id)

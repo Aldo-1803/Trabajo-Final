@@ -81,11 +81,12 @@ Documentos principales:
 
 ### [BH-061](BH-061/) — análisis completado
 
-La implementación de BH-061 aún no comenzó. Contiene 1 documento.
+La implementación de BH-061 está en curso. Contiene 2 documentos.
 
 Documento principal:
 
 - [Análisis de auditoría de roles y permisos](BH-061/ANALISIS_BH061_AUDITORIA_ROLES_PERMISOS.md)
+- [Incremento 1: semántica no-op y contrato versionado de roles](BH-061/IMPLEMENTACION_BH061_1_CONTRATO_ROLES.md)
 
 ## Documentación transversal
 

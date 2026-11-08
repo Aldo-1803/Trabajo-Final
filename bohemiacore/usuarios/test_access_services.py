@@ -21,7 +21,12 @@ from usuarios.access_services import (
     assign_validated_business_role,
 )
 from usuarios.models import Cliente, Usuario
-from usuarios.roles import BusinessRole, get_business_role, get_business_roles
+from usuarios.roles import (
+    BusinessRole,
+    build_business_role_audit_metadata,
+    get_business_role,
+    get_business_roles,
+)
 
 
 class ValidatedBusinessRoleAssignmentTests(TestCase):
@@ -311,6 +316,12 @@ class ValidatedBusinessRoleAssignmentTests(TestCase):
             audit.valor_nuevo['added_business_group'],
             BusinessRole.EMPLEADO,
         )
+        expected_metadata = build_business_role_audit_metadata(
+            previous_role=BusinessRole.CLIENTE,
+            new_role=BusinessRole.EMPLEADO,
+        )
+        for key, value in expected_metadata.items():
+            self.assertEqual(audit.valor_nuevo[key], value)
 
     def test_audit_contains_no_password_hash_or_tokens(self):
         target = self.create_user('audit-secrets@test.com')

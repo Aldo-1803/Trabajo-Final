@@ -11,6 +11,7 @@ from usuarios.roles import (
     BusinessPermission,
     BusinessRole,
     assign_business_role,
+    build_business_role_audit_metadata,
     get_business_roles,
 )
 
@@ -261,5 +262,9 @@ def _write_administrator_account_creation_audit(*, actor, user, reason):
             'is_active': user.is_active,
             'is_staff': user.is_staff,
             'is_superuser': user.is_superuser,
+            **build_business_role_audit_metadata(
+                previous_role=None,
+                new_role=BusinessRole.ADMINISTRADOR,
+            ),
         },
     )

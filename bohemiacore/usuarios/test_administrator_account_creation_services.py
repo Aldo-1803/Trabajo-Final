@@ -17,7 +17,11 @@ from usuarios.administrator_account_services import (
     create_administrator_account,
 )
 from usuarios.models import Cliente, Usuario
-from usuarios.roles import BusinessRole, get_business_roles
+from usuarios.roles import (
+    BusinessRole,
+    build_business_role_audit_metadata,
+    get_business_roles,
+)
 
 
 class AdministratorAccountCreationServiceTests(TestCase):
@@ -214,6 +218,12 @@ class AdministratorAccountCreationServiceTests(TestCase):
         self.assertTrue(audit.valor_nuevo['is_active'])
         self.assertFalse(audit.valor_nuevo['is_staff'])
         self.assertFalse(audit.valor_nuevo['is_superuser'])
+        expected_metadata = build_business_role_audit_metadata(
+            previous_role=None,
+            new_role=BusinessRole.ADMINISTRADOR,
+        )
+        for key, value in expected_metadata.items():
+            self.assertEqual(audit.valor_nuevo[key], value)
         relevant_audits = Auditoria.objects.filter(
             registro_id=result.user_id,
             tabla__in=(

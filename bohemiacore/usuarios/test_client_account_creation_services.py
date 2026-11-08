@@ -17,7 +17,11 @@ from usuarios.client_account_services import (
     create_client_account_by_staff,
 )
 from usuarios.models import Cliente, Usuario
-from usuarios.roles import BusinessRole, get_business_roles
+from usuarios.roles import (
+    BusinessRole,
+    build_business_role_audit_metadata,
+    get_business_roles,
+)
 
 
 class ClientAccountCreationServiceTests(TestCase):
@@ -103,6 +107,12 @@ class ClientAccountCreationServiceTests(TestCase):
             BusinessRole.CLIENTE,
         )
         self.assertEqual(audit.valor_nuevo['reason'], self.reason)
+        expected_metadata = build_business_role_audit_metadata(
+            previous_role=None,
+            new_role=BusinessRole.CLIENTE,
+        )
+        for key, value in expected_metadata.items():
+            self.assertEqual(audit.valor_nuevo[key], value)
         serialized_audit = json.dumps(audit.valor_nuevo).lower()
         self.assertNotIn('password', serialized_audit)
         self.assertNotIn(self.password.lower(), serialized_audit)
