@@ -5,6 +5,48 @@ organizados por tarea.
 
 ## Tareas
 
+### [BH-054](BH-054/) — cierre histórico con bloqueos registrados
+
+Documentación histórica de Usuarios, Personal y superficies de acceso. El
+documento conserva el estado observado en su auditoría: el subbloque todavía no
+podía considerarse cerrado. Contiene 1 documento.
+
+Documento principal:
+
+- [Cierre de Usuarios, Personal y acceso](BH-054/CIERRE_BH054_USUARIOS_PERSONAL_ACCESO.md)
+
+### [BH-055](BH-055/) — auditoría final de cierre
+
+Documentación de permisos frontend, navegación por capacidades, Clientes y
+agenda laboral propia. Contiene 3 documentos.
+
+Documentos principales:
+
+- [Análisis de frontend y permisos](BH-055/ANALISIS_BH055_FRONTEND_PERMISOS.md)
+- [Auditoría final de cierre](BH-055/AUDITORIA_CIERRE_BH055_FINAL.md)
+
+### [BH-056](BH-056/) — cierre auditado
+
+Documentación de skills y habilitaciones técnicas de Personal, sus incrementos
+de implementación y la auditoría final. Contiene 5 documentos.
+
+Documentos principales:
+
+- [Análisis de skills y habilitaciones](BH-056/ANALISIS_BH056_SKILLS_HABILITACIONES.md)
+- [Auditoría final de cierre](BH-056/AUDITORIA_CIERRE_BH056.md)
+
+### [BH-057](BH-057/) — cierre final auditado
+
+Documentación del historial técnico, evaluación de riesgo, incrementos,
+correcciones y auditorías de cierre. Contiene 10 documentos.
+
+Documentos principales:
+
+- [Análisis de historial técnico y riesgo](BH-057/ANALISIS_BH057_HISTORIAL_RIESGO.md)
+- [Implementación del incremento A](BH-057/IMPLEMENTACION_BH057_INCREMENTO_A.md)
+- [Implementación del incremento B](BH-057/IMPLEMENTACION_BH057_INCREMENTO_B.md)
+- [Auditoría final de cierre](BH-057/AUDITORIA_FINAL_CIERRE_BH057.md)
+
 ### [BH-058](BH-058/) — cerrada técnicamente
 
 Documentación del flujo de turnos, pagos, conciliación, stock y resolución de
