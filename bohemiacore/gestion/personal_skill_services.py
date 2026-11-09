@@ -12,6 +12,13 @@ PERSONAL_SKILL_AUDIT_TABLE = 'PersonalHabilidad'
 PERSONAL_SKILL_ASSIGNED = 'PERSONAL_SKILL_ASSIGNED'
 PERSONAL_SKILL_REVOKED = 'PERSONAL_SKILL_REVOKED'
 PERSONAL_SKILL_REACTIVATED = 'PERSONAL_SKILL_REACTIVATED'
+PERSONAL_SKILL_ASSIGN_SOURCE = 'gestion.personal_skill_services.assign_skill'
+PERSONAL_SKILL_REVOKE_SOURCE = 'gestion.personal_skill_services.revoke_skill'
+PERSONAL_SKILL_REACTIVATE_SOURCE = (
+    'gestion.personal_skill_services.reactivate_skill'
+)
+MIN_REASON_LENGTH = 3
+MAX_REASON_LENGTH = 500
 
 
 class PersonalSkillPermissionDenied(Exception):
@@ -27,6 +34,10 @@ class InactiveSkill(Exception):
 
 
 class PersonalSkillAssignmentNotFound(Exception):
+    pass
+
+
+class InvalidPersonalSkillReason(Exception):
     pass
 
 
@@ -76,7 +87,36 @@ def _locked_skill(skill_id, *, require_active):
     return skill
 
 
-def _write_audit(*, actor, assignment, event, previous_active, current_active):
+def _validated_reason(reason):
+    if not isinstance(reason, str):
+        raise InvalidPersonalSkillReason(
+            'A reason is required for the personnel skill change.'
+        )
+
+    normalized_reason = reason.strip()
+    if not MIN_REASON_LENGTH <= len(normalized_reason) <= MAX_REASON_LENGTH:
+        raise InvalidPersonalSkillReason(
+            f'The reason must contain between {MIN_REASON_LENGTH} and '
+            f'{MAX_REASON_LENGTH} characters.'
+        )
+    return normalized_reason
+
+
+def _write_audit(
+    *,
+    actor,
+    assignment,
+    event,
+    source,
+    reason,
+    previous_active,
+    current_active,
+):
+    linked_user = (
+        {'user_id': assignment.personal.usuario_id}
+        if assignment.personal.usuario_id is not None
+        else {}
+    )
     return Auditoria.objects.create(
         tabla=PERSONAL_SKILL_AUDIT_TABLE,
         registro_id=assignment.pk,
@@ -87,19 +127,26 @@ def _write_audit(*, actor, assignment, event, previous_active, current_active):
             'personal_id': assignment.personal_id,
             'skill_id': assignment.habilidad_id,
             'activa': previous_active,
+            **linked_user,
         },
         valor_nuevo={
             'event': event,
+            'source': source,
             'actor_id': actor.pk,
             'personal_id': assignment.personal_id,
             'skill_id': assignment.habilidad_id,
             'activa': current_active,
+            'previous_active': previous_active,
+            'current_active': current_active,
+            'reason': reason,
+            **linked_user,
         },
     )
 
 
 @transaction.atomic
-def assign_skill(*, actor, personal_id, skill_id):
+def assign_skill(*, actor, personal_id, skill_id, reason):
+    normalized_reason = _validated_reason(reason)
     current_actor = _authorized_actor(actor)
     personal = _locked_personal(personal_id)
     skill = _locked_skill(skill_id, require_active=True)
@@ -119,6 +166,8 @@ def assign_skill(*, actor, personal_id, skill_id):
             actor=current_actor,
             assignment=assignment,
             event=PERSONAL_SKILL_ASSIGNED,
+            source=PERSONAL_SKILL_ASSIGN_SOURCE,
+            reason=normalized_reason,
             previous_active=None,
             current_active=True,
         )
@@ -133,6 +182,8 @@ def assign_skill(*, actor, personal_id, skill_id):
         actor=current_actor,
         assignment=assignment,
         event=PERSONAL_SKILL_REACTIVATED,
+        source=PERSONAL_SKILL_ASSIGN_SOURCE,
+        reason=normalized_reason,
         previous_active=False,
         current_active=True,
     )
@@ -140,7 +191,8 @@ def assign_skill(*, actor, personal_id, skill_id):
 
 
 @transaction.atomic
-def revoke_skill(*, actor, personal_id, skill_id):
+def revoke_skill(*, actor, personal_id, skill_id, reason):
+    normalized_reason = _validated_reason(reason)
     current_actor = _authorized_actor(actor)
     personal = _locked_personal(personal_id)
     skill = _locked_skill(skill_id, require_active=False)
@@ -161,6 +213,8 @@ def revoke_skill(*, actor, personal_id, skill_id):
         actor=current_actor,
         assignment=assignment,
         event=PERSONAL_SKILL_REVOKED,
+        source=PERSONAL_SKILL_REVOKE_SOURCE,
+        reason=normalized_reason,
         previous_active=True,
         current_active=False,
     )
@@ -168,7 +222,8 @@ def revoke_skill(*, actor, personal_id, skill_id):
 
 
 @transaction.atomic
-def reactivate_skill(*, actor, personal_id, skill_id):
+def reactivate_skill(*, actor, personal_id, skill_id, reason):
+    normalized_reason = _validated_reason(reason)
     current_actor = _authorized_actor(actor)
     personal = _locked_personal(personal_id)
     skill = _locked_skill(skill_id, require_active=True)
@@ -189,6 +244,8 @@ def reactivate_skill(*, actor, personal_id, skill_id):
         actor=current_actor,
         assignment=assignment,
         event=PERSONAL_SKILL_REACTIVATED,
+        source=PERSONAL_SKILL_REACTIVATE_SOURCE,
+        reason=normalized_reason,
         previous_active=False,
         current_active=True,
     )

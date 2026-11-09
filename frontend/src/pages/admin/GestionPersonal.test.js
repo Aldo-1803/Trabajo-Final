@@ -227,11 +227,61 @@ describe('GestionPersonal access UI', () => {
         );
         expect(screen.queryByRole('columnheader', { name: 'Contacto' })).not.toBeInTheDocument();
         expect(screen.queryByText('contacto-personal@test.com')).not.toBeInTheDocument();
+        fireEvent.change(screen.getByLabelText('Motivo de habilidad para Sin'), {
+            target: { value: 'Retiro temporal de habilitación técnica' }
+        });
         fireEvent.click(screen.getByRole('button', { name: 'Revocar Coloración' }));
 
         await waitFor(() => expect(axios.post).toHaveBeenCalledWith(
             'http://127.0.0.1:8000/api/gestion/personal/10/habilidades/4/revocar/',
-            {},
+            { motivo: 'Retiro temporal de habilitación técnica' },
+            { headers: { Authorization: 'Bearer test-token' } }
+        ));
+    });
+
+    test('habilidades exige motivo antes de habilitar comandos administrativos', async () => {
+        useSession.mockReturnValue({
+            hasPermission: (permission) => permission === 'gestion.manage_skills'
+        });
+        axios.get.mockImplementation((url) => {
+            if (url.includes('/directorio-habilidades/')) {
+                return Promise.resolve({ data: [{
+                    id: 10,
+                    nombre: 'Sin',
+                    apellido: 'Acceso',
+                    activo: true
+                }] });
+            }
+            if (url.includes('/personal/10/habilidades/')) {
+                return Promise.resolve({ data: [] });
+            }
+            if (url.endsWith('/habilidades/')) {
+                return Promise.resolve({
+                    data: [{ id: 4, nombre: 'Coloración', activa: true }]
+                });
+            }
+            return Promise.resolve({ data: [] });
+        });
+
+        render(<GestionPersonal />);
+
+        const assignButton = await screen.findByRole('button', { name: 'Asignar' });
+        const skillSelect = screen.getByLabelText('Asignar habilidad a Sin');
+        fireEvent.change(skillSelect, { target: { value: '4' } });
+        expect(assignButton).toBeDisabled();
+
+        fireEvent.change(screen.getByLabelText('Motivo de habilidad para Sin'), {
+            target: { value: 'Nueva habilitación técnica aprobada' }
+        });
+        expect(assignButton).toBeEnabled();
+        fireEvent.click(assignButton);
+
+        await waitFor(() => expect(axios.post).toHaveBeenCalledWith(
+            'http://127.0.0.1:8000/api/gestion/personal/10/habilidades/asignar/',
+            {
+                habilidad_id: 4,
+                motivo: 'Nueva habilitación técnica aprobada'
+            },
             { headers: { Authorization: 'Bearer test-token' } }
         ));
     });

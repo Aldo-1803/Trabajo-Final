@@ -148,6 +148,20 @@ class AuditEffectivePermissionTests(APITestCase):
             accion='ALTA',
             valor_nuevo={'event': 'TEST'},
         )
+        self.legacy_skill_audit = Auditoria.objects.create(
+            tabla='PersonalHabilidad',
+            registro_id=1,
+            usuario=self.viewer,
+            accion='ALTA',
+            valor_anterior={
+                'event': 'PERSONAL_SKILL_ASSIGNED',
+                'activa': None,
+            },
+            valor_nuevo={
+                'event': 'PERSONAL_SKILL_ASSIGNED',
+                'activa': True,
+            },
+        )
 
     def tearDown(self):
         _thread_locals.user = None
@@ -193,6 +207,23 @@ class AuditEffectivePermissionTests(APITestCase):
             response.data['valor_nuevo'],
         )
         self.assertNotIn('operation_id', response.data['valor_nuevo'])
+        self.assertNotIn('reason', response.data['valor_nuevo'])
+        self.assertNotIn('source', response.data['valor_nuevo'])
+
+    def test_legacy_skill_audit_without_reason_or_source_is_readable(self):
+        self.client.force_authenticate(self.viewer)
+
+        response = self.client.get(
+            reverse('auditoria-detail', args=[self.legacy_skill_audit.pk])
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            response.data['valor_nuevo']['event'],
+            'PERSONAL_SKILL_ASSIGNED',
+        )
+        self.assertNotIn('reason', response.data['valor_nuevo'])
+        self.assertNotIn('source', response.data['valor_nuevo'])
 
     def test_generic_history_rejects_personal_access_reversal(self):
         personal = Personal.objects.create(

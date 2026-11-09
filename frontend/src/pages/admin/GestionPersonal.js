@@ -32,6 +32,7 @@ const GestionPersonal = () => {
     const [catalogoHabilidades, setCatalogoHabilidades] = useState([]);
     const [habilidadesPorPersonal, setHabilidadesPorPersonal] = useState({});
     const [habilidadSeleccionada, setHabilidadSeleccionada] = useState({});
+    const [motivoHabilidad, setMotivoHabilidad] = useState({});
     const [modalCambiarRol, setModalCambiarRol] = useState(false);
     const [cambiandoRol, setCambiandoRol] = useState(false);
     const [formRolAcceso, setFormRolAcceso] = useState({
@@ -208,6 +209,11 @@ const GestionPersonal = () => {
 
     const gestionarHabilidad = async (personalId, action, skillId) => {
         const token = localStorage.getItem('access_token');
+        const reason = (motivoHabilidad[personalId] || '').trim();
+        if (reason.length < 3 || reason.length > 500) {
+            notify.error('Ingrese un motivo de entre 3 y 500 caracteres.');
+            return;
+        }
         const actionUrls = {
             asignar: `personal/${personalId}/habilidades/asignar/`,
             revocar: `personal/${personalId}/habilidades/${skillId}/revocar/`,
@@ -216,9 +222,21 @@ const GestionPersonal = () => {
         try {
             await axios.post(
                 `http://127.0.0.1:8000/api/gestion/${actionUrls[action]}`,
-                action === 'asignar' ? { habilidad_id: Number(skillId) } : {},
+                action === 'asignar'
+                    ? { habilidad_id: Number(skillId), motivo: reason }
+                    : { motivo: reason },
                 { headers: { 'Authorization': `Bearer ${token}` } }
             );
+            setMotivoHabilidad({
+                ...motivoHabilidad,
+                [personalId]: ''
+            });
+            if (action === 'asignar') {
+                setHabilidadSeleccionada({
+                    ...habilidadSeleccionada,
+                    [personalId]: ''
+                });
+            }
             notify.success('Habilidad técnica actualizada.');
             await cargarPersonal();
         } catch (error) {
@@ -226,6 +244,8 @@ const GestionPersonal = () => {
             notify.error(
                 code === 'INACTIVE_SKILL'
                     ? 'La habilidad está inactiva y no puede asignarse.'
+                    : code === 'INVALID_REASON'
+                        ? 'Ingrese un motivo administrativo válido.'
                     : 'No se pudo actualizar la habilidad técnica.'
             );
         }
@@ -618,6 +638,19 @@ const GestionPersonal = () => {
                                              )}
                                             {canManageSkills && (
                                                 <div className="mt-2 flex flex-wrap items-center gap-2">
+                                                    <input
+                                                        type="text"
+                                                        aria-label={`Motivo de habilidad para ${p.nombre}`}
+                                                        value={motivoHabilidad[p.id] || ''}
+                                                        onChange={(event) => setMotivoHabilidad({
+                                                            ...motivoHabilidad,
+                                                            [p.id]: event.target.value
+                                                        })}
+                                                        minLength={3}
+                                                        maxLength={500}
+                                                        placeholder="Motivo administrativo"
+                                                        className="max-w-48 rounded border p-1 text-xs"
+                                                    />
                                                     <select
                                                         aria-label={`Asignar habilidad a ${p.nombre}`}
                                                         value={habilidadSeleccionada[p.id] || ''}
@@ -636,7 +669,10 @@ const GestionPersonal = () => {
                                                     </select>
                                                     <button
                                                         type="button"
-                                                        disabled={!habilidadSeleccionada[p.id]}
+                                                        disabled={
+                                                            !habilidadSeleccionada[p.id]
+                                                            || (motivoHabilidad[p.id] || '').trim().length < 3
+                                                        }
                                                         onClick={() => gestionarHabilidad(p.id, 'asignar', habilidadSeleccionada[p.id])}
                                                         className="rounded border px-2 py-1 text-xs font-semibold disabled:opacity-50"
                                                     >
@@ -646,12 +682,13 @@ const GestionPersonal = () => {
                                                         <button
                                                             key={`action-${assignment.id}`}
                                                             type="button"
+                                                            disabled={(motivoHabilidad[p.id] || '').trim().length < 3}
                                                             onClick={() => gestionarHabilidad(
                                                                 p.id,
                                                                 assignment.activa ? 'revocar' : 'reactivar',
                                                                 assignment.habilidad.id
                                                             )}
-                                                            className="rounded border px-2 py-1 text-xs"
+                                                            className="rounded border px-2 py-1 text-xs disabled:opacity-50"
                                                         >
                                                             {assignment.activa ? `Revocar ${assignment.habilidad.nombre}` : `Reactivar ${assignment.habilidad.nombre}`}
                                                         </button>

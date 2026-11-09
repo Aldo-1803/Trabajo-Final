@@ -69,6 +69,7 @@ from .serializers import (
     PoliticaRiesgoTecnicoSerializer, ReglaIntervaloTecnicoSerializer,
     ReglaDiagnosticoTecnicoSerializer, ReglaFrecuenciaTecnicaSerializer,
     PersonalHabilidadAssignCommandSerializer,
+    PersonalHabilidadCommandSerializer,
     PersonalAccessCreateCommandSerializer,
     PersonalBusinessRoleChangeCommandSerializer,
     PersonalStatusChangeCommandSerializer,
@@ -298,6 +299,7 @@ from .personal_access_services import (
 )
 from .personal_skill_services import (
     InactiveSkill,
+    InvalidPersonalSkillReason,
     PersonalSkillAssignmentNotFound,
     PersonalSkillNotFound,
     PersonalSkillPermissionDenied,
@@ -992,12 +994,19 @@ class PersonalViewSet(viewsets.ModelViewSet):
             status=status_code,
         )
 
-    def _run_skill_command(self, command, *, skill_id):
+    def _run_skill_command(self, command, *, skill_id, reason):
         try:
             return command(
                 actor=self.request.user,
                 personal_id=self.kwargs['pk'],
                 skill_id=skill_id,
+                reason=reason,
+            )
+        except InvalidPersonalSkillReason:
+            return self._skill_error(
+                'INVALID_REASON',
+                'El motivo administrativo es inválido.',
+                status.HTTP_400_BAD_REQUEST,
             )
         except PersonalSkillPermissionDenied:
             return self._skill_error(
@@ -1024,6 +1033,26 @@ class PersonalViewSet(viewsets.ModelViewSet):
                 status.HTTP_409_CONFLICT,
             )
 
+    def _validate_skill_command(self, serializer_class, data):
+        command = serializer_class(data=data)
+        if command.is_valid():
+            return command
+        code = (
+            'INVALID_REASON'
+            if set(command.errors) == {'motivo'}
+            else 'INVALID_PAYLOAD'
+        )
+        detail = (
+            'El motivo administrativo es inválido.'
+            if code == 'INVALID_REASON'
+            else 'El payload de la operación de habilidad es inválido.'
+        )
+        return self._skill_error(
+            code,
+            detail,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
     @action(detail=True, methods=['get'], url_path='habilidades')
     def habilidades(self, request, pk=None):
         personal = self.get_object()
@@ -1036,16 +1065,16 @@ class PersonalViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='habilidades/asignar')
     def asignar_habilidad(self, request, pk=None):
-        command = PersonalHabilidadAssignCommandSerializer(data=request.data)
-        if not command.is_valid():
-            return self._skill_error(
-                'INVALID_PAYLOAD',
-                'El payload de asignación de habilidad es inválido.',
-                status.HTTP_400_BAD_REQUEST,
-            )
+        command = self._validate_skill_command(
+            PersonalHabilidadAssignCommandSerializer,
+            request.data,
+        )
+        if isinstance(command, Response):
+            return command
         result = self._run_skill_command(
             assign_skill,
             skill_id=command.validated_data['habilidad_id'],
+            reason=command.validated_data['motivo'],
         )
         if isinstance(result, Response):
             return result
@@ -1061,7 +1090,17 @@ class PersonalViewSet(viewsets.ModelViewSet):
         url_path=r'habilidades/(?P<habilidad_id>[^/.]+)/revocar',
     )
     def revocar_habilidad(self, request, pk=None, habilidad_id=None):
-        result = self._run_skill_command(revoke_skill, skill_id=habilidad_id)
+        command = self._validate_skill_command(
+            PersonalHabilidadCommandSerializer,
+            request.data,
+        )
+        if isinstance(command, Response):
+            return command
+        result = self._run_skill_command(
+            revoke_skill,
+            skill_id=habilidad_id,
+            reason=command.validated_data['motivo'],
+        )
         if isinstance(result, Response):
             return result
         return Response({
@@ -1076,7 +1115,17 @@ class PersonalViewSet(viewsets.ModelViewSet):
         url_path=r'habilidades/(?P<habilidad_id>[^/.]+)/reactivar',
     )
     def reactivar_habilidad(self, request, pk=None, habilidad_id=None):
-        result = self._run_skill_command(reactivate_skill, skill_id=habilidad_id)
+        command = self._validate_skill_command(
+            PersonalHabilidadCommandSerializer,
+            request.data,
+        )
+        if isinstance(command, Response):
+            return command
+        result = self._run_skill_command(
+            reactivate_skill,
+            skill_id=habilidad_id,
+            reason=command.validated_data['motivo'],
+        )
         if isinstance(result, Response):
             return result
         return Response({
