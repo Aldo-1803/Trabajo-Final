@@ -325,10 +325,12 @@ class PersonalAccessCreationServiceTests(TestCase):
             Auditoria.objects.values('valor_anterior', 'valor_nuevo')
         ))
         self.assertNotIn(raw_password, payload)
+        self.assertNotIn('"password"', payload.lower())
         self.assertNotIn('password_hash', payload.lower())
         self.assertNotIn('access_token', payload.lower())
         self.assertNotIn('refresh_token', payload.lower())
         self.assertNotIn('"jwt"', payload.lower())
+        self.assertNotIn('"jti"', payload.lower())
 
     def test_password_is_persisted_as_hash(self):
         personal = self.create_personal('hashed-password')
@@ -398,6 +400,18 @@ class PersonalAccessCreationServiceTests(TestCase):
         operation_id = operation_ids.pop()
         self.assertEqual(UUID(operation_id).hex, operation_id)
         self.assertEqual(UUID(operation_id).version, 4)
+        operation_audits = Auditoria.objects.filter(
+            valor_nuevo__operation_id=operation_id
+        )
+        self.assertEqual(operation_audits.count(), 3)
+        self.assertSetEqual(
+            set(operation_audits.values_list('pk', flat=True)),
+            {
+                result.link_audit_id,
+                result.role_audit_id,
+                result.access_audit_id,
+            },
+        )
         for component in component_audits.values():
             self.assertEqual(component.usuario, self.actor)
         expected_metadata = build_business_role_audit_metadata(
@@ -411,3 +425,27 @@ class PersonalAccessCreationServiceTests(TestCase):
             for key, value in expected_metadata.items():
                 self.assertEqual(role_audit.valor_nuevo[key], value)
         self.assertEqual(audit.pk, result.access_audit_id)
+
+        with self.assertRaises(PersonalAlreadyHasAccess):
+            self.create_access(personal, BusinessRole.PROFESIONAL)
+        self.assertEqual(
+            Auditoria.objects.filter(
+                valor_nuevo__operation_id=operation_id
+            ).count(),
+            3,
+        )
+        self.assertEqual(
+            Auditoria.objects.filter(
+                tabla__in=(
+                    'PersonalUserLink',
+                    'UsuarioBusinessRole',
+                    PERSONAL_ACCESS_AUDIT_TABLE,
+                ),
+                valor_nuevo__event__in=(
+                    PERSONAL_LINK_AUDIT_EVENT,
+                    ROLE_AUDIT_EVENT,
+                    PERSONAL_ACCESS_AUDIT_EVENT,
+                ),
+            ).count(),
+            3,
+        )

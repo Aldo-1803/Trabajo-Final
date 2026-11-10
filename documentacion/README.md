@@ -89,6 +89,7 @@ Documento principal:
 - [Incremento 1: semántica no-op y contrato versionado de roles](BH-061/IMPLEMENTACION_BH061_1_CONTRATO_ROLES.md)
 - [Incremento 2: correlación uniforme de eventos compuestos](BH-061/IMPLEMENTACION_BH061_2_CORRELACION_EVENTOS.md)
 - [Incremento 3: auditoría de habilidades técnicas](BH-061/IMPLEMENTACION_BH061_3_AUDITORIA_HABILIDADES.md)
+- [Incremento 4: cardinalidad de eventos y concurrencia](BH-061/IMPLEMENTACION_BH061_4_CARDINALIDAD_CONCURRENCIA.md)
 
 ## Documentación transversal
 

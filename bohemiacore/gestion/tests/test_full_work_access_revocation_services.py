@@ -499,12 +499,36 @@ class FullWorkAccessRevocationServiceTests(TestCase):
         operation_id = operation_ids.pop()
         self.assertEqual(UUID(operation_id).hex, operation_id)
         self.assertEqual(UUID(operation_id).version, 4)
+        operation_audits = Auditoria.objects.filter(
+            valor_nuevo__operation_id=operation_id
+        )
+        self.assertEqual(operation_audits.count(), 3)
+        self.assertSetEqual(
+            set(operation_audits.values_list('pk', flat=True)),
+            {
+                result.status_audit_id,
+                result.account_audit_id,
+                result.audit_id,
+            },
+        )
         for component in component_audits.values():
             self.assertEqual(component.usuario, self.actor)
             self.assertEqual(
                 component.valor_nuevo['reason'],
                 'Fin de relacion laboral y acceso digital',
             )
+
+        repeated = self.revoke(personal)
+        self.assertFalse(repeated.changed)
+        self.assertIsNone(repeated.status_audit_id)
+        self.assertIsNone(repeated.account_audit_id)
+        self.assertIsNone(repeated.audit_id)
+        self.assertEqual(
+            Auditoria.objects.filter(
+                valor_nuevo__operation_id=operation_id
+            ).count(),
+            3,
+        )
 
     def test_compound_audit_failure_rolls_back_both_states(self):
         personal, user, _ = self.create_linked_context(

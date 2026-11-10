@@ -153,6 +153,10 @@ class AccountDeactivationServiceTests(TestCase):
 
         target.refresh_from_db()
         self.assertTrue(target.is_active)
+        self.assertFalse(self.audits().filter(
+            registro_id=target.pk,
+            valor_nuevo__event=ACCOUNT_DEACTIVATED_EVENT,
+        ).exists())
 
     def test_administrator_can_be_deactivated_with_active_backup(self):
         target = self.create_user('account-admin-target@test.com')
@@ -220,6 +224,10 @@ class AccountDeactivationServiceTests(TestCase):
 
         target.refresh_from_db()
         self.assertTrue(target.is_active)
+        self.assertFalse(self.audits().filter(
+            registro_id=target.pk,
+            valor_nuevo__event=ACCOUNT_DEACTIVATED_EVENT,
+        ).exists())
 
     def test_audit_contains_semantic_data_and_failure_rolls_back(self):
         target = self.create_user('account-audit@test.com')
@@ -257,6 +265,10 @@ class AccountDeactivationServiceTests(TestCase):
 
         rollback_target.refresh_from_db()
         self.assertTrue(rollback_target.is_active)
+        self.assertFalse(self.audits().filter(
+            registro_id=rollback_target.pk,
+            valor_nuevo__event=ACCOUNT_DEACTIVATED_EVENT,
+        ).exists())
 
     def test_reason_is_required_even_for_noop(self):
         target = self.create_user(
@@ -268,3 +280,10 @@ class AccountDeactivationServiceTests(TestCase):
             with self.subTest(reason=reason):
                 with self.assertRaises(InvalidAccountDeactivationReason):
                     deactivate_account(self.actor, target, reason)
+
+        target.refresh_from_db()
+        self.assertFalse(target.is_active)
+        self.assertFalse(self.audits().filter(
+            registro_id=target.pk,
+            valor_nuevo__event=ACCOUNT_DEACTIVATED_EVENT,
+        ).exists())

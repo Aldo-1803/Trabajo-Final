@@ -5,9 +5,11 @@ from django.test import TestCase
 
 from gestion.models import Auditoria, Personal
 from usuarios.access_services import (
+    InvalidRoleChangeReason,
     LastActiveAdministratorRoleChange,
     PermissionDeniedForRoleAssignment,
     ResidualAdministrativeCapabilities,
+    ROLE_AUDIT_EVENT,
     ROLE_AUDIT_TABLE,
     change_administrative_business_role,
 )
@@ -99,6 +101,28 @@ class AdministrativeBusinessRoleChangeServiceTests(TestCase):
                     )
 
         self.assertIsNone(get_business_role(target))
+        self.assertFalse(Auditoria.objects.filter(
+            tabla=ROLE_AUDIT_TABLE,
+            registro_id=target.pk,
+            valor_nuevo__event=ROLE_AUDIT_EVENT,
+        ).exists())
+
+    def test_invalid_reason_preserves_role_and_creates_no_semantic_event(self):
+        target = self.create_user('invalid-reason-target@test.com')
+        Cliente.objects.create(usuario=target)
+        self.assign_role(target, BusinessRole.CLIENTE)
+
+        for reason in (None, '', ' ', 'x', 'x' * 501):
+            with self.subTest(reason=reason):
+                with self.assertRaises(InvalidRoleChangeReason):
+                    self.change(target, BusinessRole.ADMINISTRADOR, reason)
+
+        self.assertEqual(get_business_role(target), BusinessRole.CLIENTE)
+        self.assertFalse(Auditoria.objects.filter(
+            tabla=ROLE_AUDIT_TABLE,
+            registro_id=target.pk,
+            valor_nuevo__event=ROLE_AUDIT_EVENT,
+        ).exists())
 
     def test_promotion_preserves_profiles_ownership_and_account_flags(self):
         target = self.create_user(
@@ -250,6 +274,11 @@ class AdministrativeBusinessRoleChangeServiceTests(TestCase):
                 self.change(target, BusinessRole.CLIENTE)
 
         self.assertEqual(get_business_role(target), BusinessRole.EMPLEADO)
+        self.assertFalse(Auditoria.objects.filter(
+            tabla=ROLE_AUDIT_TABLE,
+            registro_id=target.pk,
+            valor_nuevo__event=ROLE_AUDIT_EVENT,
+        ).exists())
 
     def test_permission_cache_on_supplied_target_is_invalidated(self):
         target = self.create_user('role-cache@test.com')

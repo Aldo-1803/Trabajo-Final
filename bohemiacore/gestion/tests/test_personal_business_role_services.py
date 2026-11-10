@@ -17,6 +17,7 @@ from gestion.personal_access_services import (
     change_personal_business_role,
 )
 from usuarios.models import Cliente, Usuario
+from usuarios.access_services import ROLE_AUDIT_EVENT, ROLE_AUDIT_TABLE
 from usuarios.roles import (
     BusinessRole,
     build_business_role_audit_metadata,
@@ -115,6 +116,19 @@ class PersonalBusinessRoleChangeServiceTests(TestCase):
         operation_id = operation_ids.pop()
         self.assertEqual(UUID(operation_id).hex, operation_id)
         self.assertEqual(UUID(operation_id).version, 4)
+        operation_audits = Auditoria.objects.filter(
+            valor_nuevo__operation_id=operation_id
+        )
+        self.assertEqual(operation_audits.count(), 2)
+        self.assertSetEqual(
+            set(operation_audits.values_list('pk', flat=True)),
+            {result.role_audit_id, result.audit_id},
+        )
+        parent_audit = Auditoria.objects.get(pk=result.audit_id)
+        self.assertEqual(
+            parent_audit.valor_nuevo['role_audit_id'],
+            result.role_audit_id,
+        )
         return result, personal, user, client
 
     def test_cliente_to_empleado_preserves_both_profiles(self):
@@ -347,6 +361,18 @@ class PersonalBusinessRoleChangeServiceTests(TestCase):
         for key, value in expected_metadata.items():
             self.assertEqual(audit.valor_nuevo[key], value)
 
+        operation_id = audit.valor_nuevo['operation_id']
+        repeated = self.change(personal, BusinessRole.PROFESIONAL)
+        self.assertFalse(repeated.changed)
+        self.assertIsNone(repeated.role_audit_id)
+        self.assertIsNone(repeated.audit_id)
+        self.assertEqual(
+            Auditoria.objects.filter(
+                valor_nuevo__operation_id=operation_id
+            ).count(),
+            2,
+        )
+
     def test_audit_failure_rolls_back_role_change(self):
         personal, user, client = self.create_context(
             'audit-failure',
@@ -369,5 +395,12 @@ class PersonalBusinessRoleChangeServiceTests(TestCase):
             Auditoria.objects.filter(
                 tabla=PERSONAL_BUSINESS_ROLE_AUDIT_TABLE,
                 registro_id=personal.pk,
+            ).exists()
+        )
+        self.assertFalse(
+            Auditoria.objects.filter(
+                tabla=ROLE_AUDIT_TABLE,
+                registro_id=user.pk,
+                valor_nuevo__event=ROLE_AUDIT_EVENT,
             ).exists()
         )
