@@ -1,5 +1,6 @@
-from datetime import time, timedelta
+from datetime import datetime, time, timedelta, timezone as dt_timezone
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.contrib.auth.models import Group, Permission
 from django.urls import reverse
@@ -490,3 +491,17 @@ class ConfigurationReportsAuthorizationTests(APITestCase):
             response.data['proximos_turnos'][0]['cliente'],
             'Clienta Privada',
         )
+
+    def test_report_default_month_uses_posadas_at_utc_month_boundary(self):
+        fixed_utc_now = datetime(2026, 12, 1, 2, 30, tzinfo=dt_timezone.utc)
+        OrdenCompra.objects.filter(pk=self.order.pk).update(
+            creado_at=datetime(2026, 11, 30, 15, 0, tzinfo=dt_timezone.utc),
+        )
+        self.authenticate(self.general_actor)
+
+        with patch('django.utils.timezone.now', return_value=fixed_utc_now):
+            response = self.client.get(self.general_stats)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['rango']['inicio'].isoformat(), '2026-11-01')
+        self.assertEqual(response.data['ordenes_count'], 1)

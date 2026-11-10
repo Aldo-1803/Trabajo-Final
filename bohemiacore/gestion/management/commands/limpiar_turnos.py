@@ -8,12 +8,20 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         ahora = timezone.now()
+        ahora_local = timezone.localtime(
+            ahora,
+            timezone.get_default_timezone(),
+        )
         config = Configuracion.objects.first()
 
         # --- LÓGICA 1: TURNOS QUE YA PASARON (EXPIRADOS) ---
         # Si la fecha/hora es menor a ahora y no está REALIZADO ni CANCELADO
         expirados = Turno.objects.filter(
-            Q(fecha__lt=ahora.date()) | Q(fecha=ahora.date(), hora_inicio__lt=ahora.time()),
+            Q(fecha__lt=ahora_local.date())
+            | Q(
+                fecha=ahora_local.date(),
+                hora_inicio__lt=ahora_local.time(),
+            ),
             estado__in=['solicitado', 'esperando_sena', 'pendiente']
         )
 

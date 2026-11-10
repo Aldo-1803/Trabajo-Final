@@ -104,12 +104,13 @@ Seguimiento separado del cierre de roles/permisos:
 ### [Generales](generales/)
 
 Análisis e impactos transversales sobre flujos, permisos, sesiones y acceso de
-Personal, además de la auditoría integral del proyecto. Contiene 9 documentos.
+Personal, además de la auditoría integral del proyecto. Contiene 10 documentos.
 
 Documentos principales:
 
 - [Auditoría del proyecto](generales/AUDITORIA_PROYECTO.md)
 - [Corrección de fechas en recomendaciones de Turnos](generales/CORRECCION_FECHAS_RECOMENDACION_TURNOS.md)
+- [Corrección de zona horaria comercial de Posadas](generales/CORRECCION_ZONA_HORARIA_POSADAS.md)
 - [Flujo objetivo de turnos](generales/ANALISIS_FLUJO_OBJETIVO_TURNOS.md)
 - [Roles y permisos](generales/ANALISIS_ROLES_PERMISOS.md)
 - [Gestión de acceso de Personal](generales/IMPACTO_GESTION_ACCESO_PERSONAL.md)

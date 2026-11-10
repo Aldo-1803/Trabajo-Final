@@ -24,7 +24,7 @@ env:
   DB_USER: bh060_ci
   DB_PASSWORD: bh060_ci_password
   SECRET_KEY: bh060-ci-only-key-not-for-production
-  TZ: America/Bogota
+  TZ: America/Argentina/Cordoba
   PYTHONUNBUFFERED: '1'
   MERCADO_PAGO_PUBLIC_BASE_URL: http://testserver
 

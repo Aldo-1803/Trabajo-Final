@@ -6,7 +6,9 @@ class Command(BaseCommand):
     help = 'Envía las notificaciones de promociones programadas para el día de hoy'
 
     def handle(self, *args, **kwargs):
-        hoy = timezone.now().date()
+        hoy = timezone.localdate(
+            timezone=timezone.get_default_timezone(),
+        )
         # Buscamos promociones de retoque que deban enviarse hoy y no hayan sido procesadas
         promos_pendientes = Promocion.objects.filter(
             fecha_envio_notificacion=hoy,

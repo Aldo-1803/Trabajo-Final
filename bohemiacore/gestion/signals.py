@@ -1,7 +1,7 @@
 from django.db.models.signals import post_save, pre_delete, pre_save
 from django.dispatch import receiver
 from django.utils import timezone
-from datetime import timedelta, date
+from datetime import timedelta
 from .models import Turno, ReglaCuidado, AgendaCuidados, RutinaCliente, Producto, Promocion, Auditoria, Configuracion #PasoRutinaCliente
 from usuarios.models import Usuario
 from .models import Notificacion
@@ -660,14 +660,17 @@ def crear_combo_automatico(sender, instance, created, **kwargs):
         (p.stock_disponible for p in productos_combo)
     )
 
+    business_today = timezone.localdate(
+        timezone=timezone.get_default_timezone(),
+    )
     promo = Promocion.objects.create(
         nombre=f"Combo Sugerido: {instance.nombre}",
         descripcion=f"Pack especial de {instance.categoria.nombre}",
         tipo='COMBO',
         descuento_porcentaje=descuento,
         stock_combo=stock_combo,
-        fecha_inicio=date.today(),
-        fecha_fin=date.today() + timedelta(days=config.combo_dias_vigencia),
+        fecha_inicio=business_today,
+        fecha_fin=business_today + timedelta(days=config.combo_dias_vigencia),
         is_active=False,
         es_sugerencia_automatica=True,
         estado_sugerencia='PENDIENTE'

@@ -103,6 +103,22 @@ describe('BookingPaymentFlow', () => {
         );
     });
 
+    test('presenta HOLD y vencimiento en la zona comercial de Posadas', async () => {
+        const boundaryHold = {
+            ...hold,
+            starts_at: '2026-11-11T02:30:00Z',
+            ends_at: '2026-11-11T03:30:00Z',
+            expires_at: '2026-11-11T03:00:00Z',
+        };
+        mockReads({refreshedHold: boundaryHold});
+
+        renderFlow({initialHold: boundaryHold});
+
+        expect(screen.getByText(/10\/11\/2026, 23:30:00/)).toBeInTheDocument();
+        expect(screen.getByText(/Vence: 11\/11\/2026, 00:00:00/)).toBeInTheDocument();
+        expect(await screen.findByRole('radio', {name: /Pagar seña/})).toBeChecked();
+    });
+
     test.each([
         ['DEPOSIT', /Pagar seña/, '250.00'],
         ['FULL', /Pagar total/, '1000.00'],

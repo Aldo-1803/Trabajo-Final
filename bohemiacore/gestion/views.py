@@ -14,7 +14,7 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.pagination import PageNumberPagination
-from datetime import datetime, date, timedelta, time
+from datetime import datetime, timedelta, time
 from django.db import DatabaseError, transaction
 from django.db.models import Q, F, Sum
 from django.utils import timezone
@@ -2950,7 +2950,9 @@ class TurnoViewSet(viewsets.ModelViewSet):
             
             if config:
                 # Calculamos tiempos
-                fecha_ideal_retoque = date.today() + timedelta(days=config.dias_sugeridos)
+                fecha_ideal_retoque = timezone.localdate(
+                    timezone=timezone.get_default_timezone(),
+                ) + timedelta(days=config.dias_sugeridos)
                 # Programamos el aviso para 7 días antes de la fecha ideal
                 fecha_aviso = fecha_ideal_retoque - timedelta(days=7)
 
@@ -2982,7 +2984,7 @@ class MiAgendaCuidadosView(generics.ListAPIView):
 
     def get_queryset(self):
         # Filtramos por el cliente logueado y ordenamos por fecha
-        # Opcional: Mostrar solo tareas desde hoy en adelante (fecha__gte=date.today())
+        # Opcional: mostrar sólo tareas desde la fecha comercial en adelante.
         return AgendaCuidados.objects.filter(
             cliente=self.request.user.cliente
         ).order_by('fecha')
@@ -3143,7 +3145,9 @@ class AdminDashboardStatsView(APIView):
     permission_classes = [IsAuthenticated, CanViewReports]
 
     def get(self, request):
-        today = timezone.now().date()
+        today = timezone.localdate(
+            timezone=timezone.get_default_timezone(),
+        )
         
         # 1. Contadores Rápidos
         turnos_hoy = Turno.objects.filter(fecha=today, estado='confirmado').count()
@@ -5593,7 +5597,9 @@ class PromocionViewSet(viewsets.ModelViewSet):
             and self.request.user.has_perm(BusinessPermission.MANAGE_PROMOTIONS)
         )
         if not can_manage:
-            hoy = timezone.now().date()
+            hoy = timezone.localdate(
+                timezone=timezone.get_default_timezone(),
+            )
             queryset = queryset.filter(
                 is_active=True,
                 fecha_inicio__lte=hoy,
@@ -5603,7 +5609,9 @@ class PromocionViewSet(viewsets.ModelViewSet):
             # Para admins, permitir filtrar por ?activas=true|false
             activas_only = self.request.query_params.get('activas', 'false').lower() == 'true'
             if activas_only:
-                hoy = timezone.now().date()
+                hoy = timezone.localdate(
+                    timezone=timezone.get_default_timezone(),
+                )
                 queryset = queryset.filter(
                     is_active=True,
                     fecha_inicio__lte=hoy,
@@ -5682,7 +5690,9 @@ class PromocionViewSet(viewsets.ModelViewSet):
         POST /api/gestion/promociones/escanear-huecos/
         """
         logger = logging.getLogger(__name__)
-        hoy = date.today()
+        hoy = timezone.localdate(
+            timezone=timezone.get_default_timezone(),
+        )
         proximos_dias = [hoy + timedelta(days=i) for i in range(1, 4)]
         promos_creadas = 0
         
@@ -5782,7 +5792,9 @@ class PromocionViewSet(viewsets.ModelViewSet):
                 descripcion=f"Tenemos un espacio libre {fecha.strftime('%d/%m')}. ¡Aprovéchalo con 30% OFF!",
                 tipo='LAST_MINUTE',
                 descuento_porcentaje=30,
-                fecha_inicio=date.today(),
+                fecha_inicio=timezone.localdate(
+                    timezone=timezone.get_default_timezone(),
+                ),
                 fecha_fin=fecha,
                 fecha_especifica=fecha,
                 hora_inicio_promo=hora_inicio,

@@ -367,10 +367,10 @@ class TurnoCreationApiTests(APITestCase):
         self.assertEqual(legacy_response.status_code, status.HTTP_200_OK)
         self.assertIn('10:00', legacy_response.data['horarios_disponibles'])
 
-    @override_settings(TIME_ZONE='America/Bogota', USE_TZ=True)
+    @override_settings(TIME_ZONE='America/Argentina/Cordoba', USE_TZ=True)
     def test_availability_default_date_uses_configured_timezone(self):
-        fixed_utc_now = datetime(2030, 1, 2, 2, 30, tzinfo=dt_timezone.utc)
-        salon_date = date(2030, 1, 1)
+        fixed_utc_now = datetime(2026, 11, 11, 0, 30, tzinfo=dt_timezone.utc)
+        salon_date = date(2026, 11, 10)
         HorarioLaboral.objects.all().delete()
         HorarioLaboral.objects.create(
             personal=self.personal,
@@ -397,9 +397,42 @@ class TurnoCreationApiTests(APITestCase):
             )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data['disponibilidad'][0]['fecha'], '2030-01-01')
+        self.assertEqual(response.data['disponibilidad'][0]['fecha'], '2026-11-10')
         slots = response.data['disponibilidad'][0]['profesionales'][0]['slots']
         self.assertIn('22:00', {slot['hora'] for slot in slots})
+
+    @override_settings(TIME_ZONE='America/Argentina/Cordoba', USE_TZ=True)
+    def test_turno_creation_uses_posadas_business_date_near_utc_midnight(self):
+        fixed_utc_now = datetime(2026, 11, 11, 2, 30, tzinfo=dt_timezone.utc)
+        turno_date = date(2026, 11, 11)
+        HorarioLaboral.objects.all().delete()
+        HorarioLaboral.objects.create(
+            personal=self.personal,
+            dia_semana=turno_date.weekday(),
+            hora_inicio=time(8, 0),
+            hora_fin=time(18, 0),
+            activo=True,
+            permite_complemento=True,
+            permite_diseno_color=True,
+        )
+        self.authenticate(self.client_user)
+
+        with (
+            patch('django.utils.timezone.now', return_value=fixed_utc_now),
+            patch(
+                'gestion.turno_creation_services.database_now',
+                return_value=fixed_utc_now,
+            ),
+            timezone.override(timezone.get_default_timezone()),
+        ):
+            response = self.client.post(
+                self.reserve_url,
+                self.payload(fecha=turno_date.isoformat()),
+                format='json',
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(Turno.objects.get().fecha, turno_date)
 
     def test_payload_cannot_set_state(self):
         self.authenticate(self.client_user)

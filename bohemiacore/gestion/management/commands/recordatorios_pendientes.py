@@ -8,11 +8,15 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         ahora = timezone.now()
+        hoy = timezone.localdate(
+            ahora,
+            timezone.get_default_timezone(),
+        )
         
         # 1. Buscamos turnos que requieran acción inmediata (próximas 48hs)
         pendientes = Turno.objects.filter(
             estado__in=['solicitado', 'esperando_sena'],
-            fecha__range=[ahora.date(), ahora.date() + timedelta(days=2)]
+            fecha__range=[hoy, hoy + timedelta(days=2)]
         ).count()
 
         if pendientes > 0:
@@ -26,7 +30,7 @@ class Command(BaseCommand):
                     usuario=prof.usuario,
                     tipo='ALERTA',
                     titulo="Recordatorio de Pendientes",
-                    fecha_creacion__gte=ahora - timedelta(hours=4) # Solo 1 cada 4 horas
+                    fecha_envio__gte=ahora - timedelta(hours=4) # Solo 1 cada 4 horas
                 ).exists()
 
                 if not ultima_noti:

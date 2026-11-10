@@ -1,6 +1,7 @@
-from datetime import datetime, date
+from datetime import date
 
 from django.db.models import Sum, Count, F, DecimalField, ExpressionWrapper
+from django.utils import timezone
 from rest_framework import viewsets
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -40,8 +41,11 @@ class DashboardStatsViewSet(viewsets.ViewSet):
 
     def list(self, request):
         periodo = request.query_params.get('periodo', 'mes')  # mes, trimestre, anual
-        valor = request.query_params.get('valor', datetime.now().month)
-        anio = request.query_params.get('anio', datetime.now().year)
+        today = timezone.localdate(
+            timezone=timezone.get_default_timezone(),
+        )
+        valor = request.query_params.get('valor', today.month)
+        anio = request.query_params.get('anio', today.year)
 
         start_date, end_date = self.get_date_range(periodo, valor, anio)
 

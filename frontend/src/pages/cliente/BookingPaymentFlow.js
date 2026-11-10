@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 
+import { formatBusinessDateTime } from '../../utils/businessDateTime';
+
 
 export const BOOKING_INTENT_STORAGE_KEY = 'booking_payment_intent_id';
 
@@ -292,10 +294,10 @@ const BookingPaymentFlow = ({
             <h4 className="font-semibold">Horario reservado temporalmente</h4>
             <p>{request.servicios.map((service) => service.nombre).join(', ')}</p>
             <p>
-                {new Date(hold.starts_at).toLocaleString('es-AR')} · {' '}
+                {formatBusinessDateTime(hold.starts_at)} · {' '}
                 {hold.personal.nombre} {hold.personal.apellido}
             </p>
-            <p>Vence: {new Date(hold.expires_at).toLocaleString('es-AR')}</p>
+            <p>Vence: {formatBusinessDateTime(hold.expires_at)}</p>
 
             {isActive ? (
                 <p className="font-semibold" aria-live="polite">

@@ -514,11 +514,11 @@ class DiagnosisAuthorizationApiTests(APITestCase):
                 ._recomendar_primer_hueco_disponible(diagnosis, service)
             )
 
-    @override_settings(TIME_ZONE='America/Bogota', USE_TZ=True)
+    @override_settings(TIME_ZONE='America/Argentina/Cordoba', USE_TZ=True)
     def test_recommendation_uses_configured_local_date_near_utc_midnight(self):
-        fixed_utc_now = datetime(2030, 1, 2, 2, 30, tzinfo=dt_timezone.utc)
-        salon_today = date(2030, 1, 1)
-        first_available_date = date(2030, 1, 2)
+        fixed_utc_now = datetime(2026, 11, 11, 2, 30, tzinfo=dt_timezone.utc)
+        salon_today = date(2026, 11, 10)
+        first_available_date = date(2026, 11, 11)
         diagnosis, service, _ = self.create_recommendation_fixture(
             schedule_date=first_available_date,
         )
@@ -530,8 +530,8 @@ class DiagnosisAuthorizationApiTests(APITestCase):
             active_timezone=dt_timezone.utc,
         )
 
-        self.assertEqual(settings.TIME_ZONE, 'America/Bogota')
-        self.assertEqual(fixed_utc_now.date(), date(2030, 1, 2))
+        self.assertEqual(settings.TIME_ZONE, 'America/Argentina/Cordoba')
+        self.assertEqual(fixed_utc_now.date(), date(2026, 11, 11))
         self.assertEqual(
             timezone.localdate(
                 fixed_utc_now,
@@ -546,7 +546,7 @@ class DiagnosisAuthorizationApiTests(APITestCase):
             first_available_date + timedelta(days=7),
         )
 
-    @override_settings(TIME_ZONE='America/Bogota', USE_TZ=True)
+    @override_settings(TIME_ZONE='America/Argentina/Cordoba', USE_TZ=True)
     def test_recommendation_finds_next_configured_weekday(self):
         fixed_utc_now = datetime(2030, 1, 1, 15, 0, tzinfo=dt_timezone.utc)
         next_configured_date = date(2030, 1, 4)
@@ -559,7 +559,7 @@ class DiagnosisAuthorizationApiTests(APITestCase):
         self.assertIsNotNone(suggested)
         self.assertEqual(suggested.fecha, next_configured_date)
 
-    @override_settings(TIME_ZONE='America/Bogota', USE_TZ=True)
+    @override_settings(TIME_ZONE='America/Argentina/Cordoba', USE_TZ=True)
     def test_recommendation_respects_block_and_uses_next_recurrence(self):
         fixed_utc_now = datetime(2030, 1, 1, 15, 0, tzinfo=dt_timezone.utc)
         blocked_date = date(2030, 1, 2)
@@ -587,7 +587,7 @@ class DiagnosisAuthorizationApiTests(APITestCase):
         self.assertIsNotNone(suggested)
         self.assertEqual(suggested.fecha, next_recurrence)
 
-    @override_settings(TIME_ZONE='America/Bogota', USE_TZ=True)
+    @override_settings(TIME_ZONE='America/Argentina/Cordoba', USE_TZ=True)
     def test_recommendation_without_availability_returns_none(self):
         fixed_utc_now = datetime(2030, 1, 1, 15, 0, tzinfo=dt_timezone.utc)
         diagnosis, service, _ = self.create_recommendation_fixture()
