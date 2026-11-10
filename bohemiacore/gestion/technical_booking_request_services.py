@@ -5,8 +5,7 @@ from datetime import date, datetime
 from django.db import transaction
 from django.utils import timezone
 
-from usuarios.roles import BusinessPermission
-
+from .effective_access import user_can_review_technical_booking
 from .models import (
     AceptacionAdvertenciaTecnica,
     Auditoria,
@@ -25,7 +24,6 @@ from .technical_risk_evaluator import (
     persist_technical_risk_evaluation,
     supersede_technical_risk_evaluation,
 )
-from .technical_skill_access import DIAGNOSIS_SKILL_CODE, user_has_active_skill
 
 
 TECHNICAL_WARNING_ACCEPTED = 'TECHNICAL_WARNING_ACCEPTED'
@@ -412,9 +410,7 @@ def reviewer_personal(actor):
     if (
         actor is None
         or not getattr(actor, 'is_authenticated', False)
-        or not actor.is_active
-        or not actor.has_perm(BusinessPermission.REVIEW_TECHNICAL_BOOKING)
-        or not user_has_active_skill(actor, DIAGNOSIS_SKILL_CODE)
+        or not user_can_review_technical_booking(actor)
     ):
         raise TechnicalBookingRequestPermissionDenied(
             'No cumple los requisitos para revisar solicitudes técnicas.'

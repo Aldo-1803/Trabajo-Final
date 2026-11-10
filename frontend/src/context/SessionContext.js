@@ -35,11 +35,29 @@ const emptyProfiles = () => ({
 });
 
 
+const normalizeCapabilities = (capabilities) => {
+    if (
+        capabilities === null
+        || typeof capabilities !== 'object'
+        || Array.isArray(capabilities)
+    ) {
+        return {};
+    }
+    return Object.fromEntries(
+        Object.entries(capabilities).map(([name, value]) => [
+            name,
+            value === true
+        ])
+    );
+};
+
+
 const createEmptySession = (status, error = null) => ({
     status,
     user: null,
     businessRole: null,
     permissions: [],
+    capabilities: {},
     profiles: emptyProfiles(),
     error
 });
@@ -100,6 +118,7 @@ export const SessionProvider = ({ children }) => {
                 permissions: Array.isArray(data.permissions)
                     ? data.permissions
                     : [],
+                capabilities: normalizeCapabilities(data.capabilities),
                 profiles: data.profiles || emptyProfiles(),
                 error: null
             };
@@ -158,6 +177,21 @@ export const SessionProvider = ({ children }) => {
         [permissionSet]
     );
 
+    const hasCapability = useCallback(
+        (capability) => session.capabilities?.[capability] === true,
+        [session.capabilities]
+    );
+
+    const hasAnyCapability = useCallback(
+        (capabilities) => (
+            Array.isArray(capabilities)
+            && capabilities.some(
+                (capability) => session.capabilities?.[capability] === true
+            )
+        ),
+        [session.capabilities]
+    );
+
     const hasRole = useCallback(
         (role) => session.businessRole === role,
         [session.businessRole]
@@ -181,6 +215,7 @@ export const SessionProvider = ({ children }) => {
         user: session.user,
         businessRole: session.businessRole,
         permissions: session.permissions,
+        capabilities: session.capabilities,
         profiles: session.profiles,
         status: session.status,
         error: session.error,
@@ -191,6 +226,8 @@ export const SessionProvider = ({ children }) => {
         clearSession,
         hasPermission,
         hasAnyPermission,
+        hasCapability,
+        hasAnyCapability,
         hasRole,
         hasProfile,
         hasActiveProfile
@@ -200,6 +237,8 @@ export const SessionProvider = ({ children }) => {
         clearSession,
         hasPermission,
         hasAnyPermission,
+        hasCapability,
+        hasAnyCapability,
         hasRole,
         hasProfile,
         hasActiveProfile

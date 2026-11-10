@@ -2,7 +2,13 @@ from rest_framework.permissions import BasePermission
 
 from usuarios.roles import BusinessPermission
 
-from .technical_skill_access import DIAGNOSIS_SKILL_CODE, user_has_active_skill
+from .effective_access import (
+    user_can_create_diagnosis,
+    user_can_manage_service_formula,
+    user_can_manage_technical_record,
+    user_can_read_global_technical_record,
+    user_can_review_technical_booking,
+)
 
 
 class IsActiveUser(BasePermission):
@@ -153,12 +159,7 @@ class CanReviewTechnicalBooking(BasePermission):
     )
 
     def has_permission(self, request, view):
-        user = request.user
-        return bool(
-            getattr(user, 'is_active', False)
-            and user.has_perm(BusinessPermission.REVIEW_TECHNICAL_BOOKING)
-            and user_has_active_skill(user, DIAGNOSIS_SKILL_CODE)
-        )
+        return user_can_review_technical_booking(request.user)
 
 
 class CanCreateDiagnosisWithSkill(BasePermission):
@@ -168,10 +169,7 @@ class CanCreateDiagnosisWithSkill(BasePermission):
     )
 
     def has_permission(self, request, view):
-        return (
-            request.user.has_perm(BusinessPermission.CREATE_DIAGNOSIS)
-            and user_has_active_skill(request.user, DIAGNOSIS_SKILL_CODE)
-        )
+        return user_can_create_diagnosis(request.user)
 
 
 class CanReadOwnedOrManageDiagnosis(BasePermission):
@@ -183,10 +181,7 @@ class CanReadOwnedOrManageDiagnosis(BasePermission):
             return False
         if getattr(user, 'cliente', None) is not None:
             return True
-        return (
-            user.has_perm(BusinessPermission.MANAGE_TECHNICAL_RECORD)
-            and user_has_active_skill(user, DIAGNOSIS_SKILL_CODE)
-        )
+        return user_can_read_global_technical_record(user)
 
 
 class CanReadOwnedOrManageTechnicalRecord(BasePermission):
@@ -199,10 +194,7 @@ class CanReadOwnedOrManageTechnicalRecord(BasePermission):
         cliente = getattr(user, 'cliente', None)
         if cliente is not None:
             return bool(cliente.activo)
-        return bool(
-            user.has_perm(BusinessPermission.MANAGE_TECHNICAL_RECORD)
-            and user_has_active_skill(user, DIAGNOSIS_SKILL_CODE)
-        )
+        return user_can_read_global_technical_record(user)
 
 
 class CanManageTechnicalRecordWithSkill(BasePermission):
@@ -212,12 +204,7 @@ class CanManageTechnicalRecordWithSkill(BasePermission):
     )
 
     def has_permission(self, request, view):
-        user = request.user
-        return bool(
-            getattr(user, 'is_active', False)
-            and user.has_perm(BusinessPermission.MANAGE_TECHNICAL_RECORD)
-            and user_has_active_skill(user, DIAGNOSIS_SKILL_CODE)
-        )
+        return user_can_manage_technical_record(request.user)
 
 
 class CanManagePricesOrFormulas(BasePermission):
@@ -229,10 +216,7 @@ class CanManagePricesOrFormulas(BasePermission):
             getattr(user, 'is_active', False)
             and (
                 user.has_perm(BusinessPermission.MANAGE_PRICES)
-                or (
-                    user.has_perm(BusinessPermission.MANAGE_FORMULAS)
-                    and user_has_active_skill(user, DIAGNOSIS_SKILL_CODE)
-                )
+                or user_can_manage_service_formula(user)
             )
         )
 

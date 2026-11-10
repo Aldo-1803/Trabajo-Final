@@ -14,6 +14,7 @@ from gestion.models import (
 )
 from usuarios.access_services import assign_initial_client_role
 from usuarios.roles import BusinessPermission, get_business_role
+from gestion.effective_access import build_session_capabilities
 
 
 class StrictInputFieldsMixin:
@@ -124,6 +125,7 @@ class CurrentSessionSerializer(serializers.Serializer):
     business_role = serializers.SerializerMethodField()
     permissions = serializers.SerializerMethodField()
     profiles = serializers.SerializerMethodField()
+    capabilities = serializers.SerializerMethodField()
 
     def get_business_role(self, obj):
         return get_business_role(obj)
@@ -151,6 +153,9 @@ class CurrentSessionSerializer(serializers.Serializer):
                 'function_role': personal.rol if personal is not None else None,
             },
         }
+
+    def get_capabilities(self, obj):
+        return build_session_capabilities(obj)
 
 
 class UsuarioPerfilReadSerializer(serializers.ModelSerializer):

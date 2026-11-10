@@ -20,6 +20,8 @@ from django.utils.http import urlsafe_base64_encode
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_decode
 from django.utils.encoding import force_str
+from django.utils.decorators import method_decorator
+from django.views.decorators.cache import never_cache
 
 
 from django.db.models import Min
@@ -239,6 +241,7 @@ class AdminClientAccountCreateView(APIView):
         return Response({'error': error}, status=status_code)
 
 
+@method_decorator(never_cache, name='dispatch')
 class CurrentSessionView(APIView):
     authentication_classes = [JWTAuthentication]
     permission_classes = [IsAuthenticated]

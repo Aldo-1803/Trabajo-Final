@@ -309,7 +309,12 @@ from .personal_skill_services import (
     revoke_skill,
 )
 from .service_skill_compatibility import service_skill_policy
-from .technical_skill_access import DIAGNOSIS_SKILL_CODE, user_has_active_skill
+from .effective_access import (
+    active_personal_for_user,
+    user_can_manage_content_globally,
+    user_can_manage_service_formula,
+    user_can_read_global_technical_record,
+)
 from usuarios.access_services import (
     AccountDeactivationConflict,
     AccountReactivationConflict,
@@ -1860,11 +1865,7 @@ class ServicioViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         # La gestión de precios usa permiso efectivo; la lectura pública ve activos.
         user = self.request.user
-        can_manage_formulas = bool(
-            user.is_authenticated
-            and user.has_perm(BusinessPermission.MANAGE_FORMULAS)
-            and user_has_active_skill(user, DIAGNOSIS_SKILL_CODE)
-        )
+        can_manage_formulas = user_can_manage_service_formula(user)
         if user.is_authenticated and (
             user.has_perm(BusinessPermission.MANAGE_PRICES)
             or can_manage_formulas
@@ -5138,10 +5139,7 @@ class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
                 return queryset
             return queryset.filter(profesional=user)
 
-        if (
-            user.has_perm(BusinessPermission.MANAGE_TECHNICAL_RECORD)
-            and user_has_active_skill(user, DIAGNOSIS_SKILL_CODE)
-        ):
+        if user_can_read_global_technical_record(user):
             return queryset
 
         cliente = getattr(user, 'cliente', None)
@@ -5180,10 +5178,7 @@ class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
             )
         
         own_client = getattr(request.user, 'cliente', None)
-        can_read_globally = (
-            request.user.has_perm(BusinessPermission.MANAGE_TECHNICAL_RECORD)
-            and user_has_active_skill(request.user, DIAGNOSIS_SKILL_CODE)
-        )
+        can_read_globally = user_can_read_global_technical_record(request.user)
         if not can_read_globally and (
             own_client is None or str(own_client.pk) != str(cliente_id)
         ):
@@ -6531,13 +6526,10 @@ class ContenidoEducativoViewSet(viewsets.ModelViewSet):
     ordering = ['-fecha_publicacion']
 
     def _active_personal(self):
-        personal = getattr(self.request.user, 'perfil_profesional', None)
-        if personal is not None and personal.activo:
-            return personal
-        return None
+        return active_personal_for_user(self.request.user)
 
     def _can_manage(self, contenido):
-        if self.request.user.has_perm(BusinessPermission.MANAGE_CONTENT):
+        if user_can_manage_content_globally(self.request.user):
             return True
         personal = self._active_personal()
         return personal is not None and contenido.autor_id == personal.pk
@@ -6579,7 +6571,7 @@ class ContenidoEducativoViewSet(viewsets.ModelViewSet):
             'guardados_recibidos',
         )
 
-        if user.has_perm(BusinessPermission.MANAGE_CONTENT):
+        if user_can_manage_content_globally(user):
             return base_queryset
 
         personal = self._active_personal()

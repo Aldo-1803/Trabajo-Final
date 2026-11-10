@@ -6,6 +6,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from gestion.middleware import _thread_locals
 from gestion.models import Personal
+from gestion.effective_access import SESSION_CAPABILITY_NAMES
 from usuarios.models import Cliente, Usuario
 from usuarios.roles import (
     BusinessPermission,
@@ -82,6 +83,9 @@ class CurrentSessionApiTests(APITestCase):
             },
             'business_role': BusinessRole.CLIENTE,
             'permissions': [],
+            'capabilities': {
+                name: False for name in SESSION_CAPABILITY_NAMES
+            },
             'profiles': {
                 'cliente': {
                     'exists': True,
@@ -255,6 +259,7 @@ class CurrentSessionApiTests(APITestCase):
                 'detail': 'El Usuario tiene múltiples roles de negocio.',
             }
         })
+        self.assertIn('no-store', response['Cache-Control'])
 
     def test_superuser_without_role_stays_roleless_and_is_catalog_limited(self):
         user = self.create_user(

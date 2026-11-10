@@ -35,6 +35,15 @@ const validSession = {
         'gestion.manage_stock',
         'gestion.view_global_agenda'
     ],
+    capabilities: {
+        'technical_booking.review': true,
+        'diagnosis.create': true,
+        'technical_record.read_global': true,
+        'technical_record.manage': true,
+        'service_formula.manage': true,
+        'content.author': true,
+        'content.manage_global': false
+    },
     profiles: {
         cliente: {
             exists: true,
@@ -121,7 +130,7 @@ describe('SessionProvider', () => {
         expect(currentSession.authenticated).toBe(true);
     });
 
-    test('expone user, BusinessRole, permisos y perfiles del backend', async () => {
+    test('expone user, BusinessRole, permisos, capacidades y perfiles', async () => {
         mockAuthenticatedSession();
 
         renderProvider();
@@ -130,6 +139,7 @@ describe('SessionProvider', () => {
         expect(currentSession.user).toEqual(validSession.user);
         expect(currentSession.businessRole).toBe('PROFESIONAL');
         expect(currentSession.permissions).toEqual(validSession.permissions);
+        expect(currentSession.capabilities).toEqual(validSession.capabilities);
         expect(currentSession.profiles).toEqual(validSession.profiles);
     });
 
@@ -169,6 +179,73 @@ describe('SessionProvider', () => {
         ])).toBe(true);
         expect(currentSession.hasAnyPermission(['gestion.view_reports'])).toBe(false);
         expect(currentSession.hasAnyPermission([])).toBe(false);
+    });
+
+    test('hasCapability y hasAnyCapability exigen booleano true', async () => {
+        mockAuthenticatedSession();
+
+        renderProvider();
+
+        await waitFor(() => expect(currentSession.authenticated).toBe(true));
+        expect(currentSession.hasCapability('diagnosis.create')).toBe(true);
+        expect(currentSession.hasCapability('content.manage_global')).toBe(false);
+        expect(currentSession.hasCapability('unknown.capability')).toBe(false);
+        expect(currentSession.hasAnyCapability([
+            'content.manage_global',
+            'content.author'
+        ])).toBe(true);
+        expect(currentSession.hasAnyCapability(['content.manage_global'])).toBe(false);
+        expect(currentSession.hasAnyCapability([])).toBe(false);
+        expect(currentSession.hasAnyCapability('content.author')).toBe(false);
+    });
+
+    test('capabilities ausentes fallan cerrado sin romper el contrato anterior', async () => {
+        const { capabilities, ...legacySession } = validSession;
+        mockAuthenticatedSession(legacySession);
+
+        renderProvider();
+
+        await waitFor(() => expect(currentSession.authenticated).toBe(true));
+        expect(currentSession.capabilities).toEqual({});
+        expect(currentSession.hasCapability('diagnosis.create')).toBe(false);
+        expect(currentSession.hasAnyCapability(['diagnosis.create'])).toBe(false);
+        expect(currentSession.permissions).toEqual(validSession.permissions);
+    });
+
+    test('valores no booleanos de capabilities se normalizan a false', async () => {
+        mockAuthenticatedSession({
+            ...validSession,
+            capabilities: {
+                'diagnosis.create': 'true',
+                'content.author': 1,
+                'content.manage_global': null,
+                'service_formula.manage': true
+            }
+        });
+
+        renderProvider();
+
+        await waitFor(() => expect(currentSession.authenticated).toBe(true));
+        expect(currentSession.hasCapability('diagnosis.create')).toBe(false);
+        expect(currentSession.hasCapability('content.author')).toBe(false);
+        expect(currentSession.hasCapability('content.manage_global')).toBe(false);
+        expect(currentSession.hasCapability('service_formula.manage')).toBe(true);
+    });
+
+    test('BusinessRole o permiso simple no inventan una capability falsa', async () => {
+        mockAuthenticatedSession({
+            ...validSession,
+            business_role: 'ADMINISTRADOR',
+            permissions: ['gestion.create_diagnosis'],
+            capabilities: {'diagnosis.create': false}
+        });
+
+        renderProvider();
+
+        await waitFor(() => expect(currentSession.authenticated).toBe(true));
+        expect(currentSession.hasRole('ADMINISTRADOR')).toBe(true);
+        expect(currentSession.hasPermission('gestion.create_diagnosis')).toBe(true);
+        expect(currentSession.hasCapability('diagnosis.create')).toBe(false);
     });
 
     test('hasRole compara únicamente el BusinessRole recibido', async () => {
@@ -212,7 +289,12 @@ describe('SessionProvider', () => {
         const updatedSession = {
             ...validSession,
             business_role: 'ADMINISTRADOR',
-            permissions: ['usuarios.manage_users']
+            permissions: ['usuarios.manage_users'],
+            capabilities: {
+                ...validSession.capabilities,
+                'diagnosis.create': false,
+                'content.manage_global': true
+            }
         };
         localStorage.setItem('access_token', 'access-token');
         fetchCurrentSession
@@ -227,6 +309,8 @@ describe('SessionProvider', () => {
 
         expect(currentSession.businessRole).toBe('ADMINISTRADOR');
         expect(currentSession.permissions).toEqual(['usuarios.manage_users']);
+        expect(currentSession.hasCapability('diagnosis.create')).toBe(false);
+        expect(currentSession.hasCapability('content.manage_global')).toBe(true);
         expect(fetchCurrentSession).toHaveBeenCalledTimes(2);
     });
 
@@ -243,6 +327,8 @@ describe('SessionProvider', () => {
         expect(localStorage.getItem('refresh_token')).toBeNull();
         expect(localStorage.getItem('user_info')).toBeNull();
         expect(currentSession.permissions).toEqual([]);
+        expect(currentSession.capabilities).toEqual({});
+        expect(currentSession.hasCapability('diagnosis.create')).toBe(false);
     });
 
     test('409 por múltiples roles falla cerrado y conserva el error estable', async () => {
@@ -269,6 +355,7 @@ describe('SessionProvider', () => {
         expect(currentSession.authenticated).toBe(false);
         expect(currentSession.businessRole).toBeNull();
         expect(currentSession.permissions).toEqual([]);
+        expect(currentSession.capabilities).toEqual({});
         expect(localStorage.getItem('access_token')).toBe('access-token');
     });
 
@@ -285,6 +372,7 @@ describe('SessionProvider', () => {
         expect(currentSession.user).toBeNull();
         expect(currentSession.businessRole).toBeNull();
         expect(currentSession.permissions).toEqual([]);
+        expect(currentSession.capabilities).toEqual({});
         expect(localStorage.getItem('access_token')).toBe('access-token');
     });
 
@@ -320,6 +408,8 @@ describe('SessionProvider', () => {
         act(() => currentSession.clearSession());
 
         expect(currentSession.anonymous).toBe(true);
+        expect(currentSession.permissions).toEqual([]);
+        expect(currentSession.capabilities).toEqual({});
         expect(localStorage.getItem('access_token')).toBeNull();
         expect(localStorage.getItem('refresh_token')).toBeNull();
         expect(localStorage.getItem('user_info')).toBeNull();

@@ -27,7 +27,7 @@ from datetime import datetime
 from django.db import transaction
 from django.utils import timezone
 
-from .technical_skill_access import DIAGNOSIS_SKILL_CODE, user_has_active_skill
+from .effective_access import user_can_manage_service_formula
 
 # 1. EL SERIALIZER BASE (El "Molde")
 # Define los campos que TODOS los catálogos compartirán
@@ -92,11 +92,7 @@ class ServicioSerializer(serializers.ModelSerializer):
         representation = super().to_representation(instance)
         request = self.context.get('request')
         user = getattr(request, 'user', None)
-        can_read_formula = bool(
-            user is not None
-            and user.has_perm(BusinessPermission.MANAGE_FORMULAS)
-            and user_has_active_skill(user, DIAGNOSIS_SKILL_CODE)
-        )
+        can_read_formula = user_can_manage_service_formula(user)
         if not can_read_formula:
             representation.pop('plantilla_formula', None)
         return representation
@@ -109,10 +105,7 @@ class ServicioSerializer(serializers.ModelSerializer):
 
         formula_changed = 'plantilla_formula' in attrs
         other_fields_changed = bool(set(attrs) - {'plantilla_formula'})
-        can_manage_formulas = bool(
-            user.has_perm(BusinessPermission.MANAGE_FORMULAS)
-            and user_has_active_skill(user, DIAGNOSIS_SKILL_CODE)
-        )
+        can_manage_formulas = user_can_manage_service_formula(user)
         if formula_changed and not can_manage_formulas:
             raise PermissionDenied(
                 'No tiene permisos técnicos para modificar fórmulas.'
@@ -151,11 +144,7 @@ class DetalleTurnoSerializer(serializers.ModelSerializer):
         representation = super().to_representation(instance)
         request = self.context.get('request')
         user = getattr(request, 'user', None)
-        can_read_formula = bool(
-            user is not None
-            and user.has_perm(BusinessPermission.MANAGE_FORMULAS)
-            and user_has_active_skill(user, DIAGNOSIS_SKILL_CODE)
-        )
+        can_read_formula = user_can_manage_service_formula(user)
         if not can_read_formula:
             representation.pop('servicio_plantilla_formula', None)
         return representation
