@@ -1,6 +1,7 @@
 import React from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import ProtectedRoute from './ProtectedRoute';
+import ContentManagementRoute from './ContentManagementRoute';
 import {
     AUTH_ROUTES,
     CLIENTE_ROUTES,
@@ -140,9 +141,9 @@ export const AppRoutes = () => {
                 <Route path={ADMIN_ROUTES.CONFIGURACION} element={<ProtectedRoute requiredPermission="gestion.manage_configuration"><ConfiguracionAdmin /></ProtectedRoute>} />
 
                 {/* Admin Routes - Contenido Educativo */}
-                <Route path={ADMIN_ROUTES.CONTENIDO_EDUCATIVO} element={<ProtectedRoute><GestionContenidoEducativo /></ProtectedRoute>} />
-                <Route path={ADMIN_ROUTES.CREAR_CONTENIDO} element={<ProtectedRoute><EditorContenidoEducativo /></ProtectedRoute>} />
-                <Route path={ADMIN_ROUTES.EDITAR_CONTENIDO} element={<ProtectedRoute><EditorContenidoEducativo /></ProtectedRoute>} />
+                <Route path={ADMIN_ROUTES.CONTENIDO_EDUCATIVO} element={<ContentManagementRoute><GestionContenidoEducativo /></ContentManagementRoute>} />
+                <Route path={ADMIN_ROUTES.CREAR_CONTENIDO} element={<ContentManagementRoute><EditorContenidoEducativo /></ContentManagementRoute>} />
+                <Route path={ADMIN_ROUTES.EDITAR_CONTENIDO} element={<ContentManagementRoute><EditorContenidoEducativo /></ContentManagementRoute>} />
 
                 {/* Admin Routes - Órdenes */}
                 <Route path={ADMIN_ROUTES.ORDENES} element={<ProtectedRoute requiredPermission="gestion.manage_stock"><GestionOrdenes /></ProtectedRoute>} />

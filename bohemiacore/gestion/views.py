@@ -28,6 +28,7 @@ from uuid import uuid4
 
 from django.http import FileResponse, Http404
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.shortcuts import get_object_or_404
 
 # Configurar logger global
 logger = logging.getLogger(__name__)
@@ -6529,60 +6530,91 @@ class ContenidoEducativoViewSet(viewsets.ModelViewSet):
     ordering_fields = ['fecha_publicacion', 'total_likes']
     ordering = ['-fecha_publicacion']
 
+    def _active_personal(self):
+        personal = getattr(self.request.user, 'perfil_profesional', None)
+        if personal is not None and personal.activo:
+            return personal
+        return None
+
+    def _can_manage(self, contenido):
+        if self.request.user.has_perm(BusinessPermission.MANAGE_CONTENT):
+            return True
+        personal = self._active_personal()
+        return personal is not None and contenido.autor_id == personal.pk
+
+    def _published_object(self):
+        queryset = ContenidoEducativo.objects.filter(
+            activo=True,
+            estado='PUBLICADO',
+        ).select_related('autor')
+        return get_object_or_404(queryset, pk=self.kwargs['pk'])
+
+    def check_object_permissions(self, request, obj):
+        super().check_object_permissions(request, obj)
+        if (
+            self.action in {'update', 'partial_update', 'destroy'}
+            and not self._can_manage(obj)
+        ):
+            raise PermissionDenied(
+                'No tienes permiso para modificar este contenido.'
+            )
+
+    def create(self, request, *args, **kwargs):
+        if self._active_personal() is None:
+            raise PermissionDenied(
+                'Solo un Personal activo puede crear contenido.'
+            )
+        return super().create(request, *args, **kwargs)
+
     def get_queryset(self):
         """
-        Filtro basado en rol del usuario:
-        - Profesionales ven TODO (borradores, publicado, archivado)
-        - Clientes ven solo PUBLICADO
+        El permiso global ve todo lo activo. Un Personal activo ve también su
+        contenido propio; el resto sólo puede consultar contenido publicado.
         """
         user = self.request.user
+        base_queryset = ContenidoEducativo.objects.filter(
+            activo=True
+        ).select_related('autor').prefetch_related(
+            'me_gusta_recibidos',
+            'guardados_recibidos',
+        )
 
         if user.has_perm(BusinessPermission.MANAGE_CONTENT):
-            return ContenidoEducativo.objects.filter(
-                activo=True
-            ).select_related('autor').prefetch_related('me_gusta_recibidos', 'guardados_recibidos')
-        
-        # Verificar si es profesional
-        try:
-            personal = user.perfil_profesional
-            # Profesional ve todo lo activo
-            return ContenidoEducativo.objects.filter(
-                activo=True
-            ).select_related('autor').prefetch_related('me_gusta_recibidos', 'guardados_recibidos')
-        except AttributeError:
-            # No es profesional - solo contenido publicado
-            return ContenidoEducativo.objects.filter(
-                estado='PUBLICADO',
-                activo=True
-            ).select_related('autor').prefetch_related('me_gusta_recibidos', 'guardados_recibidos')
+            return base_queryset
+
+        personal = self._active_personal()
+        if personal is not None:
+            return base_queryset.filter(
+                Q(estado='PUBLICADO') | Q(autor=personal)
+            )
+
+        return base_queryset.filter(estado='PUBLICADO')
 
     def perform_create(self, serializer):
-        """Solo profesionales pueden crear contenido."""
-        try:
-            personal = self.request.user.perfil_profesional
-            serializer.save(autor=personal)
-            logger.info(f"Contenido creado por {personal.nombre}")
-        except AttributeError:
-            user = self.request.user
-            if user.has_perm(BusinessPermission.MANAGE_CONTENT):
-                raise PermissionDenied(
-                    'Debe vincular un Personal mediante la operación '
-                    'semántica antes de crear contenido.'
-                )
-            raise PermissionDenied("Solo profesionales pueden crear contenido")
+        """Asigna como autor únicamente al Personal activo autenticado."""
+        personal = self._active_personal()
+        if personal is None:
+            raise PermissionDenied(
+                'Solo un Personal activo puede crear contenido.'
+            )
+        serializer.save(autor=personal)
+        logger.info(f"Contenido creado por {personal.nombre}")
 
     def perform_update(self, serializer):
-        """Solo el autor puede editar su contenido."""
-        contenido = self.get_object()
-        if (
-            not self.request.user.has_perm(BusinessPermission.MANAGE_CONTENT)
-            and contenido.autor.usuario != self.request.user
-        ):
-            raise PermissionDenied("Solo el autor puede editar este contenido")
+        """Sólo un autor activo o un gestor global puede editar contenido."""
+        contenido = serializer.instance
+        if not self._can_manage(contenido):
+            raise PermissionDenied(
+                'No tienes permiso para editar este contenido.'
+            )
         serializer.save()
 
     def perform_destroy(self, instance):
-        """Soft delete - marcar como inactivo."""
+        """Eliminación lógica autorizada del contenido."""
+        if not self._can_manage(instance):
+            raise PermissionDenied(
+                'No tienes permiso para eliminar este contenido.'
+            )
         instance.activo = False
         instance.save()
         logger.info(f"Contenido {instance.id} marcado como inactivo")
@@ -6595,7 +6627,7 @@ class ContenidoEducativoViewSet(viewsets.ModelViewSet):
         Toggle: agregar/quitar me gusta
         POST /api/contenido-educativo/{id}/like/
         """
-        contenido = self.get_object()
+        contenido = self._published_object()
         
         try:
             cliente = request.user.cliente
@@ -6632,7 +6664,7 @@ class ContenidoEducativoViewSet(viewsets.ModelViewSet):
         Toggle: guardar/quitar de favoritos
         POST /api/contenido-educativo/{id}/guardar/
         """
-        contenido = self.get_object()
+        contenido = self._published_object()
         
         try:
             cliente = request.user.cliente
@@ -6679,7 +6711,8 @@ class ContenidoEducativoViewSet(viewsets.ModelViewSet):
 
         guardados = ContenidoEducativo.objects.filter(
             guardados_recibidos__cliente=cliente,
-            activo=True
+            activo=True,
+            estado='PUBLICADO',
         ).select_related('autor').prefetch_related('me_gusta_recibidos').distinct()
 
         page = self.paginate_queryset(guardados)
@@ -6762,62 +6795,50 @@ class ContenidoEducativoViewSet(viewsets.ModelViewSet):
             )
 
 
-class MeGustaViewSet(viewsets.ModelViewSet):
+class MeGustaViewSet(viewsets.ReadOnlyModelViewSet):
     """
     ViewSet para gestionar los 'me gusta' en contenido educativo.
-    Permite listar, crear y eliminar likes.
+    Las mutaciones se realizan sólo mediante la acción segura del contenido.
     """
     serializer_class = MeGustaSerializer
     permission_classes = [IsAuthenticated]
-    http_method_names = ['get', 'post', 'delete', 'head', 'options']
+    http_method_names = ['get', 'head', 'options']
 
     def get_queryset(self):
         """Cada usuario solo ve sus propios likes."""
         user = self.request.user
         try:
             cliente = user.cliente
-            return MeGusta.objects.filter(cliente=cliente).select_related('contenido')
+            return MeGusta.objects.filter(
+                cliente=cliente,
+                contenido__activo=True,
+                contenido__estado='PUBLICADO',
+            ).select_related('contenido')
         except Cliente.DoesNotExist:
             return MeGusta.objects.none()
 
-    def perform_create(self, serializer):
-        """
-        Al crear un like, asigna automáticamente el cliente actual.
-        """
-        try:
-            cliente = self.request.user.cliente
-            serializer.save(cliente=cliente)
-        except Cliente.DoesNotExist:
-            raise PermissionDenied("Solo clientes pueden dar like")
 
-
-class ContenidoGuardadoViewSet(viewsets.ModelViewSet):
+class ContenidoGuardadoViewSet(viewsets.ReadOnlyModelViewSet):
     """
     ViewSet para contenido guardado por clientes.
-    Permite ver el historial de favoritos y agregarlos/eliminarlos.
+    Las mutaciones se realizan sólo mediante la acción segura del contenido.
     """
     serializer_class = ContenidoGuardadoSerializer
     permission_classes = [IsAuthenticated]
-    http_method_names = ['get', 'post', 'delete', 'head', 'options']
+    http_method_names = ['get', 'head', 'options']
 
     def get_queryset(self):
         """Cada cliente solo ve sus propios guardados."""
         user = self.request.user
         try:
             cliente = user.cliente
-            return ContenidoGuardado.objects.filter(cliente=cliente).select_related('contenido')
+            return ContenidoGuardado.objects.filter(
+                cliente=cliente,
+                contenido__activo=True,
+                contenido__estado='PUBLICADO',
+            ).select_related('contenido')
         except Cliente.DoesNotExist:
             return ContenidoGuardado.objects.none()
-
-    def perform_create(self, serializer):
-        """
-        Al guardar un contenido, asigna automáticamente el cliente actual.
-        """
-        try:
-            cliente = self.request.user.cliente
-            serializer.save(cliente=cliente)
-        except Cliente.DoesNotExist:
-            raise PermissionDenied("Solo clientes pueden guardar contenido")
 
 
 # ============================================================================

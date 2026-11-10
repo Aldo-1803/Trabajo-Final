@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react';
 
 import { useSession } from '../context/SessionContext';
+import ContentManagementRoute from './ContentManagementRoute';
 import ProtectedRoute from './ProtectedRoute';
 
 
@@ -59,6 +60,18 @@ const renderDirectUrl = (path, routeProps = {}, context = {}) => {
         <ProtectedRoute {...routeProps}>
             {protectedContent}
         </ProtectedRoute>
+    );
+};
+
+
+const renderContentManagementUrl = (context = {}) => {
+    window.history.replaceState({}, '', '/admin/contenido-educativo');
+    useSession.mockReturnValue(sessionContext(context));
+
+    return render(
+        <ContentManagementRoute>
+            {protectedContent}
+        </ContentManagementRoute>
     );
 };
 
@@ -178,6 +191,44 @@ describe('ProtectedRoute declarativo con acceso por URL directa', () => {
         });
 
         expectRedirect('/acceso-denegado');
+    });
+
+    test('Cliente no entra directamente a administración de contenido', () => {
+        renderContentManagementUrl({
+            businessRole: 'CLIENTE',
+            clientProfile: true
+        });
+
+        expectRedirect('/acceso-denegado');
+    });
+
+    test('autor con Personal activo entra a administración de contenido', () => {
+        renderContentManagementUrl({
+            businessRole: 'PROFESIONAL',
+            personalProfile: true,
+            personalActive: true
+        });
+
+        expect(screen.getByText('Contenido protegido')).toBeInTheDocument();
+    });
+
+    test('Personal inactivo no entra a administración de contenido', () => {
+        renderContentManagementUrl({
+            businessRole: 'PROFESIONAL',
+            personalProfile: true,
+            personalActive: false
+        });
+
+        expectRedirect('/acceso-denegado');
+    });
+
+    test('manage_content permite administrar sin perfil Personal', () => {
+        renderContentManagementUrl({
+            businessRole: 'EMPLEADO',
+            permissions: ['gestion.manage_content']
+        });
+
+        expect(screen.getByText('Contenido protegido')).toBeInTheDocument();
     });
 
     test('PROFESIONAL con Cliente y Personal activos conserva agenda laboral', () => {

@@ -99,6 +99,17 @@ Seguimiento separado del cierre de roles/permisos:
 - realizar smoke tests y verificaciones del entorno desplegado antes de
   producción.
 
+### [BH-062](BH-062/) — Incremento 0 validado
+
+Análisis de la respuesta de la UI React a permisos efectivos en rutas,
+pantallas, datos, acciones y cambios durante la sesión, más la contención
+prioritaria del módulo de contenido educativo. Contiene 2 documentos.
+
+Documento principal:
+
+- [Análisis de UI según permisos efectivos](BH-062/ANALISIS_BH062_UI_SEGUN_PERMISOS.md)
+- [Incremento 0: contención de contenido educativo](BH-062/IMPLEMENTACION_BH062_0_CONTENCION_CONTENIDO.md)
+
 ## Documentación transversal
 
 ### [Generales](generales/)
