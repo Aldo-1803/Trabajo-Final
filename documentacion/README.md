@@ -79,17 +79,26 @@ Documentos principales:
 - [Auditoría histórica de cierre](BH-060/AUDITORIA_CIERRE_BH060.md)
 - [Revalidación definitiva de cierre](BH-060/REVALIDACION_CIERRE_BH060.md)
 
-### [BH-061](BH-061/) — análisis completado
+### [BH-061](BH-061/) — cerrada técnicamente
 
-La implementación de BH-061 está en curso. Contiene 2 documentos.
+`BH-061 = CERRADO TÉCNICAMENTE`. Contiene 6 documentos.
 
-Documento principal:
+Documentos principales:
 
 - [Análisis de auditoría de roles y permisos](BH-061/ANALISIS_BH061_AUDITORIA_ROLES_PERMISOS.md)
 - [Incremento 1: semántica no-op y contrato versionado de roles](BH-061/IMPLEMENTACION_BH061_1_CONTRATO_ROLES.md)
 - [Incremento 2: correlación uniforme de eventos compuestos](BH-061/IMPLEMENTACION_BH061_2_CORRELACION_EVENTOS.md)
 - [Incremento 3: auditoría de habilidades técnicas](BH-061/IMPLEMENTACION_BH061_3_AUDITORIA_HABILIDADES.md)
 - [Incremento 4: cardinalidad de eventos y concurrencia](BH-061/IMPLEMENTACION_BH061_4_CARDINALIDAD_CONCURRENCIA.md)
+- [Auditoría integral de cierre](BH-061/AUDITORIA_CIERRE_BH061.md)
+
+Pendientes separados del cierre de roles/permisos:
+
+- corregir la inconsistencia entre `date.today()` y `timezone.localdate()` en
+  la recomendación de Turnos;
+- revalidar el test temporal y la matriz pertinente después de esa corrección;
+- realizar smoke tests y verificaciones del entorno desplegado antes de
+  producción.
 
 ## Documentación transversal
 
