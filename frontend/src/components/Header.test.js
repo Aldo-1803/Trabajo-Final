@@ -31,6 +31,7 @@ jest.mock('react-router-dom', () => ({
 const sessionContext = ({
     businessRole = 'CLIENTE',
     permissions = [],
+    capabilities = {},
     clientProfile = false,
     personalProfile = false,
     personalActive = false,
@@ -48,6 +49,7 @@ const sessionContext = ({
             status,
             businessRole,
             permissions,
+            capabilities,
             profiles,
             error: status === 'error' ? { code: 'ACCESS_ERROR' } : null
         },
@@ -59,6 +61,7 @@ const sessionContext = ({
         },
         businessRole,
         permissions,
+        capabilities,
         profiles,
         loading,
         authenticated: status === 'authenticated',
@@ -67,6 +70,10 @@ const sessionContext = ({
         hasPermission: (permission) => permissions.includes(permission),
         hasAnyPermission: (required) => (
             required.some((permission) => permissions.includes(permission))
+        ),
+        hasCapability: (capability) => capabilities[capability] === true,
+        hasAnyCapability: (required) => (
+            required.some((capability) => capabilities[capability] === true)
         ),
         hasProfile: (profile) => profiles[profile]?.exists === true,
         hasActiveProfile: (profile) => (
@@ -155,6 +162,18 @@ describe('Header basado en SessionContext', () => {
         rerender(<Header />);
 
         expect(screen.getByRole('link', { name: 'Usuarios' })).toBeInTheDocument();
+    });
+
+    test.each([
+        ['Usuarios', 'usuarios.manage_users'],
+        ['Auditoría', 'gestion.view_audit']
+    ])('%s se muestra por permiso aunque no exista rol administrador', (label, permission) => {
+        renderHeader({
+            businessRole: null,
+            permissions: [permission]
+        });
+
+        expect(screen.getByRole('link', { name: label })).toBeInTheDocument();
     });
 
     test('Personal requiere gestion.manage_personal', () => {
@@ -261,11 +280,34 @@ describe('Header basado en SessionContext', () => {
     });
 
     test('el logo usa el landing central de la sesión', () => {
-        renderHeader({ businessRole: 'PROFESIONAL' });
+        renderHeader({
+            businessRole: 'PROFESIONAL',
+            permissions: ['gestion.view_global_agenda']
+        });
 
         expect(screen.getByRole('link', {
             name: 'Ir al inicio de la sesión'
         })).toHaveAttribute('href', '/operaciones');
+    });
+
+    test('Servicios se muestra con capability de fórmulas sin manage_prices', () => {
+        renderHeader({
+            businessRole: 'PROFESIONAL',
+            capabilities: {'service_formula.manage': true}
+        });
+
+        expect(screen.getByRole('link', { name: 'Gestionar servicios' }))
+            .toHaveAttribute('href', '/admin/servicios');
+    });
+
+    test('Contenido educativo se muestra al autor efectivo', () => {
+        renderHeader({
+            businessRole: 'PROFESIONAL',
+            capabilities: {'content.author': true}
+        });
+
+        expect(screen.getByRole('link', { name: 'Contenido educativo' }))
+            .toHaveAttribute('href', '/admin/contenido-educativo');
     });
 
     test('view_reports habilita Reportes sin habilitar diagnóstico por rol', () => {

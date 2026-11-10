@@ -4,30 +4,37 @@ import {
 } from './navigationConfig';
 
 
-const access = ({permissions = [], client = false, personalActive = false, businessRole = 'ADMINISTRADOR'} = {}) => ({
+const access = ({permissions = [], capabilities = {}, client = false, personalActive = false, businessRole = 'ADMINISTRADOR'} = {}) => ({
     authenticated: true,
     loading: false,
     error: null,
     businessRole,
     hasPermission: (permission) => permissions.includes(permission),
     hasAnyPermission: (required) => required.some((permission) => permissions.includes(permission)),
+    hasCapability: (capability) => capabilities[capability] === true,
+    hasAnyCapability: (required) => required.some(
+        (capability) => capabilities[capability] === true
+    ),
     hasProfile: (profile) => profile === 'cliente' && client,
     hasActiveProfile: (profile) => profile === 'personal' && personalActive
 });
 
 
 describe('navegación de solicitudes técnicas', () => {
-    test('la cola depende de permiso efectivo y Personal activo, no del BusinessRole', () => {
-        const withoutSkillProfile = getVisibleNavigationItems(
-            access({permissions: ['gestion.review_technical_booking']}),
+    test('la cola depende de la capability efectiva, no del permiso simple', () => {
+        const withoutCapability = getVisibleNavigationItems(
+            access({
+                permissions: ['gestion.review_technical_booking'],
+                personalActive: true
+            }),
             NAVIGATION_PLACEMENT.PRIMARY
         );
-        expect(withoutSkillProfile.map((item) => item.id)).not.toContain('technical-review');
+        expect(withoutCapability.map((item) => item.id)).not.toContain('technical-review');
 
         const reviewer = getVisibleNavigationItems(
             access({
                 permissions: ['gestion.review_technical_booking'],
-                personalActive: true
+                capabilities: {'technical_booking.review': true}
             }),
             NAVIGATION_PLACEMENT.PRIMARY
         );
@@ -40,6 +47,108 @@ describe('navegación de solicitudes técnicas', () => {
             NAVIGATION_PLACEMENT.PRIMARY
         );
         expect(visible.map((item) => item.id)).toContain('client-technical-requests');
+    });
+});
+
+
+describe('navegación sin restricciones nominales redundantes', () => {
+    test.each([
+        ['admin-users', 'usuarios.manage_users'],
+        ['admin-audit', 'gestion.view_audit']
+    ])('%s aparece por permiso efectivo con rol no administrador', (id, permission) => {
+        const visible = getVisibleNavigationItems(
+            access({
+                permissions: [permission],
+                businessRole: 'PROFESIONAL'
+            }),
+            NAVIGATION_PLACEMENT.PRIMARY
+        );
+
+        expect(visible.map((item) => item.id)).toContain(id);
+    });
+
+    test('un grant de grupo técnico funciona aunque no haya BusinessRole', () => {
+        const visible = getVisibleNavigationItems(
+            access({
+                permissions: ['usuarios.manage_users', 'gestion.view_audit'],
+                businessRole: null
+            }),
+            NAVIGATION_PLACEMENT.PRIMARY
+        );
+
+        expect(visible.map((item) => item.id)).toEqual(expect.arrayContaining([
+            'admin-users',
+            'admin-audit'
+        ]));
+    });
+});
+
+
+describe('navegación de módulos existentes', () => {
+    test('publica las entradas autorizadas de agenda, rutinas y configuración', () => {
+        const primary = getVisibleNavigationItems(
+            access({
+                permissions: [
+                    'gestion.view_global_agenda',
+                    'gestion.assign_routines',
+                    'gestion.manage_configuration'
+                ]
+            }),
+            NAVIGATION_PLACEMENT.PRIMARY
+        );
+        const account = getVisibleNavigationItems(
+            access({permissions: ['gestion.manage_configuration']}),
+            NAVIGATION_PLACEMENT.ACCOUNT
+        );
+
+        expect(primary.map((item) => item.id)).toEqual(expect.arrayContaining([
+            'admin-agenda',
+            'admin-routines'
+        ]));
+        expect(account.map((item) => item.id)).toEqual(expect.arrayContaining([
+            'admin-equipment',
+            'admin-rules',
+            'admin-configuration'
+        ]));
+    });
+
+    test.each([
+        {
+            permissions: ['gestion.manage_prices'],
+            capabilities: {}
+        },
+        {
+            permissions: [],
+            capabilities: {'service_formula.manage': true}
+        }
+    ])('Servicios aparece con cualquiera de sus accesos parciales', (sessionAccess) => {
+        const visible = getVisibleNavigationItems(
+            access(sessionAccess),
+            NAVIGATION_PLACEMENT.PRIMARY
+        );
+
+        expect(visible.map((item) => item.id)).toContain('admin-services');
+    });
+
+    test.each(['content.author', 'content.manage_global'])(
+        'Contenido aparece con %s',
+        (capability) => {
+            const visible = getVisibleNavigationItems(
+                access({capabilities: {[capability]: true}}),
+                NAVIGATION_PLACEMENT.PRIMARY
+            );
+
+            expect(visible.map((item) => item.id)).toContain('admin-content');
+        }
+    );
+
+    test('Cliente sin capability no ve administración de contenido', () => {
+        const visible = getVisibleNavigationItems(
+            access({client: true, businessRole: 'CLIENTE'}),
+            NAVIGATION_PLACEMENT.PRIMARY
+        );
+
+        expect(visible.map((item) => item.id)).not.toContain('admin-content');
     });
 });
 
@@ -131,7 +240,7 @@ describe('navegación de configuración y reportes', () => {
                 permissions: ['gestion.manage_configuration'],
                 businessRole: 'EMPLEADO'
             }),
-            NAVIGATION_PLACEMENT.PRIMARY
+            NAVIGATION_PLACEMENT.ACCOUNT
         );
 
         expect(visible.map((item) => item.id)).toContain('admin-configuration');

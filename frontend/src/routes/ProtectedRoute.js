@@ -11,14 +11,18 @@ const ProtectedRoute = ({
     requiredActiveProfile,
     requiredPermission,
     requiredAnyPermission,
+    requiredCapability,
+    requiredAnyCapability,
+    requiredAnyAccess,
     allowedRoles
 }) => {
     const {
         status,
-        businessRole,
         loading,
         hasPermission,
         hasAnyPermission,
+        hasCapability,
+        hasAnyCapability,
         hasRole,
         hasProfile,
         hasActiveProfile
@@ -44,10 +48,6 @@ const ProtectedRoute = ({
         return <Navigate to={SESSION_ROUTES.ERROR_ACCESO} replace />;
     }
 
-    if (businessRole === null || businessRole === undefined) {
-        return <Navigate to={SESSION_ROUTES.CUENTA_SIN_ACCESO} replace />;
-    }
-
     if (requiredProfile && !hasProfile(requiredProfile)) {
         return <Navigate to={SESSION_ROUTES.ACCESO_DENEGADO} replace />;
     }
@@ -65,6 +65,32 @@ const ProtectedRoute = ({
         && !hasAnyPermission(requiredAnyPermission)
     ) {
         return <Navigate to={SESSION_ROUTES.ACCESO_DENEGADO} replace />;
+    }
+
+    if (requiredCapability && !hasCapability(requiredCapability)) {
+        return <Navigate to={SESSION_ROUTES.ACCESO_DENEGADO} replace />;
+    }
+
+    if (
+        requiredAnyCapability
+        && !hasAnyCapability(requiredAnyCapability)
+    ) {
+        return <Navigate to={SESSION_ROUTES.ACCESO_DENEGADO} replace />;
+    }
+
+    if (requiredAnyAccess) {
+        const canUsePermission = (
+            Array.isArray(requiredAnyAccess.permissions)
+            && hasAnyPermission(requiredAnyAccess.permissions)
+        );
+        const canUseCapability = (
+            Array.isArray(requiredAnyAccess.capabilities)
+            && hasAnyCapability(requiredAnyAccess.capabilities)
+        );
+
+        if (!canUsePermission && !canUseCapability) {
+            return <Navigate to={SESSION_ROUTES.ACCESO_DENEGADO} replace />;
+        }
     }
 
     if (allowedRoles && !allowedRoles.some((role) => hasRole(role))) {

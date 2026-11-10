@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import axios from 'axios';
 
 import DashboardAdmin from './DashboardAdmin';
@@ -29,7 +29,8 @@ describe('DashboardAdmin con backend legacy', () => {
         jest.clearAllMocks();
         useSession.mockReturnValue({
             hasPermission: () => false,
-            hasAnyPermission: () => false
+            hasAnyPermission: () => false,
+            hasCapability: () => false
         });
         localStorage.setItem('access_token', 'access-token');
         consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
@@ -67,5 +68,44 @@ describe('DashboardAdmin con backend legacy', () => {
         expect(screen.queryByText('Configuración del Sistema')).not.toBeInTheDocument();
         expect(screen.queryByText('Gestionar Rutinas')).not.toBeInTheDocument();
         expect(screen.queryByText('Alertas')).not.toBeInTheDocument();
+    });
+
+    test('la tarjeta de solicitudes no navega a Turnos sin view_global_agenda', async () => {
+        axios.get.mockResolvedValue({
+            data: {
+                turnos_hoy: 0,
+                pendientes_accion: 2,
+                esperando_sena: 0,
+                proximos_turnos: []
+            }
+        });
+
+        render(<DashboardAdmin />);
+        fireEvent.click(await screen.findByText('Solicitudes Nuevas'));
+
+        expect(mockNavigate).not.toHaveBeenCalled();
+    });
+
+    test('capability de fórmulas muestra el acceso parcial a Servicios', async () => {
+        useSession.mockReturnValue({
+            hasPermission: () => false,
+            hasAnyPermission: () => false,
+            hasCapability: (capability) => (
+                capability === 'service_formula.manage'
+            )
+        });
+        axios.get.mockResolvedValue({
+            data: {
+                turnos_hoy: 0,
+                pendientes_accion: 0,
+                esperando_sena: 0,
+                proximos_turnos: []
+            }
+        });
+
+        render(<DashboardAdmin />);
+
+        expect(await screen.findByText('Servicios & Impacto'))
+            .toBeInTheDocument();
     });
 });

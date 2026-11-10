@@ -144,6 +144,23 @@ describe('GestionUsuarios account status actions', () => {
         expect(screen.queryByRole('button', { name: 'Nuevo Usuario' })).not.toBeInTheDocument();
     });
 
+    test('no ofrece accesos rápidos a pantallas sin permiso propio', async () => {
+        mockHasPermission.mockImplementation(
+            (permission) => permission === 'usuarios.manage_users'
+        );
+        axios.get.mockResolvedValue({ data: [activeUser] });
+
+        render(<GestionUsuarios />);
+        await screen.findByText('activa@test.com');
+
+        expect(screen.queryByRole('button', { name: '← Volver' }))
+            .not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Nuevo cliente' }))
+            .not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Nuevo Personal' }))
+            .not.toBeInTheDocument();
+    });
+
     test('abre alta de administrador sin checkbox ni controles técnicos', async () => {
         axios.get.mockResolvedValue({ data: [activeUser] });
 

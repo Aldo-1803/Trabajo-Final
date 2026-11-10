@@ -121,6 +121,12 @@ const GestionUsuarios = () => {
         hasPermission('usuarios.manage_users')
         && hasPermission('usuarios.assign_roles')
     );
+    const puedeVerDashboard = hasPermission('gestion.view_reports');
+    const puedeVerClientes = hasPermission('usuarios.view_clients');
+    const puedeVerPersonal = (
+        hasPermission('gestion.manage_personal')
+        || hasPermission('gestion.manage_skills')
+    );
 
     // --- CARGA DE DATOS ---
     const cargarUsuarios = useCallback(async () => {
@@ -422,7 +428,7 @@ const GestionUsuarios = () => {
                     <p className="text-gray-500">Administración de cuentas y accesos</p>
                 </div>
                 <div className="flex flex-wrap justify-end gap-2">
-                                             <button
+                    {puedeVerDashboard && <button
                         onClick={() => navigate(ADMIN_ROUTES.DASHBOARD)}
                         className="px-4 py-2 rounded-lg font-medium transition-all"
                         style={{ color: '#817773', borderColor: '#C1B4A4', border: '1px solid' }}
@@ -430,21 +436,21 @@ const GestionUsuarios = () => {
                         onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
                     >
                         ← Volver
-                    </button>
-                    <button
+                    </button>}
+                    {puedeVerClientes && <button
                         onClick={() => navigate(ADMIN_ROUTES.CLIENTES)}
                         className="px-4 py-2 rounded-lg font-medium border"
                         style={{ borderColor: '#817773', color: '#817773' }}
                     >
                         Nuevo cliente
-                    </button>
-                    <button
+                    </button>}
+                    {puedeVerPersonal && <button
                         onClick={() => navigate(ADMIN_ROUTES.PERSONAL)}
                         className="px-4 py-2 rounded-lg font-medium border"
                         style={{ borderColor: '#817773', color: '#817773' }}
                     >
                         Nuevo Personal
-                    </button>
+                    </button>}
                     <button 
                         onClick={() => setModalAbierto(true)}
                         className="text-white px-4 py-2 rounded-lg font-bold shadow-md flex items-center gap-2 transition-all"

@@ -27,6 +27,8 @@ const Header = () => {
         clearSession,
         hasPermission,
         hasAnyPermission,
+        hasCapability,
+        hasAnyCapability,
         hasProfile,
         hasActiveProfile
     } = useSession();
@@ -59,6 +61,8 @@ const Header = () => {
         error,
         hasPermission,
         hasAnyPermission,
+        hasCapability,
+        hasAnyCapability,
         hasProfile,
         hasActiveProfile
     };

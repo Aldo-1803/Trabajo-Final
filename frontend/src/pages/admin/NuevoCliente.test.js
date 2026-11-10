@@ -20,7 +20,17 @@ jest.mock('react-router-dom', () => ({ useNavigate: () => mockNavigate }), { vir
 
 const renderNewClient = (permissions = ['usuarios.create_walkin_client']) => {
     useSession.mockReturnValue({
-        session: { status: 'authenticated', businessRole: 'EMPLEADO', error: null },
+        session: {
+            status: 'authenticated',
+            businessRole: 'EMPLEADO',
+            permissions,
+            capabilities: {},
+            profiles: {
+                cliente: {exists: false},
+                personal: {exists: false}
+            },
+            error: null
+        },
         hasPermission: (permission) => permissions.includes(permission)
     });
     return render(<NuevoCliente />);

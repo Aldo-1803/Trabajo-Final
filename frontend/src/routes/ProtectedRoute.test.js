@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { render, screen } from '@testing-library/react';
 
 import { useSession } from '../context/SessionContext';
@@ -20,12 +21,22 @@ jest.mock('react-router-dom', () => ({
 
 
 const protectedContent = <div>Contenido protegido</div>;
+const protectedFetch = jest.fn();
+
+
+const FetchingProtectedContent = () => {
+    useEffect(() => {
+        protectedFetch();
+    }, []);
+    return <div>Contenido con fetch</div>;
+};
 
 
 const sessionContext = ({
     status = 'authenticated',
     businessRole = 'CLIENTE',
     permissions = [],
+    capabilities = {},
     clientProfile = false,
     personalProfile = false,
     personalActive = false
@@ -42,6 +53,10 @@ const sessionContext = ({
         hasPermission: (permission) => permissions.includes(permission),
         hasAnyPermission: (required) => (
             required.some((permission) => permissions.includes(permission))
+        ),
+        hasCapability: (capability) => capabilities[capability] === true,
+        hasAnyCapability: (required) => (
+            required.some((capability) => capabilities[capability] === true)
         ),
         hasRole: (role) => businessRole === role,
         hasProfile: (profile) => profiles[profile]?.exists === true,
@@ -85,6 +100,7 @@ const expectRedirect = (path) => {
 describe('ProtectedRoute declarativo con acceso por URL directa', () => {
     beforeEach(() => {
         jest.clearAllMocks();
+        protectedFetch.mockClear();
         localStorage.clear();
     });
 
@@ -205,6 +221,7 @@ describe('ProtectedRoute declarativo con acceso por URL directa', () => {
     test('autor con Personal activo entra a administración de contenido', () => {
         renderContentManagementUrl({
             businessRole: 'PROFESIONAL',
+            capabilities: {'content.author': true},
             personalProfile: true,
             personalActive: true
         });
@@ -225,10 +242,90 @@ describe('ProtectedRoute declarativo con acceso por URL directa', () => {
     test('manage_content permite administrar sin perfil Personal', () => {
         renderContentManagementUrl({
             businessRole: 'EMPLEADO',
-            permissions: ['gestion.manage_content']
+            permissions: ['gestion.manage_content'],
+            capabilities: {'content.manage_global': true}
         });
 
         expect(screen.getByText('Contenido protegido')).toBeInTheDocument();
+    });
+
+    test('permiso manage_content sin capability global falla cerrado', () => {
+        renderContentManagementUrl({
+            businessRole: 'EMPLEADO',
+            permissions: ['gestion.manage_content']
+        });
+
+        expectRedirect('/acceso-denegado');
+    });
+
+    test('capability verdadera permite una ruta compuesta', () => {
+        renderDirectUrl('/revision-tecnica', {
+            requiredCapability: 'technical_booking.review'
+        }, {
+            capabilities: {'technical_booking.review': true}
+        });
+
+        expect(screen.getByText('Contenido protegido')).toBeInTheDocument();
+    });
+
+    test.each([
+        {},
+        {'technical_booking.review': false}
+    ])('capability falsa o ausente bloquea revisión técnica', (capabilities) => {
+        renderDirectUrl('/revision-tecnica', {
+            requiredCapability: 'technical_booking.review'
+        }, {
+            permissions: ['gestion.review_technical_booking'],
+            personalProfile: true,
+            personalActive: true,
+            capabilities
+        });
+
+        expectRedirect('/acceso-denegado');
+    });
+
+    test('capability desconocida falla cerrado', () => {
+        renderDirectUrl('/ruta-compuesta', {
+            requiredCapability: 'unknown.capability'
+        }, {
+            capabilities: {'technical_booking.review': true}
+        });
+
+        expectRedirect('/acceso-denegado');
+    });
+
+    test.each([
+        {
+            permissions: ['gestion.manage_prices'],
+            capabilities: {}
+        },
+        {
+            permissions: [],
+            capabilities: {'service_formula.manage': true}
+        }
+    ])('Servicios acepta cada rama legítima de acceso parcial', (context) => {
+        renderDirectUrl('/admin/servicios', {
+            requiredAnyAccess: {
+                permissions: ['gestion.manage_prices'],
+                capabilities: ['service_formula.manage']
+            }
+        }, context);
+
+        expect(screen.getByText('Contenido protegido')).toBeInTheDocument();
+    });
+
+    test('manage_formulas simple sin capability no abre Servicios', () => {
+        renderDirectUrl('/admin/servicios', {
+            requiredAnyAccess: {
+                permissions: ['gestion.manage_prices'],
+                capabilities: ['service_formula.manage']
+            }
+        }, {
+            permissions: ['gestion.manage_formulas'],
+            capabilities: {'service_formula.manage': false}
+        });
+
+        expectRedirect('/acceso-denegado');
     });
 
     test('PROFESIONAL con Cliente y Personal activos conserva agenda laboral', () => {
@@ -375,6 +472,16 @@ describe('ProtectedRoute declarativo con acceso por URL directa', () => {
         expect(screen.getByText('Contenido protegido')).toBeInTheDocument();
     });
 
+    test('allowedRoles conserva compatibilidad cuando una ruta lo declara', () => {
+        renderDirectUrl('/ruta-legacy', {
+            allowedRoles: ['ADMINISTRADOR']
+        }, {
+            businessRole: 'PROFESIONAL'
+        });
+
+        expectRedirect('/acceso-denegado');
+    });
+
     test.each([
         'gestion.view_reports',
         'gestion.view_financial_reports'
@@ -400,12 +507,43 @@ describe('ProtectedRoute declarativo con acceso por URL directa', () => {
         expectRedirect('/acceso-denegado');
     });
 
-    test('businessRole null falla cerrado', () => {
+    test('businessRole null no anula un perfil efectivo', () => {
         renderDirectUrl('/perfil', {
             requiredProfile: 'cliente'
         }, { businessRole: null, clientProfile: true });
 
-        expectRedirect('/cuenta-sin-acceso');
+        expect(screen.getByText('Contenido protegido')).toBeInTheDocument();
+    });
+
+    test.each([
+        ['grupo técnico', null],
+        ['grant individual', 'PROFESIONAL']
+    ])('%s con permiso efectivo entra sin restricción nominal', (_, businessRole) => {
+        renderDirectUrl('/admin/usuarios', {
+            requiredPermission: 'usuarios.manage_users'
+        }, {
+            businessRole,
+            permissions: ['usuarios.manage_users']
+        });
+
+        expect(screen.getByText('Contenido protegido')).toBeInTheDocument();
+    });
+
+    test('una URL denegada no monta ni ejecuta fetch del hijo', () => {
+        useSession.mockReturnValue(sessionContext({
+            permissions: [],
+            capabilities: {}
+        }));
+
+        render(
+            <ProtectedRoute requiredCapability="technical_booking.review">
+                <FetchingProtectedContent />
+            </ProtectedRoute>
+        );
+
+        expectRedirect('/acceso-denegado');
+        expect(screen.queryByText('Contenido con fetch')).not.toBeInTheDocument();
+        expect(protectedFetch).not.toHaveBeenCalled();
     });
 
     test('MULTIPLE_BUSINESS_ROLES redirige al error de acceso', () => {

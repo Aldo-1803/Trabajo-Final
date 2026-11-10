@@ -3,6 +3,15 @@ import {
     CLIENTE_ROUTES,
     SESSION_ROUTES
 } from '../routes/routes';
+import {
+    CASH_PERMISSIONS,
+    CONTENT_MANAGEMENT_CAPABILITIES,
+    OPERATIONS_PERMISSIONS,
+    PERSONAL_MANAGEMENT_PERMISSIONS,
+    PRODUCT_PERMISSIONS,
+    REPORT_PERMISSIONS,
+    SERVICE_ACCESS
+} from '../utils/accessRules';
 
 
 export const NAVIGATION_PLACEMENT = Object.freeze({
@@ -18,28 +27,14 @@ export const navigationItems = [
         label: 'Operaciones',
         path: SESSION_ROUTES.OPERACIONES,
         placement: NAVIGATION_PLACEMENT.PRIMARY,
-        anyPermissions: [
-            'gestion.view_global_agenda',
-            'usuarios.create_walkin_client',
-            'gestion.create_turno_for_client',
-            'gestion.register_arrival',
-            'gestion.reprogram_any_turno',
-            'gestion.cancel_any_turno',
-            'gestion.register_payment',
-            'gestion.confirm_deposit',
-            'gestion.view_financial_reports'
-        ]
+        anyPermissions: OPERATIONS_PERMISSIONS
     },
     {
         id: 'in-person-payments',
         label: 'Caja presencial',
         path: ADMIN_ROUTES.CAJA,
         placement: NAVIGATION_PLACEMENT.PRIMARY,
-        anyPermissions: [
-            'gestion.register_payment',
-            'gestion.confirm_deposit',
-            'gestion.view_financial_reports'
-        ]
+        anyPermissions: CASH_PERMISSIONS
     },
     {
         id: 'financial-incidents',
@@ -60,8 +55,7 @@ export const navigationItems = [
         label: 'Revisión técnica',
         path: SESSION_ROUTES.REVISION_TECNICA,
         placement: NAVIGATION_PLACEMENT.PRIMARY,
-        requiredPermission: 'gestion.review_technical_booking',
-        requiredActiveProfile: 'personal'
+        requiredCapability: 'technical_booking.review'
     },
     {
         id: 'client-turnos',
@@ -138,7 +132,6 @@ export const navigationItems = [
         label: 'Usuarios',
         path: ADMIN_ROUTES.USUARIOS,
         placement: NAVIGATION_PLACEMENT.PRIMARY,
-        allowedRoles: ['ADMINISTRADOR'],
         requiredPermission: 'usuarios.manage_users'
     },
     {
@@ -146,10 +139,7 @@ export const navigationItems = [
         label: 'Personal',
         path: ADMIN_ROUTES.PERSONAL,
         placement: NAVIGATION_PLACEMENT.PRIMARY,
-        anyPermissions: [
-            'gestion.manage_personal',
-            'gestion.manage_skills'
-        ]
+        anyPermissions: PERSONAL_MANAGEMENT_PERMISSIONS
     },
     {
         id: 'clients-management',
@@ -170,13 +160,7 @@ export const navigationItems = [
         label: 'Productos',
         path: ADMIN_ROUTES.PRODUCTOS,
         placement: NAVIGATION_PLACEMENT.PRIMARY,
-        anyPermissions: [
-            'gestion.view_stock',
-            'gestion.manage_stock',
-            'gestion.manage_products',
-            'gestion.manage_prices',
-            'gestion.manage_promotions'
-        ]
+        anyPermissions: PRODUCT_PERMISSIONS
     },
     {
         id: 'admin-orders',
@@ -190,24 +174,62 @@ export const navigationItems = [
         label: 'Reportes',
         path: ADMIN_ROUTES.REPORTES,
         placement: NAVIGATION_PLACEMENT.PRIMARY,
-        anyPermissions: [
-            'gestion.view_reports',
-            'gestion.view_financial_reports'
-        ]
+        anyPermissions: REPORT_PERMISSIONS
     },
     {
         id: 'admin-audit',
         label: 'Auditoría',
         path: ADMIN_ROUTES.AUDITORIA,
         placement: NAVIGATION_PLACEMENT.PRIMARY,
-        allowedRoles: ['ADMINISTRADOR'],
         requiredPermission: 'gestion.view_audit'
+    },
+    {
+        id: 'admin-agenda',
+        label: 'Agenda',
+        path: ADMIN_ROUTES.AGENDA,
+        placement: NAVIGATION_PLACEMENT.PRIMARY,
+        requiredPermission: 'gestion.view_global_agenda'
+    },
+    {
+        id: 'admin-routines',
+        label: 'Gestionar rutinas',
+        path: ADMIN_ROUTES.GESTIONAR_RUTINAS,
+        placement: NAVIGATION_PLACEMENT.PRIMARY,
+        requiredPermission: 'gestion.assign_routines'
+    },
+    {
+        id: 'admin-services',
+        label: 'Gestionar servicios',
+        path: ADMIN_ROUTES.SERVICIOS,
+        placement: NAVIGATION_PLACEMENT.PRIMARY,
+        anyAccess: SERVICE_ACCESS
+    },
+    {
+        id: 'admin-content',
+        label: 'Contenido educativo',
+        path: ADMIN_ROUTES.CONTENIDO_EDUCATIVO,
+        placement: NAVIGATION_PLACEMENT.PRIMARY,
+        anyCapabilities: CONTENT_MANAGEMENT_CAPABILITIES
+    },
+    {
+        id: 'admin-equipment',
+        label: 'Equipamiento',
+        path: ADMIN_ROUTES.EQUIPAMIENTO,
+        placement: NAVIGATION_PLACEMENT.ACCOUNT,
+        requiredPermission: 'gestion.manage_configuration'
+    },
+    {
+        id: 'admin-rules',
+        label: 'Reglas',
+        path: ADMIN_ROUTES.REGLAS,
+        placement: NAVIGATION_PLACEMENT.ACCOUNT,
+        requiredPermission: 'gestion.manage_configuration'
     },
     {
         id: 'admin-configuration',
         label: 'Configuración',
         path: ADMIN_ROUTES.CONFIGURACION,
-        placement: NAVIGATION_PLACEMENT.PRIMARY,
+        placement: NAVIGATION_PLACEMENT.ACCOUNT,
         requiredPermission: 'gestion.manage_configuration'
     }
 ];
@@ -251,6 +273,35 @@ export const isNavigationItemVisible = (item, access) => {
         && !access.hasAnyPermission(item.anyPermissions)
     ) {
         return false;
+    }
+
+    if (
+        item.requiredCapability
+        && !access.hasCapability?.(item.requiredCapability)
+    ) {
+        return false;
+    }
+
+    if (
+        item.anyCapabilities
+        && !access.hasAnyCapability?.(item.anyCapabilities)
+    ) {
+        return false;
+    }
+
+    if (item.anyAccess) {
+        const canUsePermission = (
+            Array.isArray(item.anyAccess.permissions)
+            && access.hasAnyPermission(item.anyAccess.permissions)
+        );
+        const canUseCapability = (
+            Array.isArray(item.anyAccess.capabilities)
+            && access.hasAnyCapability?.(item.anyAccess.capabilities)
+        );
+
+        if (!canUsePermission && !canUseCapability) {
+            return false;
+        }
     }
 
     return true;

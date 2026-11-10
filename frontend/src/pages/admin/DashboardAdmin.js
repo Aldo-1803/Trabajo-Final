@@ -6,7 +6,7 @@ import AlertasCriticas from '../../components/AlertasCriticas';
 import { useSession } from '../../context/SessionContext';
 
 const DashboardAdmin = () => {
-    const { hasPermission, hasAnyPermission } = useSession();
+    const { hasPermission, hasAnyPermission, hasCapability } = useSession();
     const canAssignRoutines = hasPermission('gestion.assign_routines');
     const canViewClients = hasPermission('usuarios.view_clients');
     const canManageUsers = hasPermission('usuarios.manage_users');
@@ -14,10 +14,10 @@ const DashboardAdmin = () => {
         'gestion.manage_personal',
         'gestion.manage_skills'
     ]);
-    const canManageServices = hasAnyPermission([
-        'gestion.manage_prices',
-        'gestion.manage_formulas'
-    ]);
+    const canManageServices = (
+        hasPermission('gestion.manage_prices')
+        || hasCapability('service_formula.manage')
+    );
     const canManageProducts = hasAnyPermission([
         'gestion.view_stock',
         'gestion.manage_stock',
@@ -101,8 +101,9 @@ const DashboardAdmin = () => {
                     </div>
 
                     {/* Tarjeta 2: Solicitudes */}
-                    <div className="p-6 rounded-xl shadow-md border-l-4 cursor-pointer hover:shadow-lg transition-shadow" 
-                         onClick={() => navigate('/admin/turnos')}
+                    <div
+                         className={`p-6 rounded-xl shadow-md border-l-4 transition-shadow ${canViewAgenda ? 'cursor-pointer hover:shadow-lg' : ''}`}
+                         onClick={() => canViewAgenda && navigate('/admin/turnos')}
                          style={{ backgroundColor: 'white', borderColor: '#D5BDAF' }}>
                         <div className="flex justify-between items-center">
                             <div>

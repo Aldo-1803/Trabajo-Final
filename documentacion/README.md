@@ -111,6 +111,7 @@ Documento principal:
 - [Análisis de UI según permisos efectivos](BH-062/ANALISIS_BH062_UI_SEGUN_PERMISOS.md)
 - [Incremento 0: contención de contenido educativo](BH-062/IMPLEMENTACION_BH062_0_CONTENCION_CONTENIDO.md)
 - [Incremento 1: capacidades efectivas de sesión](BH-062/IMPLEMENTACION_BH062_1_CAPACIDADES_EFECTIVAS.md)
+- [Incremento 2: rutas y navegación por acceso efectivo](BH-062/IMPLEMENTACION_BH062_2_RUTAS_NAVEGACION.md)
 
 ## Documentación transversal
 

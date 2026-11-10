@@ -39,6 +39,7 @@ const sessionPayload = (businessRole, overrides = {}) => ({
     },
     business_role: businessRole,
     permissions: [],
+    capabilities: {},
     profiles: {
         cliente: { exists: false, id: null, active: null },
         personal: {
@@ -82,6 +83,7 @@ describe('Login con contexto de sesión', () => {
     test('consulta /me mediante refreshSession antes de navegar', async () => {
         fetchCurrentSession.mockResolvedValue({
             data: sessionPayload('ADMINISTRADOR', {
+                permissions: ['gestion.view_reports'],
                 user: {
                     ...sessionPayload('ADMINISTRADOR').user,
                     is_staff: false
@@ -107,7 +109,17 @@ describe('Login con contexto de sesión', () => {
 
     test('deriva user_info de /me sin persistir is_staff como autoridad', async () => {
         fetchCurrentSession.mockResolvedValue({
-            data: sessionPayload('CLIENTE')
+            data: sessionPayload('CLIENTE', {
+                profiles: {
+                    cliente: { exists: true, id: 42, active: true },
+                    personal: {
+                        exists: false,
+                        id: null,
+                        active: null,
+                        function_role: null
+                    }
+                }
+            })
         });
         renderLogin();
 
@@ -128,7 +140,9 @@ describe('Login con contexto de sesión', () => {
     test('una sesión existente usa SessionContext para resolver el landing', async () => {
         localStorage.setItem('access_token', 'existing-access');
         fetchCurrentSession.mockResolvedValue({
-            data: sessionPayload('PROFESIONAL')
+            data: sessionPayload('PROFESIONAL', {
+                permissions: ['gestion.view_global_agenda']
+            })
         });
 
         renderLogin();
@@ -185,5 +199,27 @@ describe('Login con contexto de sesión', () => {
                 { replace: true }
             );
         });
+    });
+
+    test('administrador sin view_reports usa una ruta realmente autorizada', async () => {
+        localStorage.setItem('access_token', 'existing-access');
+        fetchCurrentSession.mockResolvedValue({
+            data: sessionPayload('ADMINISTRADOR', {
+                permissions: ['usuarios.manage_users']
+            })
+        });
+
+        renderLogin();
+
+        await waitFor(() => {
+            expect(mockNavigate).toHaveBeenCalledWith(
+                '/admin/usuarios',
+                { replace: true }
+            );
+        });
+        expect(mockNavigate).not.toHaveBeenCalledWith(
+            '/admin-dashboard',
+            expect.anything()
+        );
     });
 });
