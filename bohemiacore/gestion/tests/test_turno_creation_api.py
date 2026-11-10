@@ -1,6 +1,8 @@
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone as dt_timezone
+from unittest.mock import patch
 
 from django.contrib.auth.models import Group, Permission
+from django.test import override_settings
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
@@ -364,6 +366,40 @@ class TurnoCreationApiTests(APITestCase):
         )
         self.assertEqual(legacy_response.status_code, status.HTTP_200_OK)
         self.assertIn('10:00', legacy_response.data['horarios_disponibles'])
+
+    @override_settings(TIME_ZONE='America/Bogota', USE_TZ=True)
+    def test_availability_default_date_uses_configured_timezone(self):
+        fixed_utc_now = datetime(2030, 1, 2, 2, 30, tzinfo=dt_timezone.utc)
+        salon_date = date(2030, 1, 1)
+        HorarioLaboral.objects.all().delete()
+        HorarioLaboral.objects.create(
+            personal=self.personal,
+            dia_semana=salon_date.weekday(),
+            hora_inicio=time(22, 0),
+            hora_fin=time(23, 0),
+            activo=True,
+            permite_complemento=True,
+            permite_diseno_color=True,
+        )
+        self.authenticate(self.client_user)
+
+        with (
+            patch('django.utils.timezone.now', return_value=fixed_utc_now),
+            patch(
+                'gestion.turno_creation_services.database_now',
+                return_value=fixed_utc_now,
+            ),
+            timezone.override(timezone.get_default_timezone()),
+        ):
+            response = self.client.get(
+                reverse('turno-consultar-disponibilidad'),
+                {'servicio_id': self.service.pk},
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['disponibilidad'][0]['fecha'], '2030-01-01')
+        slots = response.data['disponibilidad'][0]['profesionales'][0]['slots']
+        self.assertIn('22:00', {slot['hora'] for slot in slots})
 
     def test_payload_cannot_set_state(self):
         self.authenticate(self.client_user)

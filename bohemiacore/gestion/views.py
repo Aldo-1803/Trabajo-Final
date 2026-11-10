@@ -2590,12 +2590,15 @@ class TurnoViewSet(viewsets.ModelViewSet):
             )
             excluir_turno_id = turno_excluido.pk
         
-        # Determinar fecha de inicio
+        # Determinar fecha de inicio según la zona horaria comercial configurada.
+        business_today = timezone.localdate(
+            timezone=timezone.get_default_timezone(),
+        )
         try:
             if fecha_inicio_str:
                 fecha_inicio = datetime.strptime(fecha_inicio_str, '%Y-%m-%d').date()
             else:
-                fecha_inicio = timezone.now().date()
+                fecha_inicio = business_today
         except ValueError:
             return Response(
                 {"error": "Formato de fecha inválido. Use YYYY-MM-DD"},
@@ -2606,10 +2609,10 @@ class TurnoViewSet(viewsets.ModelViewSet):
         config = Configuracion.objects.first()
         max_dias = config.max_dias_anticipacion if config else 60
         intervalo_minutos = config.intervalo_turnos if config else 30
-        fecha_limite = timezone.localdate() + timedelta(days=max_dias)
+        fecha_limite = business_today + timedelta(days=max_dias)
         
         # 2. Validar que no sea fecha pasada
-        if fecha_inicio < timezone.now().date():
+        if fecha_inicio < business_today:
             return Response(
                 {"error": "No se pueden agendar turnos en el pasado"},
                 status=status.HTTP_400_BAD_REQUEST
@@ -2635,7 +2638,7 @@ class TurnoViewSet(viewsets.ModelViewSet):
                 break
             
             # No agendar en fechas pasadas
-            if fecha_consulta < timezone.now().date():
+            if fecha_consulta < business_today:
                 continue
             
             dia_semana = fecha_consulta.weekday()
@@ -5369,7 +5372,7 @@ class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
         y crea una notificación para el cliente recomendando agendar un turno.
         """
         import logging
-        from datetime import date, timedelta
+        from datetime import timedelta
         logger = logging.getLogger(__name__)
         
         try:
@@ -5390,7 +5393,9 @@ class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
             turno_viewset = TurnoViewSet()
             
             # 3. BUSCAR PRIMER SLOT DISPONIBLE EN PRÓXIMOS 30 DÍAS
-            fecha_busqueda = date.today() + timedelta(days=1)
+            fecha_busqueda = timezone.localdate(
+                timezone=timezone.get_default_timezone(),
+            ) + timedelta(days=1)
             fecha_fin = fecha_busqueda + timedelta(days=30)
             slot_encontrado = None
             

@@ -1,7 +1,9 @@
-from datetime import time, timedelta
+from datetime import date, datetime, time, timedelta, timezone as dt_timezone
 from unittest.mock import patch
 
+from django.conf import settings
 from django.contrib.auth.models import Group, Permission
+from django.test import override_settings
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
@@ -9,6 +11,7 @@ from rest_framework.test import APITestCase
 
 from gestion.models import (
     CategoriaServicio,
+    BloqueoAgenda,
     DiagnosticoCapilar,
     Habilidad,
     HorarioLaboral,
@@ -450,7 +453,19 @@ class DiagnosisAuthorizationApiTests(APITestCase):
         self.assertEqual(diagnosis.profesional, actor)
 
     def test_diagnosis_recommendation_uses_canonical_availability_not_category_text(self):
-        tomorrow = timezone.localdate() + timedelta(days=1)
+        fixed_utc_now = datetime(2030, 1, 1, 15, 0, tzinfo=dt_timezone.utc)
+        tomorrow = date(2030, 1, 2)
+        diagnosis, service, personal = self.create_recommendation_fixture(
+            schedule_date=tomorrow,
+        )
+
+        suggested = self.recommend_at(diagnosis, service, fixed_utc_now)
+
+        self.assertIsNotNone(suggested)
+        self.assertEqual(suggested.profesional, personal)
+        self.assertEqual(suggested.fecha, tomorrow)
+
+    def create_recommendation_fixture(self, *, schedule_date=None):
         category = CategoriaServicio.objects.create(nombre='Diseño y Color legacy')
         service = Servicio.objects.create(
             nombre='Servicio recomendado sin requisito técnico',
@@ -466,22 +481,118 @@ class DiagnosisAuthorizationApiTests(APITestCase):
             activo=True,
             realiza_color=False,
         )
-        HorarioLaboral.objects.create(
-            personal=personal,
-            dia_semana=tomorrow.weekday(),
-            hora_inicio=time(9, 0),
-            hora_fin=time(12, 0),
-            activo=True,
-            permite_diseno_color=False,
-            permite_complemento=False,
-        )
+        if schedule_date is not None:
+            HorarioLaboral.objects.create(
+                personal=personal,
+                dia_semana=schedule_date.weekday(),
+                hora_inicio=time(9, 0),
+                hora_fin=time(12, 0),
+                activo=True,
+                permite_diseno_color=False,
+                permite_complemento=False,
+            )
         diagnosis = DiagnosticoCapilar.objects.create(cliente=self.client_profile)
+        return diagnosis, service, personal
 
-        suggested = DiagnosticoCapilarViewSet()._recomendar_primer_hueco_disponible(
+    @staticmethod
+    def recommend_at(diagnosis, service, utc_now, *, active_timezone=None):
+        timezone_context = (
+            timezone.override(active_timezone)
+            if active_timezone is not None
+            else timezone.override(timezone.get_default_timezone())
+        )
+        with (
+            patch('django.utils.timezone.now', return_value=utc_now),
+            patch(
+                'gestion.turno_creation_services.database_now',
+                return_value=utc_now,
+            ),
+            timezone_context,
+        ):
+            return (
+                DiagnosticoCapilarViewSet()
+                ._recomendar_primer_hueco_disponible(diagnosis, service)
+            )
+
+    @override_settings(TIME_ZONE='America/Bogota', USE_TZ=True)
+    def test_recommendation_uses_configured_local_date_near_utc_midnight(self):
+        fixed_utc_now = datetime(2030, 1, 2, 2, 30, tzinfo=dt_timezone.utc)
+        salon_today = date(2030, 1, 1)
+        first_available_date = date(2030, 1, 2)
+        diagnosis, service, _ = self.create_recommendation_fixture(
+            schedule_date=first_available_date,
+        )
+
+        suggested = self.recommend_at(
             diagnosis,
             service,
+            fixed_utc_now,
+            active_timezone=dt_timezone.utc,
         )
 
+        self.assertEqual(settings.TIME_ZONE, 'America/Bogota')
+        self.assertEqual(fixed_utc_now.date(), date(2030, 1, 2))
+        self.assertEqual(
+            timezone.localdate(
+                fixed_utc_now,
+                timezone.get_default_timezone(),
+            ),
+            salon_today,
+        )
         self.assertIsNotNone(suggested)
-        self.assertEqual(suggested.profesional, personal)
-        self.assertEqual(suggested.fecha, tomorrow)
+        self.assertEqual(suggested.fecha, first_available_date)
+        self.assertNotEqual(
+            suggested.fecha,
+            first_available_date + timedelta(days=7),
+        )
+
+    @override_settings(TIME_ZONE='America/Bogota', USE_TZ=True)
+    def test_recommendation_finds_next_configured_weekday(self):
+        fixed_utc_now = datetime(2030, 1, 1, 15, 0, tzinfo=dt_timezone.utc)
+        next_configured_date = date(2030, 1, 4)
+        diagnosis, service, _ = self.create_recommendation_fixture(
+            schedule_date=next_configured_date,
+        )
+
+        suggested = self.recommend_at(diagnosis, service, fixed_utc_now)
+
+        self.assertIsNotNone(suggested)
+        self.assertEqual(suggested.fecha, next_configured_date)
+
+    @override_settings(TIME_ZONE='America/Bogota', USE_TZ=True)
+    def test_recommendation_respects_block_and_uses_next_recurrence(self):
+        fixed_utc_now = datetime(2030, 1, 1, 15, 0, tzinfo=dt_timezone.utc)
+        blocked_date = date(2030, 1, 2)
+        next_recurrence = blocked_date + timedelta(days=7)
+        diagnosis, service, personal = self.create_recommendation_fixture(
+            schedule_date=blocked_date,
+        )
+        salon_timezone = timezone.get_default_timezone()
+        BloqueoAgenda.objects.create(
+            personal=personal,
+            fecha_inicio=timezone.make_aware(
+                datetime.combine(blocked_date, time.min),
+                salon_timezone,
+            ),
+            fecha_fin=timezone.make_aware(
+                datetime.combine(blocked_date + timedelta(days=1), time.min),
+                salon_timezone,
+            ),
+            motivo='Bloqueo determinista de prueba',
+            bloquea_todo_el_dia=True,
+        )
+
+        suggested = self.recommend_at(diagnosis, service, fixed_utc_now)
+
+        self.assertIsNotNone(suggested)
+        self.assertEqual(suggested.fecha, next_recurrence)
+
+    @override_settings(TIME_ZONE='America/Bogota', USE_TZ=True)
+    def test_recommendation_without_availability_returns_none(self):
+        fixed_utc_now = datetime(2030, 1, 1, 15, 0, tzinfo=dt_timezone.utc)
+        diagnosis, service, _ = self.create_recommendation_fixture()
+
+        suggested = self.recommend_at(diagnosis, service, fixed_utc_now)
+
+        self.assertIsNone(suggested)
+        self.assertFalse(Turno.objects.filter(estado=Turno.Estado.SUGERIDO).exists())

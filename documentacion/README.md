@@ -92,11 +92,10 @@ Documentos principales:
 - [Incremento 4: cardinalidad de eventos y concurrencia](BH-061/IMPLEMENTACION_BH061_4_CARDINALIDAD_CONCURRENCIA.md)
 - [Auditoría integral de cierre](BH-061/AUDITORIA_CIERRE_BH061.md)
 
-Pendientes separados del cierre de roles/permisos:
+Seguimiento separado del cierre de roles/permisos:
 
-- corregir la inconsistencia entre `date.today()` y `timezone.localdate()` en
-  la recomendación de Turnos;
-- revalidar el test temporal y la matriz pertinente después de esa corrección;
+- la inconsistencia temporal de recomendación de Turnos fue corregida y
+  revalidada en la documentación general enlazada abajo;
 - realizar smoke tests y verificaciones del entorno desplegado antes de
   producción.
 
@@ -105,11 +104,12 @@ Pendientes separados del cierre de roles/permisos:
 ### [Generales](generales/)
 
 Análisis e impactos transversales sobre flujos, permisos, sesiones y acceso de
-Personal, además de la auditoría integral del proyecto. Contiene 8 documentos.
+Personal, además de la auditoría integral del proyecto. Contiene 9 documentos.
 
 Documentos principales:
 
 - [Auditoría del proyecto](generales/AUDITORIA_PROYECTO.md)
+- [Corrección de fechas en recomendaciones de Turnos](generales/CORRECCION_FECHAS_RECOMENDACION_TURNOS.md)
 - [Flujo objetivo de turnos](generales/ANALISIS_FLUJO_OBJETIVO_TURNOS.md)
 - [Roles y permisos](generales/ANALISIS_ROLES_PERMISOS.md)
 - [Gestión de acceso de Personal](generales/IMPACTO_GESTION_ACCESO_PERSONAL.md)
