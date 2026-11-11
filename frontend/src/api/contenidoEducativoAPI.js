@@ -20,12 +20,6 @@ const getAuthHeaders = () => {
  * @throws {Error} - Lanza el error procesado
  */
 const handleError = (error) => {
-    if (error.response?.status === 401) {
-        // Token expirado o inválido
-        localStorage.removeItem('access_token');
-        localStorage.removeItem('refresh_token');
-        window.location.href = '/login';
-    }
     console.error('Error en API de Contenido Educativo:', error);
     throw error;
 };

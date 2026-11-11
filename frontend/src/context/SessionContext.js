@@ -9,7 +9,15 @@ import React, {
 } from 'react';
 import axios from 'axios';
 
+import {
+    HTTP_SESSION_EVENT,
+    subscribeToHttpSessionEvents
+} from '../api/httpSessionEvents';
 import { fetchCurrentSession } from '../api/sessionApi';
+import { classifyHttpError } from '../utils/httpErrors';
+
+
+export const SESSION_REFRESH_INTERVAL_MS = 45 * 1000;
 
 
 export const SESSION_STATUS = Object.freeze({
@@ -74,7 +82,17 @@ export const SessionProvider = ({ children }) => {
                 : SESSION_STATUS.ANONYMOUS
         )
     ));
-    const latestRequest = useRef(0);
+    const [refreshError, setRefreshError] = useState(null);
+    const [sessionNotice, setSessionNotice] = useState(null);
+    const sessionRef = useRef(session);
+    const requestGeneration = useRef(0);
+    const inFlightRefresh = useRef(null);
+    const lastSuccessfulRefresh = useRef(0);
+
+    const updateSession = useCallback((nextSession) => {
+        sessionRef.current = nextSession;
+        setSession(nextSession);
+    }, []);
 
     const clearStoredSession = useCallback(() => {
         localStorage.removeItem('access_token');
@@ -84,80 +102,181 @@ export const SessionProvider = ({ children }) => {
     }, []);
 
     const clearSession = useCallback(() => {
-        latestRequest.current += 1;
+        requestGeneration.current += 1;
+        inFlightRefresh.current = null;
+        lastSuccessfulRefresh.current = 0;
         clearStoredSession();
-        setSession(createEmptySession(SESSION_STATUS.ANONYMOUS));
-    }, [clearStoredSession]);
+        setRefreshError(null);
+        setSessionNotice(null);
+        updateSession(createEmptySession(SESSION_STATUS.ANONYMOUS));
+    }, [clearStoredSession, updateSession]);
 
-    const refreshSession = useCallback(async () => {
+    const expireSession = useCallback(() => {
+        requestGeneration.current += 1;
+        inFlightRefresh.current = null;
+        lastSuccessfulRefresh.current = 0;
+        clearStoredSession();
+        setRefreshError(null);
+        setSessionNotice('Tu sesión finalizó. Ingresá nuevamente.');
+        updateSession(createEmptySession(SESSION_STATUS.ANONYMOUS));
+    }, [clearStoredSession, updateSession]);
+
+    const refreshSession = useCallback((options = {}) => {
         const accessToken = localStorage.getItem('access_token');
-        const requestId = latestRequest.current + 1;
-        latestRequest.current = requestId;
 
         if (!accessToken) {
             const anonymousSession = createEmptySession(
                 SESSION_STATUS.ANONYMOUS
             );
-            setSession(anonymousSession);
-            return anonymousSession;
+            updateSession(anonymousSession);
+            return Promise.resolve(anonymousSession);
         }
 
-        setSession(createEmptySession(SESSION_STATUS.LOADING));
+        if (inFlightRefresh.current?.accessToken === accessToken) {
+            return inFlightRefresh.current.promise;
+        }
 
-        try {
-            const response = await fetchCurrentSession(accessToken);
-            if (latestRequest.current !== requestId) {
-                return null;
-            }
+        const currentSession = sessionRef.current;
+        const silent = options.silent === true || (
+            options.silent !== false
+            && currentSession.status === SESSION_STATUS.AUTHENTICATED
+        );
+        const expectedUserId = currentSession.user?.id ?? null;
+        const generation = requestGeneration.current + 1;
+        requestGeneration.current = generation;
 
-            const data = response.data;
-            const nextSession = {
-                status: SESSION_STATUS.AUTHENTICATED,
-                user: data.user,
-                businessRole: data.business_role,
-                permissions: Array.isArray(data.permissions)
-                    ? data.permissions
-                    : [],
-                capabilities: normalizeCapabilities(data.capabilities),
-                profiles: data.profiles || emptyProfiles(),
-                error: null
-            };
-            setSession(nextSession);
-            return nextSession;
-        } catch (requestError) {
-            if (latestRequest.current !== requestId) {
-                return null;
-            }
+        if (!silent) {
+            updateSession(createEmptySession(SESSION_STATUS.LOADING));
+        }
+        setRefreshError(null);
 
-            const status = requestError.response?.status;
-            const backendError = requestError.response?.data?.error;
+        const promise = (async () => {
+            try {
+                const response = await fetchCurrentSession(accessToken);
+                if (
+                    requestGeneration.current !== generation
+                    || localStorage.getItem('access_token') !== accessToken
+                    || (
+                        expectedUserId !== null
+                        && sessionRef.current.user?.id !== expectedUserId
+                    )
+                ) {
+                    return null;
+                }
 
-            if (status === 401) {
-                clearStoredSession();
-                const anonymousSession = createEmptySession(
-                    SESSION_STATUS.ANONYMOUS
+                const data = response.data;
+                const nextSession = {
+                    status: SESSION_STATUS.AUTHENTICATED,
+                    user: data.user,
+                    businessRole: data.business_role,
+                    permissions: Array.isArray(data.permissions)
+                        ? data.permissions
+                        : [],
+                    capabilities: normalizeCapabilities(data.capabilities),
+                    profiles: data.profiles || emptyProfiles(),
+                    error: null
+                };
+                lastSuccessfulRefresh.current = Date.now();
+                setSessionNotice(null);
+                setRefreshError(null);
+                updateSession(nextSession);
+                return nextSession;
+            } catch (requestError) {
+                if (
+                    requestGeneration.current !== generation
+                    || localStorage.getItem('access_token') !== accessToken
+                ) {
+                    return null;
+                }
+
+                const status = requestError.response?.status;
+                const backendError = requestError.response?.data?.error;
+
+                if (status === 401) {
+                    expireSession();
+                    return createEmptySession(SESSION_STATUS.ANONYMOUS);
+                }
+
+                const classified = classifyHttpError(requestError);
+                const error = {
+                    code: backendError?.code || 'SESSION_CONTEXT_UNAVAILABLE',
+                    detail: backendError?.detail || 'No se pudo cargar el contexto de sesión.',
+                    httpStatus: status || null,
+                    kind: classified.kind,
+                    retryable: classified.retryable
+                };
+
+                if (silent && sessionRef.current.status === SESSION_STATUS.AUTHENTICATED) {
+                    setRefreshError(error);
+                    return { ...sessionRef.current, refreshError: error };
+                }
+
+                const errorSession = createEmptySession(
+                    SESSION_STATUS.ERROR,
+                    error
                 );
-                setSession(anonymousSession);
-                return anonymousSession;
+                updateSession(errorSession);
+                return errorSession;
+            } finally {
+                if (inFlightRefresh.current?.generation === generation) {
+                    inFlightRefresh.current = null;
+                }
             }
+        })();
 
-            const error = {
-                code: backendError?.code || 'SESSION_CONTEXT_UNAVAILABLE',
-                detail: backendError?.detail || 'No se pudo cargar el contexto de sesión.',
-                httpStatus: status || null
-            };
-            const errorSession = createEmptySession(
-                SESSION_STATUS.ERROR,
-                error
-            );
-            setSession(errorSession);
-            return errorSession;
-        }
-    }, [clearStoredSession]);
+        inFlightRefresh.current = { accessToken, generation, promise };
+        return promise;
+    }, [expireSession, updateSession]);
 
     useEffect(() => {
         refreshSession();
     }, [refreshSession]);
+
+    useEffect(() => {
+        const refreshIfStale = () => {
+            if (
+                sessionRef.current.status !== SESSION_STATUS.AUTHENTICATED
+                || !localStorage.getItem('access_token')
+                || Date.now() - lastSuccessfulRefresh.current
+                    < SESSION_REFRESH_INTERVAL_MS
+            ) {
+                return;
+            }
+            refreshSession({ silent: true });
+        };
+        const handleVisibility = () => {
+            if (document.visibilityState === 'visible') refreshIfStale();
+        };
+        const unsubscribe = subscribeToHttpSessionEvents((event) => {
+            if (
+                !event?.accessToken
+                || event.accessToken !== localStorage.getItem('access_token')
+            ) {
+                return;
+            }
+            if (event.type === HTTP_SESSION_EVENT.UNAUTHORIZED) {
+                expireSession();
+            } else if (
+                event.type === HTTP_SESSION_EVENT.FORBIDDEN
+                && sessionRef.current.status === SESSION_STATUS.AUTHENTICATED
+            ) {
+                refreshSession({ silent: true });
+            }
+        });
+
+        window.addEventListener('focus', refreshIfStale);
+        document.addEventListener('visibilitychange', handleVisibility);
+        return () => {
+            unsubscribe();
+            window.removeEventListener('focus', refreshIfStale);
+            document.removeEventListener('visibilitychange', handleVisibility);
+        };
+    }, [expireSession, refreshSession]);
+
+    useEffect(() => () => {
+        requestGeneration.current += 1;
+        inFlightRefresh.current = null;
+    }, []);
 
     const permissionSet = useMemo(
         () => new Set(session.permissions),
@@ -219,6 +338,8 @@ export const SessionProvider = ({ children }) => {
         profiles: session.profiles,
         status: session.status,
         error: session.error,
+        refreshError,
+        sessionNotice,
         loading: session.status === SESSION_STATUS.LOADING,
         authenticated: session.status === SESSION_STATUS.AUTHENTICATED,
         anonymous: session.status === SESSION_STATUS.ANONYMOUS,
@@ -233,6 +354,8 @@ export const SessionProvider = ({ children }) => {
         hasActiveProfile
     }), [
         session,
+        refreshError,
+        sessionNotice,
         refreshSession,
         clearSession,
         hasPermission,

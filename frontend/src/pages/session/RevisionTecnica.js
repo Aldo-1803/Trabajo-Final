@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import axios from 'axios';
 
+import { getHttpErrorMessage } from '../../utils/httpErrors';
+
 
 const API_URL = '/api/gestion/solicitudes-tecnicas/';
 
@@ -20,7 +22,10 @@ const RevisionTecnica = () => {
             const response = await axios.get(`${API_URL}cola/`);
             setRequests(Array.isArray(response.data) ? response.data : []);
         } catch (requestError) {
-            setError('No pudimos cargar la cola técnica.');
+            setError(getHttpErrorMessage(requestError, {
+                forbidden: 'No tenés autorización para consultar la cola técnica.',
+                unknown: 'No pudimos cargar la cola técnica.'
+            }));
         } finally {
             setLoading(false);
         }
@@ -57,7 +62,9 @@ const RevisionTecnica = () => {
                 setRequests((current) => current.filter((requestItem) => requestItem.id !== item.id));
             }
         } catch (requestError) {
-            setError(requestError.response?.data?.detail || 'No pudimos registrar la decisión.');
+            setError(getHttpErrorMessage(requestError, {
+                unknown: 'No pudimos registrar la decisión.'
+            }));
         }
     };
 

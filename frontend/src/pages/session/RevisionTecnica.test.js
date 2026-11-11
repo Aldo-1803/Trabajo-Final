@@ -171,4 +171,48 @@ describe('RevisionTecnica', () => {
             }
         ));
     });
+
+    test('409 conserva el borrador y no interpreta conflicto como logout', async () => {
+        axios.post.mockRejectedValue({
+            response: {
+                status: 409,
+                data: { error: { detail: 'La solicitud ya fue revisada.' } }
+            }
+        });
+        render(<RevisionTecnica />);
+        await screen.findByText('María Cliente');
+        const motive = screen.getByLabelText('Motivo 31');
+        fireEvent.change(motive, { target: { value: 'Mi evaluación técnica' } });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Aprobar' }));
+
+        await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(
+            'La solicitud ya fue revisada.'
+        ));
+        expect(motive).toHaveValue('Mi evaluación técnica');
+        expect(axios.post).toHaveBeenCalledTimes(1);
+    });
+
+    test('5xx no reenvía la mutación y permite reintento manual seguro', async () => {
+        axios.post
+            .mockRejectedValueOnce({ response: { status: 503 } })
+            .mockResolvedValueOnce({
+                data: { ...reviewRequest, estado: 'APROBADA_TECNICAMENTE' }
+            });
+        render(<RevisionTecnica />);
+        await screen.findByText('María Cliente');
+        const motive = screen.getByLabelText('Motivo 31');
+        fireEvent.change(motive, { target: { value: 'Evidencia verificada' } });
+        const approve = screen.getByRole('button', { name: 'Aprobar' });
+
+        fireEvent.click(approve);
+        await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(
+            'servidor no pudo completar'
+        ));
+        expect(axios.post).toHaveBeenCalledTimes(1);
+        expect(motive).toHaveValue('Evidencia verificada');
+
+        fireEvent.click(approve);
+        await waitFor(() => expect(axios.post).toHaveBeenCalledTimes(2));
+    });
 });

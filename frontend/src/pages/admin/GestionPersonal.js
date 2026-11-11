@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { notify } from '../../utils/notificaciones';
 import { useSession } from '../../context/SessionContext';
+import { getHttpErrorMessage } from '../../utils/httpErrors';
 
 const GestionPersonal = () => {
     const [personal, setPersonal] = useState([]);
@@ -115,7 +116,9 @@ const GestionPersonal = () => {
             }
         } catch (error) {
             console.error('Error al cargar personal:', error);
-            setMensaje('❌ Error al cargar personal');
+            setMensaje(`❌ ${getHttpErrorMessage(error, {
+                unknown: 'No se pudo cargar personal.'
+            })}`);
         } finally {
             setLoading(false);
         }
@@ -177,7 +180,8 @@ const GestionPersonal = () => {
             cargarPersonal();
         } catch (error) {
             console.error('Error al guardar:', error);
-            const errorMsg = error.response?.data?.nombre?.[0] || 'No se pudo guardar';
+            const errorMsg = error.response?.data?.nombre?.[0]
+                || getHttpErrorMessage(error, { unknown: 'No se pudo guardar.' });
             setMensaje(`❌ Error: ${errorMsg}`);
         }
     };
@@ -248,7 +252,9 @@ const GestionPersonal = () => {
                     ? 'La habilidad está inactiva y no puede asignarse.'
                     : code === 'INVALID_REASON'
                         ? 'Ingrese un motivo administrativo válido.'
-                    : 'No se pudo actualizar la habilidad técnica.'
+                    : getHttpErrorMessage(error, {
+                        unknown: 'No se pudo actualizar la habilidad técnica.'
+                    })
             );
         }
     };
@@ -306,9 +312,10 @@ const GestionPersonal = () => {
                 USER_INACTIVE: 'La cuenta está inactiva y no puede conservar acceso Cliente.'
             };
             const detail = error.response?.data?.error?.detail;
-            const fallback = error.response?.status === 409
-                ? 'La operación entra en conflicto con el estado actual.'
-                : `No se pudo completar: ${config.titulo.toLowerCase()}.`;
+            const fallback = getHttpErrorMessage(error, {
+                conflict: 'La operación entra en conflicto con el estado actual.',
+                unknown: `No se pudo completar: ${config.titulo.toLowerCase()}.`
+            });
             notify.error(messages[errorCode] || detail || fallback);
         } finally {
             setProcesandoAccion(false);
@@ -367,7 +374,9 @@ const GestionPersonal = () => {
             };
             notify.error(
                 messages[errorCode]
-                || 'No se pudo cambiar el rol de acceso. Intente nuevamente.'
+                || getHttpErrorMessage(error, {
+                    unknown: 'No se pudo cambiar el rol de acceso. Intente nuevamente.'
+                })
             );
         } finally {
             setCambiandoRol(false);
@@ -428,7 +437,9 @@ const GestionPersonal = () => {
             };
             notify.error(
                 messages[errorCode]
-                || 'No se pudo crear el acceso. Revise los datos e intente nuevamente.'
+                || getHttpErrorMessage(error, {
+                    unknown: 'No se pudo crear el acceso. Revise los datos e intente nuevamente.'
+                })
             );
         } finally {
             setCreandoAcceso(false);
@@ -462,9 +473,10 @@ const GestionPersonal = () => {
             );
         } catch (error) {
             notify.error(
-                error.response?.status === 403
-                    ? 'No tiene permisos para consultar las cuentas existentes.'
-                    : 'No se pudieron cargar las cuentas existentes.'
+                getHttpErrorMessage(error, {
+                    forbidden: 'No tiene permisos para consultar las cuentas existentes.',
+                    unknown: 'No se pudieron cargar las cuentas existentes.'
+                })
             );
             setUsuariosElegibles([]);
         } finally {
@@ -539,7 +551,9 @@ const GestionPersonal = () => {
             };
             notify.error(
                 messages[errorCode]
-                || 'No se pudo vincular la cuenta seleccionada.'
+                || getHttpErrorMessage(error, {
+                    unknown: 'No se pudo vincular la cuenta seleccionada.'
+                })
             );
         } finally {
             setVinculandoUsuario(false);

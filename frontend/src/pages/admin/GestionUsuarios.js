@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { notify } from '../../utils/notificaciones';
 import { ADMIN_ROUTES } from '../../routes/routes';
 import { useSession } from '../../context/SessionContext';
+import { getHttpErrorMessage } from '../../utils/httpErrors';
 
 
 const EMPTY_ADMIN_FORM = {
@@ -168,14 +169,14 @@ const GestionUsuarios = () => {
 
         } catch (error) {
             console.error("Error cargando usuarios:", error);
-            if (error.response?.status === 403) {
-                notify.error("Acceso denegado. Solo administradores.");
-                navigate('/');
-            }
+            notify.error(getHttpErrorMessage(error, {
+                forbidden: 'No tenés autorización para consultar usuarios.',
+                unknown: 'No se pudo cargar la lista de usuarios.'
+            }));
         } finally {
             setLoading(false);
         }
-    }, [filtroEstado, busqueda, navigate]);
+    }, [filtroEstado, busqueda]);
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => {
@@ -210,7 +211,9 @@ const GestionUsuarios = () => {
             };
             notify.error(
                 messages[errorCode]
-                || 'No se pudo crear el administrador. Intentá nuevamente.'
+                || getHttpErrorMessage(error, {
+                    unknown: 'No se pudo crear el administrador. Intentá nuevamente.'
+                })
             );
         } finally {
             setCreandoAdministrador(false);
@@ -291,7 +294,10 @@ const GestionUsuarios = () => {
             const fallbackMessage = desactivar
                 ? 'No se pudo desactivar la cuenta.'
                 : 'No se pudo reactivar la cuenta por un estado incoherente.';
-            notify.error(errorMessages[errorCode] || fallbackMessage);
+            notify.error(
+                errorMessages[errorCode]
+                || getHttpErrorMessage(error, { unknown: fallbackMessage })
+            );
         }
     };
 
@@ -306,9 +312,10 @@ const GestionUsuarios = () => {
             setResumenAcceso(response.data);
         } catch (error) {
             notify.error(
-                error.response?.status === 403
-                    ? 'No tenés permisos para consultar capacidades.'
-                    : 'No se pudo cargar el resumen de acceso.'
+                getHttpErrorMessage(error, {
+                    forbidden: 'No tenés permisos para consultar capacidades.',
+                    unknown: 'No se pudo cargar el resumen de acceso.'
+                })
             );
         } finally {
             setCargandoResumen(false);
@@ -338,9 +345,10 @@ const GestionUsuarios = () => {
             });
         } catch (error) {
             notify.error(
-                error.response?.status === 403
-                    ? 'No tenés permisos para cambiar roles de negocio.'
-                    : 'No se pudo preparar el cambio de BusinessRole.'
+                getHttpErrorMessage(error, {
+                    forbidden: 'No tenés permisos para cambiar roles de negocio.',
+                    unknown: 'No se pudo preparar el cambio de BusinessRole.'
+                })
             );
         } finally {
             setCargandoResumen(false);
@@ -398,11 +406,11 @@ const GestionUsuarios = () => {
                 LAST_ACTIVE_ADMIN: 'No se puede degradar al último administrador activo.',
                 RESIDUAL_ADMIN_CAPABILITIES: 'La cuenta conservaría autoridad administrativa residual.'
             };
-            const fallback = error.response?.status === 403
-                ? messages.PERMISSION_DENIED
-                : error.response?.status === 409
-                    ? 'El cambio entra en conflicto con el estado actual de la cuenta.'
-                    : 'No se pudo cambiar el BusinessRole.';
+            const fallback = getHttpErrorMessage(error, {
+                forbidden: messages.PERMISSION_DENIED,
+                conflict: 'El cambio entra en conflicto con el estado actual de la cuenta.',
+                unknown: 'No se pudo cambiar el BusinessRole.'
+            });
             const message = messages[errorCode] || fallback;
             setCambioRol((current) => ({ ...current, error: message }));
             notify.error(message);

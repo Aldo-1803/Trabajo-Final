@@ -4,6 +4,7 @@ import axios from 'axios';
 import { ADMIN_ROUTES } from '../../routes/routes';
 import toast from 'react-hot-toast';
 import { useSession } from '../../context/SessionContext';
+import { getHttpErrorMessage } from '../../utils/httpErrors';
 
 const GestionContenidoEducativo = () => {
     const [contenidos, setContenidos] = useState([]);
@@ -56,8 +57,11 @@ const GestionContenidoEducativo = () => {
             setError(null);
         } catch (err) {
             console.error('Error cargando contenidos:', err);
-            setError('Error al cargar el contenido educativo');
-            toast.error('Error al cargar el contenido');
+            const message = getHttpErrorMessage(err, {
+                forbidden: 'No tenés autorización para consultar este contenido.'
+            });
+            setError(message);
+            toast.error(message);
         } finally {
             setCargando(false);
         }
@@ -81,7 +85,7 @@ const GestionContenidoEducativo = () => {
                 cargarContenidos();
             } catch (err) {
                 console.error('Error eliminando contenido:', err);
-                toast.error('Error al eliminar el contenido');
+                toast.error(getHttpErrorMessage(err));
             }
         }
     };
@@ -101,7 +105,7 @@ const GestionContenidoEducativo = () => {
             cargarContenidos();
         } catch (err) {
             console.error('Error actualizando estado:', err);
-            toast.error('Error al actualizar el estado');
+            toast.error(getHttpErrorMessage(err));
         }
     };
 

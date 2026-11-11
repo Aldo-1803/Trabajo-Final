@@ -14,6 +14,7 @@ const Login = () => {
     const {
         session,
         loading: sessionLoading,
+        sessionNotice,
         refreshSession
     } = useSession();
 
@@ -90,6 +91,11 @@ const Login = () => {
                     <>
                         {/* Formulario de Login */}
                         <form onSubmit={handleSubmit} className="px-6 sm:px-8 py-8 space-y-6">
+                            {sessionNotice && (
+                                <div role="status" className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded">
+                                    <p className="text-amber-800 text-sm font-medium">{sessionNotice}</p>
+                                </div>
+                            )}
                             {error && (
                                 <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded animate-pulse">
                                     <p className="text-red-700 text-sm font-medium">{error}</p>

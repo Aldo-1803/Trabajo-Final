@@ -5,6 +5,7 @@ import { confirmarAccion, notify } from '../../utils/notificaciones';
 import { useSession } from '../../context/SessionContext';
 import { ADMIN_ROUTES } from '../../routes/routes';
 import { getAuthorizedReturnPath } from '../../utils/sessionLanding';
+import { getHttpErrorMessage } from '../../utils/httpErrors';
 
 const GestionarServicios = () => {
     const { hasPermission, hasCapability, session } = useSession();
@@ -149,7 +150,9 @@ const GestionarServicios = () => {
             
         } catch (err) {
             console.error("Error cargando datos:", err);
-            setError("No se pudieron cargar los datos de configuración.");
+            setError(getHttpErrorMessage(err, {
+                unknown: 'No se pudieron cargar los datos de configuración.'
+            }));
         } finally {
             setLoading(false);
         }
@@ -328,7 +331,9 @@ const GestionarServicios = () => {
 
         } catch (error) {
             console.error(error);
-            notify.error(error.response?.data?.detail || 'No se pudo guardar el servicio');
+            notify.error(getHttpErrorMessage(error, {
+                unknown: 'No se pudo guardar el servicio.'
+            }));
         }
     };
 
@@ -349,7 +354,9 @@ const GestionarServicios = () => {
             cargarDatos();
         } catch (error) {
             console.error(error);
-            notify.error('Error al desactivar el servicio');
+            notify.error(getHttpErrorMessage(error, {
+                unknown: 'No se pudo desactivar el servicio.'
+            }));
         }
     };
 
@@ -364,7 +371,9 @@ const GestionarServicios = () => {
             cargarDatos();
         } catch (error) {
             console.error(error);
-            notify.error('Error al cambiar el estado del servicio');
+            notify.error(getHttpErrorMessage(error, {
+                unknown: 'No se pudo cambiar el estado del servicio.'
+            }));
         }
     };
 

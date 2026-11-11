@@ -546,6 +546,28 @@ describe('ProtectedRoute declarativo con acceso por URL directa', () => {
         expect(protectedFetch).not.toHaveBeenCalled();
     });
 
+    test('una revocación desmonta la ruta y no vuelve a ejecutar fetch protegido', () => {
+        useSession.mockReturnValue(sessionContext({
+            permissions: ['usuarios.manage_users']
+        }));
+        const view = render(
+            <ProtectedRoute requiredPermission="usuarios.manage_users">
+                <FetchingProtectedContent />
+            </ProtectedRoute>
+        );
+        expect(protectedFetch).toHaveBeenCalledTimes(1);
+
+        useSession.mockReturnValue(sessionContext({ permissions: [] }));
+        view.rerender(
+            <ProtectedRoute requiredPermission="usuarios.manage_users">
+                <FetchingProtectedContent />
+            </ProtectedRoute>
+        );
+
+        expectRedirect('/acceso-denegado');
+        expect(protectedFetch).toHaveBeenCalledTimes(1);
+    });
+
     test('MULTIPLE_BUSINESS_ROLES redirige al error de acceso', () => {
         renderDirectUrl('/admin/usuarios', {
             requiredPermission: 'usuarios.manage_users'

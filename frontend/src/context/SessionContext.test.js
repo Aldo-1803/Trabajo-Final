@@ -2,6 +2,11 @@ import { act, render, screen, waitFor } from '@testing-library/react';
 
 import { fetchCurrentSession } from '../api/sessionApi';
 import {
+    emitHttpSessionEvent,
+    HTTP_SESSION_EVENT
+} from '../api/httpSessionEvents';
+import {
+    SESSION_REFRESH_INTERVAL_MS,
     SESSION_STATUS,
     SessionProvider,
     useSession
@@ -82,11 +87,26 @@ const mockAuthenticatedSession = (data = validSession) => {
 };
 
 
+const deferred = () => {
+    let resolve;
+    let reject;
+    const promise = new Promise((promiseResolve, promiseReject) => {
+        resolve = promiseResolve;
+        reject = promiseReject;
+    });
+    return { promise, resolve, reject };
+};
+
+
 describe('SessionProvider', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         localStorage.clear();
         currentSession = undefined;
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
     });
 
     test('sin access_token representa una sesión anónima', async () => {
@@ -413,5 +433,226 @@ describe('SessionProvider', () => {
         expect(localStorage.getItem('access_token')).toBeNull();
         expect(localStorage.getItem('refresh_token')).toBeNull();
         expect(localStorage.getItem('user_info')).toBeNull();
+    });
+
+    test('refresca al recuperar foco sólo después de 45 segundos', async () => {
+        let now = 1000;
+        jest.spyOn(Date, 'now').mockImplementation(() => now);
+        mockAuthenticatedSession();
+        renderProvider();
+        await waitFor(() => expect(currentSession.authenticated).toBe(true));
+
+        act(() => window.dispatchEvent(new Event('focus')));
+        expect(fetchCurrentSession).toHaveBeenCalledTimes(1);
+
+        now += SESSION_REFRESH_INTERVAL_MS + 1;
+        act(() => window.dispatchEvent(new Event('focus')));
+        await waitFor(() => expect(fetchCurrentSession).toHaveBeenCalledTimes(2));
+    });
+
+    test('refresca cuando la pestaña vuelve a estar visible', async () => {
+        let now = 5000;
+        jest.spyOn(Date, 'now').mockImplementation(() => now);
+        mockAuthenticatedSession();
+        renderProvider();
+        await waitFor(() => expect(currentSession.authenticated).toBe(true));
+        now += SESSION_REFRESH_INTERVAL_MS + 1;
+        Object.defineProperty(document, 'visibilityState', {
+            configurable: true,
+            value: 'visible'
+        });
+
+        act(() => document.dispatchEvent(new Event('visibilitychange')));
+
+        await waitFor(() => expect(fetchCurrentSession).toHaveBeenCalledTimes(2));
+    });
+
+    test('deduplica eventos de foco simultáneos', async () => {
+        let now = 1000;
+        jest.spyOn(Date, 'now').mockImplementation(() => now);
+        mockAuthenticatedSession();
+        renderProvider();
+        await waitFor(() => expect(currentSession.authenticated).toBe(true));
+        const pending = deferred();
+        fetchCurrentSession.mockReturnValueOnce(pending.promise);
+        now += SESSION_REFRESH_INTERVAL_MS + 1;
+
+        act(() => {
+            window.dispatchEvent(new Event('focus'));
+            window.dispatchEvent(new Event('focus'));
+        });
+
+        expect(fetchCurrentSession).toHaveBeenCalledTimes(2);
+        await act(async () => pending.resolve({ data: validSession }));
+    });
+
+    test('varios 403 autenticados comparten un refresh y no reenvían la operación', async () => {
+        mockAuthenticatedSession();
+        renderProvider();
+        await waitFor(() => expect(currentSession.authenticated).toBe(true));
+        const pending = deferred();
+        fetchCurrentSession.mockReturnValueOnce(pending.promise);
+
+        act(() => {
+            emitHttpSessionEvent({
+                type: HTTP_SESSION_EVENT.FORBIDDEN,
+                accessToken: 'access-token'
+            });
+            emitHttpSessionEvent({
+                type: HTTP_SESSION_EVENT.FORBIDDEN,
+                accessToken: 'access-token'
+            });
+        });
+
+        expect(fetchCurrentSession).toHaveBeenCalledTimes(2);
+        await act(async () => pending.resolve({ data: validSession }));
+        expect(currentSession.authenticated).toBe(true);
+    });
+
+    test('un 403 por ownership conserva la sesión si la autoridad no cambió', async () => {
+        mockAuthenticatedSession();
+        renderProvider();
+        await waitFor(() => expect(currentSession.authenticated).toBe(true));
+        fetchCurrentSession.mockResolvedValueOnce({ data: validSession });
+
+        await act(async () => emitHttpSessionEvent({
+            type: HTTP_SESSION_EVENT.FORBIDDEN,
+            accessToken: 'access-token'
+        }));
+
+        await waitFor(() => expect(fetchCurrentSession).toHaveBeenCalledTimes(2));
+        expect(currentSession.authenticated).toBe(true);
+        expect(currentSession.permissions).toEqual(validSession.permissions);
+    });
+
+    test('un refresh retira permisos, capabilities y actividad laboral revocados', async () => {
+        mockAuthenticatedSession();
+        renderProvider();
+        await waitFor(() => expect(currentSession.authenticated).toBe(true));
+        fetchCurrentSession.mockResolvedValueOnce({
+            data: {
+                ...validSession,
+                business_role: 'CLIENTE',
+                permissions: [],
+                capabilities: {
+                    ...validSession.capabilities,
+                    'technical_booking.review': false,
+                    'service_formula.manage': false
+                },
+                profiles: {
+                    ...validSession.profiles,
+                    personal: {
+                        ...validSession.profiles.personal,
+                        active: false
+                    }
+                }
+            }
+        });
+
+        await act(async () => currentSession.refreshSession());
+
+        expect(currentSession.businessRole).toBe('CLIENTE');
+        expect(currentSession.hasPermission('gestion.manage_stock')).toBe(false);
+        expect(currentSession.hasCapability('service_formula.manage')).toBe(false);
+        expect(currentSession.hasActiveProfile('personal')).toBe(false);
+    });
+
+    test('un 401 global autenticado limpia la sesión y comunica su finalización', async () => {
+        mockAuthenticatedSession();
+        localStorage.setItem('refresh_token', 'refresh-token');
+        renderProvider();
+        await waitFor(() => expect(currentSession.authenticated).toBe(true));
+
+        act(() => emitHttpSessionEvent({
+            type: HTTP_SESSION_EVENT.UNAUTHORIZED,
+            accessToken: 'access-token'
+        }));
+
+        expect(currentSession.anonymous).toBe(true);
+        expect(currentSession.sessionNotice).toMatch(/sesión finalizó/i);
+        expect(localStorage.getItem('access_token')).toBeNull();
+        expect(localStorage.getItem('refresh_token')).toBeNull();
+    });
+
+    test('logout durante refresh ignora la respuesta antigua', async () => {
+        mockAuthenticatedSession();
+        renderProvider();
+        await waitFor(() => expect(currentSession.authenticated).toBe(true));
+        const pending = deferred();
+        fetchCurrentSession.mockReturnValueOnce(pending.promise);
+
+        let refreshPromise;
+        act(() => {
+            refreshPromise = currentSession.refreshSession();
+            currentSession.clearSession();
+        });
+        await act(async () => pending.resolve({ data: validSession }));
+        await refreshPromise;
+
+        expect(currentSession.anonymous).toBe(true);
+        expect(localStorage.getItem('access_token')).toBeNull();
+    });
+
+    test('cambio de usuario descarta el refresh de la identidad anterior', async () => {
+        mockAuthenticatedSession();
+        renderProvider();
+        await waitFor(() => expect(currentSession.authenticated).toBe(true));
+        const oldRequest = deferred();
+        const newRequest = deferred();
+        fetchCurrentSession
+            .mockReturnValueOnce(oldRequest.promise)
+            .mockReturnValueOnce(newRequest.promise);
+
+        let oldPromise;
+        let newPromise;
+        act(() => {
+            oldPromise = currentSession.refreshSession();
+            localStorage.setItem('access_token', 'new-token');
+            newPromise = currentSession.refreshSession();
+        });
+        await act(async () => newRequest.resolve({
+            data: {
+                ...validSession,
+                user: { ...validSession.user, id: 99, email: 'otra@example.com' }
+            }
+        }));
+        await newPromise;
+        await act(async () => oldRequest.resolve({ data: validSession }));
+        await oldPromise;
+
+        expect(currentSession.user.id).toBe(99);
+        expect(currentSession.user.email).toBe('otra@example.com');
+    });
+
+    test('error de red en refresh silencioso conserva la proyección', async () => {
+        mockAuthenticatedSession();
+        renderProvider();
+        await waitFor(() => expect(currentSession.authenticated).toBe(true));
+        fetchCurrentSession.mockRejectedValueOnce(new Error('offline'));
+
+        await act(async () => currentSession.refreshSession());
+
+        expect(currentSession.authenticated).toBe(true);
+        expect(currentSession.permissions).toEqual(validSession.permissions);
+        expect(currentSession.refreshError).toMatchObject({
+            kind: 'network',
+            retryable: true
+        });
+    });
+
+    test('elimina listeners al desmontar', async () => {
+        const removeWindow = jest.spyOn(window, 'removeEventListener');
+        const removeDocument = jest.spyOn(document, 'removeEventListener');
+        mockAuthenticatedSession();
+        const view = renderProvider();
+        await waitFor(() => expect(currentSession.authenticated).toBe(true));
+
+        view.unmount();
+
+        expect(removeWindow).toHaveBeenCalledWith('focus', expect.any(Function));
+        expect(removeDocument).toHaveBeenCalledWith(
+            'visibilitychange',
+            expect.any(Function)
+        );
     });
 });

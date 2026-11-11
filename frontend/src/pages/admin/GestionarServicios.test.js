@@ -3,6 +3,7 @@ import axios from 'axios';
 
 import GestionarServicios from './GestionarServicios';
 import { useSession } from '../../context/SessionContext';
+import { notify } from '../../utils/notificaciones';
 
 
 jest.mock('axios', () => ({
@@ -148,5 +149,29 @@ describe('GestionarServicios por permisos y capability efectiva', () => {
         expect(payload.precio_base).toBe('18000');
         expect(payload.plantilla_formula).toContain('Base: 6');
         expect(payload).not.toHaveProperty('requisitos_equipamiento');
+    });
+
+    test('validación del backend conserva el formulario y muestra su detalle', async () => {
+        const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+        grant({ prices: true });
+        await openEditor();
+        const priceInput = screen.getByPlaceholderText('0.00');
+        fireEvent.change(priceInput, { target: { value: '17000' } });
+        axios.patch.mockRejectedValueOnce({
+            response: {
+                status: 400,
+                data: { precio_base: ['Ingresá un precio válido.'] }
+            }
+        });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Actualizar' }));
+
+        await waitFor(() => expect(notify.error).toHaveBeenCalledWith(
+            'Ingresá un precio válido.'
+        ));
+        expect(screen.getByRole('heading', { name: 'Editar Servicio' }))
+            .toBeInTheDocument();
+        expect(priceInput).toHaveValue(17000);
+        consoleError.mockRestore();
     });
 });
