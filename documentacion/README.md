@@ -99,14 +99,14 @@ Seguimiento separado del cierre de roles/permisos:
 - realizar smoke tests y verificaciones del entorno desplegado antes de
   producción.
 
-### [BH-062](BH-062/) — Incrementos 0 a 5 validados
+### [BH-062](BH-062/) — cerrado técnicamente
 
-Análisis de la respuesta de la UI React a permisos efectivos en rutas,
-pantallas, datos, acciones y cambios durante la sesión, la contención
-prioritaria de contenido educativo, el contrato mínimo de capacidades efectivas
-y su regresión integral. Contiene 7 documentos.
+`BH-062 = CERRADO TÉCNICAMENTE`. Análisis de la respuesta de la UI React a
+permisos efectivos en rutas, pantallas, datos, acciones y cambios durante la
+sesión, la contención prioritaria de contenido educativo, el contrato mínimo de
+capacidades efectivas y su regresión integral. Contiene 8 documentos.
 
-Documento principal:
+Documentos principales:
 
 - [Análisis de UI según permisos efectivos](BH-062/ANALISIS_BH062_UI_SEGUN_PERMISOS.md)
 - [Incremento 0: contención de contenido educativo](BH-062/IMPLEMENTACION_BH062_0_CONTENCION_CONTENIDO.md)
@@ -115,6 +115,28 @@ Documento principal:
 - [Incremento 3: acciones y formularios por acceso efectivo](BH-062/IMPLEMENTACION_BH062_3_ACCIONES_FORMULARIOS.md)
 - [Incremento 4: sesión dinámica y manejo uniforme de errores](BH-062/IMPLEMENTACION_BH062_4_SESION_DINAMICA_ERRORES.md)
 - [Incremento 5: pruebas y regresión integral](BH-062/IMPLEMENTACION_BH062_5_PRUEBAS_REGRESION.md)
+- [Auditoría independiente de cierre técnico](BH-062/AUDITORIA_CIERRE_BH062.md)
+
+La auditoría conserva **9 CUMPLE, 3 CUMPLE PARCIAL, 0 NO CUMPLE y 0 NO
+VERIFICADO**. Los parciales no se convierten en cumplimiento total y
+corresponden a:
+
+- pantallas profesionales todavía no publicadas de diagnóstico y fichas, y la
+  acción de finalización;
+- anticipación de condiciones técnicas en esas pantallas ausentes;
+- pruebas React integradas de esos tres flujos no publicados.
+
+Pendientes funcionales separados del cierre de BH-062:
+
+- integración profesional de diagnóstico y corrección del perfil capilar;
+- integración segura de fichas técnicas;
+- endurecimiento e integración de finalización de servicios;
+- análisis de la relación funcional de esos procesos con BH-063 y BH-064.
+
+El seguimiento capilar basado en autoevaluaciones periódicas permanece como una
+propuesta funcional no analizada ni implementada. Este cierre no modifica el
+modelo de diagnóstico ni el motor de rutinas, y no crea códigos de backlog ni
+tareas nuevas.
 
 ## Documentación transversal
 
