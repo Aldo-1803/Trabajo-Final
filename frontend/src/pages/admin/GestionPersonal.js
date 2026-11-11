@@ -42,6 +42,8 @@ const GestionPersonal = () => {
     const { hasPermission } = useSession();
     const canManagePersonal = hasPermission('gestion.manage_personal');
     const canManageSkills = hasPermission('gestion.manage_skills');
+    const canAssignRoles = hasPermission('usuarios.assign_roles');
+    const canManageWorkAccess = canManagePersonal && canAssignRoles;
     
     const [form, setForm] = useState({
         nombre: '',
@@ -314,6 +316,7 @@ const GestionPersonal = () => {
     };
 
     const abrirCambiarRolAcceso = (item) => {
+        if (!canManageWorkAccess) return;
         setPersonalRolAcceso(item);
         setFormRolAcceso({
             role: ['EMPLEADO', 'PROFESIONAL'].includes(item.usuario_business_role)
@@ -333,7 +336,7 @@ const GestionPersonal = () => {
 
     const cambiarRolAcceso = async (event) => {
         event.preventDefault();
-        if (!personalRolAcceso) return;
+        if (!canManageWorkAccess || !personalRolAcceso) return;
 
         setCambiandoRol(true);
         try {
@@ -381,6 +384,7 @@ const GestionPersonal = () => {
     };
 
     const abrirCrearAcceso = (item) => {
+        if (!canManageWorkAccess) return;
         setPersonalAcceso(item);
         limpiarFormAcceso();
         setModalCrearAcceso(true);
@@ -399,7 +403,7 @@ const GestionPersonal = () => {
 
     const crearAcceso = async (event) => {
         event.preventDefault();
-        if (!personalAcceso) return;
+        if (!canManageWorkAccess || !personalAcceso) return;
         setCreandoAcceso(true);
         const emailCreado = formAcceso.email;
         try {
@@ -432,6 +436,7 @@ const GestionPersonal = () => {
     };
 
     const cargarUsuariosElegibles = async (search = '') => {
+        if (!canManageWorkAccess) return;
         setCargandoUsuarios(true);
         try {
             const token = localStorage.getItem('access_token');
@@ -468,6 +473,7 @@ const GestionPersonal = () => {
     };
 
     const abrirVincularUsuario = (item) => {
+        if (!canManageWorkAccess) return;
         setPersonalAcceso(item);
         setBusquedaUsuario('');
         setUsuarioSeleccionado('');
@@ -493,7 +499,7 @@ const GestionPersonal = () => {
 
     const vincularUsuario = async (event) => {
         event.preventDefault();
-        if (!personalAcceso || !usuarioSeleccionado) return;
+        if (!canManageWorkAccess || !personalAcceso || !usuarioSeleccionado) return;
         setVinculandoUsuario(true);
         try {
             const token = localStorage.getItem('access_token');
@@ -714,7 +720,7 @@ const GestionPersonal = () => {
                                                         </span>
                                                     </div>
                                                     <div><strong>Rol:</strong> {p.usuario_business_role || 'Sin rol asignado'}</div>
-                                                    {p.activo && p.usuario_business_role !== 'ADMINISTRADOR' && (
+                                                    {canManageWorkAccess && p.activo && p.usuario_business_role !== 'ADMINISTRADOR' && (
                                                         <button
                                                             type="button"
                                                             onClick={() => abrirCambiarRolAcceso(p)}
@@ -729,7 +735,7 @@ const GestionPersonal = () => {
                                                 <div className="space-y-2">
                                                     <div className="text-xs"><strong>Acceso al sistema:</strong> No</div>
                                                     <div className="text-xs"><strong>Usuario vinculado:</strong> No</div>
-                                                    <div className="flex flex-wrap gap-2">
+                                                    {canManageWorkAccess && <div className="flex flex-wrap gap-2">
                                                         <button
                                                             type="button"
                                                             onClick={() => abrirCrearAcceso(p)}
@@ -746,7 +752,7 @@ const GestionPersonal = () => {
                                                         >
                                                             Vincular cuenta existente
                                                         </button>
-                                                    </div>
+                                                    </div>}
                                                 </div>
                                             )}
                                          </td>}

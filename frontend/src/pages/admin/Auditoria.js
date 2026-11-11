@@ -2,6 +2,9 @@ import React, { useEffect, useState, useCallback } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { confirmarAccion, notify } from '../../utils/notificaciones';
+import { useSession } from '../../context/SessionContext';
+import { ADMIN_ROUTES } from '../../routes/routes';
+import { getAuthorizedReturnPath } from '../../utils/sessionLanding';
 
 const Auditoria = () => {
     const [auditorias, setAuditorias] = useState([]);
@@ -9,6 +12,8 @@ const Auditoria = () => {
     const [selectedAuditoria, setSelectedAuditoria] = useState(null);
     const [detalleAbierto, setDetalleAbierto] = useState(false);
     const navigate = useNavigate();
+    const { session } = useSession();
+    const returnPath = getAuthorizedReturnPath(session, ADMIN_ROUTES.AUDITORIA);
 
     // Estados para filtros
     const [filtroTabla, setFiltroTabla] = useState('');
@@ -46,14 +51,14 @@ const Auditoria = () => {
             console.error('Error cargando auditorías:', error);
             if (error.response?.status === 403) {
                 notify.error('Solo administradores pueden ver la auditoría');
-                navigate('/admin-dashboard');
+                if (returnPath) navigate(returnPath);
             } else {
                 notify.error('Error al cargar auditorías');
             }
         } finally {
             setLoading(false);
         }
-    }, [filtroTabla, filtroAccion, filtroUsuario, busqueda, ordenamiento, fuente, navigate]);
+    }, [filtroTabla, filtroAccion, filtroUsuario, busqueda, ordenamiento, fuente, navigate, returnPath]);
 
     useEffect(() => {
         cargarAuditorias();
@@ -215,12 +220,12 @@ const Auditoria = () => {
                     <h1 style={{ color: '#817773' }} className="text-4xl font-bold">
                         📋 Log de Auditoría
                     </h1>
-                    <button 
-                        onClick={() => navigate('/admin-dashboard')}
+                    {returnPath && <button
+                        onClick={() => navigate(returnPath)}
                         className="text-gray-500 hover:underline"
                     >
-                        ← Volver al Dashboard
-                    </button>
+                        ← Volver
+                    </button>}
                 </div>
 
                 {/* FILTROS */}

@@ -3,9 +3,11 @@ import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { confirmarAccion, notify } from '../../utils/notificaciones';
 import { useSession } from '../../context/SessionContext';
+import { ADMIN_ROUTES } from '../../routes/routes';
+import { getAuthorizedReturnPath } from '../../utils/sessionLanding';
 
 const GestionProductos = () => {
-    const { hasPermission } = useSession();
+    const { hasPermission, session } = useSession();
     const canViewStock = hasPermission('gestion.view_stock');
     const canManageStock = hasPermission('gestion.manage_stock');
     const canManageProducts = hasPermission('gestion.manage_products');
@@ -69,6 +71,7 @@ const GestionProductos = () => {
     const [imagenesSubidas, setImagenesSubidas] = useState([]);
 
     const navigate = useNavigate();
+    const returnPath = getAuthorizedReturnPath(session, ADMIN_ROUTES.PRODUCTOS);
 
     // --- OPCIONES DE COMPATIBILIDAD ---
     const opcionesCompatibilidad = [
@@ -826,15 +829,15 @@ const GestionProductos = () => {
                             <p className="text-xs mt-1 font-medium" style={{ color: '#8B8682' }}>Administra catálogo e inventario</p>
                         </div>
                         <div className="flex gap-2">
-                            <button 
-                                onClick={() => navigate('/admin-dashboard')} 
+                            {returnPath && <button
+                                onClick={() => navigate(returnPath)}
                                 className="px-4 py-2 rounded-lg font-bold transition" 
                                 style={{ backgroundColor: '#E8DCC4', color: '#817773' }}
                                 onMouseEnter={(e) => e.target.style.backgroundColor = '#D5BDAF'}
                                 onMouseLeave={(e) => e.target.style.backgroundColor = '#E8DCC4'}
                             >
                                 Volver
-                            </button>
+                            </button>}
                             {canManageProducts && canManagePrices && <button
                                 onClick={() => abrirModal()}
                                 className="text-white px-4 py-2 rounded-lg font-bold shadow-md transition"

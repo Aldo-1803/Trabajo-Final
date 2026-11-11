@@ -2,9 +2,17 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import GenericTableManager from '../../components/admin/GenericTableManager';
 import ConfiguracionGeneral from './ConfiguracionGeneral';
+import { useSession } from '../../context/SessionContext';
+import { ADMIN_ROUTES } from '../../routes/routes';
+import { getAuthorizedReturnPath } from '../../utils/sessionLanding';
 
 const ConfiguracionAdmin = () => {
     const navigate = useNavigate();
+    const { session } = useSession();
+    const returnPath = getAuthorizedReturnPath(
+        session,
+        ADMIN_ROUTES.CONFIGURACION
+    );
     const [tabActivo, setTabActivo] = useState('configuracionGeneral');
 
     // Definición de todas las tablas configurables con campos específicos
@@ -115,15 +123,15 @@ const ConfiguracionAdmin = () => {
                             <h1 className="text-3xl font-bold" style={{ color: '#817773' }}>Configuración del Sistema</h1>
                             <p className="text-xs mt-1 font-medium" style={{ color: '#8B8682' }}>Gestiona parámetros y catálogos</p>
                         </div>
-                        <button
-                            onClick={() => navigate('/admin-dashboard')}
+                        {returnPath && <button
+                            onClick={() => navigate(returnPath)}
                             className="px-4 py-2 rounded-lg font-bold transition-all duration-200"
                             style={{ backgroundColor: '#E8DCC4', color: '#817773' }}
                             onMouseEnter={(e) => e.target.style.backgroundColor = '#D5BDAF'}
                             onMouseLeave={(e) => e.target.style.backgroundColor = '#E8DCC4'}
                         >
                             Volver
-                        </button>
+                        </button>}
                     </div>
                 </div>
             </div>

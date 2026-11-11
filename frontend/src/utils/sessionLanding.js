@@ -254,3 +254,9 @@ export const getLandingPath = (session) => {
         ? DESTINATIONS[destinationName].path
         : SESSION_ROUTES.CUENTA_SIN_ACCESO;
 };
+
+
+export const getAuthorizedReturnPath = (session, currentPath) => {
+    const landingPath = getLandingPath(session);
+    return landingPath && landingPath !== currentPath ? landingPath : null;
+};

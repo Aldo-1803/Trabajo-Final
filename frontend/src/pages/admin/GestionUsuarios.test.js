@@ -159,6 +159,25 @@ describe('GestionUsuarios account status actions', () => {
             .not.toBeInTheDocument();
         expect(screen.queryByRole('button', { name: 'Nuevo Personal' }))
             .not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /Nuevo administrador/ }))
+            .not.toBeInTheDocument();
+        expect(axios.post).not.toHaveBeenCalled();
+    });
+
+    test('assign_roles sin manage_users tampoco expone ni dispara el alta', async () => {
+        mockHasPermission.mockImplementation(
+            (permission) => permission === 'usuarios.assign_roles'
+        );
+        axios.get.mockResolvedValue({ data: [activeUser] });
+
+        render(<GestionUsuarios />);
+        await screen.findByText('activa@test.com');
+
+        expect(screen.queryByRole('button', { name: /Nuevo administrador/ }))
+            .not.toBeInTheDocument();
+        expect(screen.queryByRole('heading', { name: 'Nuevo administrador' }))
+            .not.toBeInTheDocument();
+        expect(axios.post).not.toHaveBeenCalled();
     });
 
     test('abre alta de administrador sin checkbox ni controles técnicos', async () => {

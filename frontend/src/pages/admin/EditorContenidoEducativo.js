@@ -1,15 +1,23 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import { ADMIN_ROUTES } from '../../routes/routes';
+import { useSession } from '../../context/SessionContext';
 
 const EditorContenidoEducativo = () => {
     const { id } = useParams();
     const navigate = useNavigate();
+    const { hasCapability, profiles } = useSession();
+    const canAuthor = hasCapability('content.author');
+    const canManageGlobal = hasCapability('content.manage_global');
+    const activePersonalId = profiles?.personal?.active
+        ? profiles.personal.id
+        : null;
     
     const [cargando, setCargando] = useState(id ? true : false);
     const [guardando, setGuardando] = useState(false);
+    const [contenidoCargado, setContenidoCargado] = useState(null);
     const [formData, setFormData] = useState({
         titulo: '',
         descripcion: '',
@@ -21,14 +29,20 @@ const EditorContenidoEducativo = () => {
 
     const tipos = ['IMAGEN', 'VIDEO', 'TEXTO'];
     const estados = ['BORRADOR', 'PUBLICADO', 'ARCHIVADO'];
+    const canEditLoadedContent = Boolean(
+        contenidoCargado
+        && (
+            canManageGlobal
+            || (
+                canAuthor
+                && activePersonalId !== null
+                && Number(contenidoCargado.autor?.id) === Number(activePersonalId)
+            )
+        )
+    );
+    const canMutate = id ? canEditLoadedContent : canAuthor;
 
-    useEffect(() => {
-        if (id) {
-            cargarContenido();
-        }
-    }, [id]);
-
-    const cargarContenido = async () => {
+    const cargarContenido = useCallback(async () => {
         const token = localStorage.getItem('access_token');
         
         try {
@@ -36,6 +50,7 @@ const EditorContenidoEducativo = () => {
                 `http://127.0.0.1:8000/api/gestion/contenido-educativo/${id}/`,
                 { headers: { 'Authorization': `Bearer ${token}` } }
             );
+            setContenidoCargado(res.data);
             
             setFormData({
                 titulo: res.data.titulo || '',
@@ -52,7 +67,13 @@ const EditorContenidoEducativo = () => {
         } finally {
             setCargando(false);
         }
-    };
+    }, [id, navigate]);
+
+    useEffect(() => {
+        if (id) {
+            cargarContenido();
+        }
+    }, [id, cargarContenido]);
 
     const handleInputChange = (e) => {
         const { name, value, type, checked } = e.target;
@@ -63,6 +84,7 @@ const EditorContenidoEducativo = () => {
     };
 
     const handleGuardar = async () => {
+        if (!canMutate) return;
         if (!formData.titulo.trim()) {
             toast.error('El título es requerido');
             return;
@@ -159,6 +181,13 @@ const EditorContenidoEducativo = () => {
 
                 {/* Formulario */}
                 <div className="bg-white rounded-lg shadow-md p-8">
+                    {!canMutate && (
+                        <div role="alert" className="mb-6 rounded-lg bg-amber-50 p-4 text-amber-800">
+                            {id
+                                ? 'Este contenido está disponible sólo para lectura porque no sos su autor y no tenés gestión global.'
+                                : 'La gestión global no asigna una identidad de autor. Necesitás un perfil Personal activo para crear contenido.'}
+                        </div>
+                    )}
                     <div className="space-y-6">
                         {/* Título */}
                         <div>
@@ -170,6 +199,7 @@ const EditorContenidoEducativo = () => {
                                 name="titulo"
                                 value={formData.titulo}
                                 onChange={handleInputChange}
+                                disabled={!canMutate}
                                 placeholder="Ej: Los 5 mejores tratamientos para cabello seco"
                                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2"
                                 style={{ outlineColor: '#817773' }}
@@ -189,6 +219,7 @@ const EditorContenidoEducativo = () => {
                                 name="descripcion"
                                 value={formData.descripcion}
                                 onChange={handleInputChange}
+                                disabled={!canMutate}
                                 placeholder="Resumen breve del contenido (aparecerá en listados)"
                                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2"
                                 style={{ outlineColor: '#817773' }}
@@ -209,6 +240,7 @@ const EditorContenidoEducativo = () => {
                                 name="contenido_texto"
                                 value={formData.contenido_texto}
                                 onChange={handleInputChange}
+                                disabled={!canMutate}
                                 placeholder="Escribe el contenido principal aquí. Puedes usar saltos de línea para organizar el texto."
                                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 font-mono text-sm"
                                 style={{ outlineColor: '#817773' }}
@@ -229,6 +261,7 @@ const EditorContenidoEducativo = () => {
                                 name="multimedia_url"
                                 value={formData.multimedia_url}
                                 onChange={handleInputChange}
+                                disabled={!canMutate}
                                 placeholder="https://ejemplo.com/imagen.jpg"
                                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2"
                                 style={{ outlineColor: '#817773' }}
@@ -262,6 +295,7 @@ const EditorContenidoEducativo = () => {
                                     name="tipo"
                                     value={formData.tipo}
                                     onChange={handleInputChange}
+                                    disabled={!canMutate}
                                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2"
                                     style={{ outlineColor: '#817773' }}
                                 >
@@ -281,6 +315,7 @@ const EditorContenidoEducativo = () => {
                                     name="estado"
                                     value={formData.estado}
                                     onChange={handleInputChange}
+                                    disabled={!canMutate}
                                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2"
                                     style={{ outlineColor: '#817773' }}
                                 >
@@ -302,14 +337,14 @@ const EditorContenidoEducativo = () => {
                             >
                                 Cancelar
                             </button>
-                            <button
+                            {canMutate && <button
                                 onClick={handleGuardar}
                                 disabled={guardando}
                                 className="flex-1 px-6 py-3 rounded-lg font-semibold text-white transition-colors disabled:opacity-50"
                                 style={{ backgroundColor: '#817773' }}
                             >
                                 {guardando ? 'Guardando...' : (id ? 'Actualizar' : 'Crear')}
-                            </button>
+                            </button>}
                         </div>
                     </div>
                 </div>

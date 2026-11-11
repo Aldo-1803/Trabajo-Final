@@ -144,7 +144,10 @@ describe('GestionPersonal access UI', () => {
         jest.clearAllMocks();
         localStorage.setItem('access_token', 'test-token');
         useSession.mockReturnValue({
-            hasPermission: (permission) => permission === 'gestion.manage_personal'
+            hasPermission: (permission) => [
+                'gestion.manage_personal',
+                'usuarios.assign_roles'
+            ].includes(permission)
         });
         setupApi();
     });
@@ -186,6 +189,21 @@ describe('GestionPersonal access UI', () => {
 
         expect(screen.queryByRole('button', { name: 'Asignar' })).not.toBeInTheDocument();
         expect(screen.getAllByText('Skills canónicas: sin permiso de consulta')).toHaveLength(3);
+    });
+
+    test('manage_personal sin assign_roles conserva gestión laboral sin controles de acceso', async () => {
+        useSession.mockReturnValue({
+            hasPermission: (permission) => permission === 'gestion.manage_personal'
+        });
+
+        await renderLoaded();
+
+        expect(screen.getByRole('button', { name: '+ Nuevo Personal' })).toBeInTheDocument();
+        expect(screen.getAllByRole('button', { name: 'Editar' })).toHaveLength(3);
+        expect(screen.queryByRole('button', { name: 'Crear acceso' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Vincular cuenta existente' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Cambiar rol de acceso' })).not.toBeInTheDocument();
+        expect(axios.post).not.toHaveBeenCalled();
     });
 
     test('manage_skills carga y permite revocar una habilidad canónica', async () => {

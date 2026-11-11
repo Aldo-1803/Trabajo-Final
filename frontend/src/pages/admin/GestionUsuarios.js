@@ -121,6 +121,7 @@ const GestionUsuarios = () => {
         hasPermission('usuarios.manage_users')
         && hasPermission('usuarios.assign_roles')
     );
+    const puedeCrearAdministrador = puedeCambiarRol;
     const puedeVerDashboard = hasPermission('gestion.view_reports');
     const puedeVerClientes = hasPermission('usuarios.view_clients');
     const puedeVerPersonal = (
@@ -188,6 +189,7 @@ const GestionUsuarios = () => {
 
     const crearAdministrador = async (e) => {
         e.preventDefault();
+        if (!puedeCrearAdministrador) return;
         setCreandoAdministrador(true);
         try {
             const token = localStorage.getItem('access_token');
@@ -451,15 +453,15 @@ const GestionUsuarios = () => {
                     >
                         Nuevo Personal
                     </button>}
-                    <button 
-                        onClick={() => setModalAbierto(true)}
+                    {puedeCrearAdministrador && <button
+                        onClick={() => puedeCrearAdministrador && setModalAbierto(true)}
                         className="text-white px-4 py-2 rounded-lg font-bold shadow-md flex items-center gap-2 transition-all"
                         style={{ backgroundColor: '#817773' }}
                         onMouseEnter={(e) => e.target.style.backgroundColor = '#6B5F5B'}
                         onMouseLeave={(e) => e.target.style.backgroundColor = '#817773'}
                     >
                         <span>+</span> Nuevo administrador
-                    </button>
+                    </button>}
                 </div>
             </div>
 

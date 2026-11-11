@@ -2,6 +2,9 @@ import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { confirmarAccion, notify } from '../../utils/notificaciones';
+import { useSession } from '../../context/SessionContext';
+import { ADMIN_ROUTES } from '../../routes/routes';
+import { getAuthorizedReturnPath } from '../../utils/sessionLanding';
 
 const GestionEquipamiento = () => {
     // --- ESTADOS ---
@@ -28,6 +31,11 @@ const GestionEquipamiento = () => {
     const [tipos, setTipos] = useState([]);
 
     const navigate = useNavigate();
+    const { session } = useSession();
+    const returnPath = getAuthorizedReturnPath(
+        session,
+        ADMIN_ROUTES.EQUIPAMIENTO
+    );
 
     // --- DICCIONARIO DE ESTADOS (Para visualización bonita) ---
     const ESTADOS = {
@@ -165,9 +173,9 @@ const GestionEquipamiento = () => {
                     <p className="text-gray-500">Control de mobiliario y herramientas</p>
                 </div>
                 <div className="flex gap-2">
-                    <button onClick={() => navigate('/admin-dashboard')} className="text-gray-500 hover:underline px-3">
+                    {returnPath && <button onClick={() => navigate(returnPath)} className="text-gray-500 hover:underline px-3">
                         ← Volver
-                    </button>
+                    </button>}
                     <button 
                         onClick={() => abrirModal()}
                         className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 font-bold shadow-md"

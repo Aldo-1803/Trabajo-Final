@@ -1,4 +1,4 @@
-import { getLandingPath } from './sessionLanding';
+import { getAuthorizedReturnPath, getLandingPath } from './sessionLanding';
 
 
 const authenticatedSession = (businessRole, overrides = {}) => ({
@@ -129,5 +129,25 @@ describe('getLandingPath', () => {
     test('loading no redirige y anonymous vuelve a login', () => {
         expect(getLandingPath({status: 'loading'})).toBeNull();
         expect(getLandingPath({status: 'anonymous'})).toBe('/login');
+    });
+});
+
+
+describe('getAuthorizedReturnPath', () => {
+    test('no ofrece como retorno la misma ruta autorizada', () => {
+        const session = authenticatedSession('PROFESIONAL', {
+            capabilities: {'service_formula.manage': true}
+        });
+
+        expect(getAuthorizedReturnPath(session, '/admin/servicios')).toBeNull();
+    });
+
+    test('reutiliza el primer destino autorizado cuando es distinto', () => {
+        const session = authenticatedSession('ADMINISTRADOR', {
+            permissions: ['gestion.view_reports', 'gestion.manage_configuration']
+        });
+
+        expect(getAuthorizedReturnPath(session, '/admin/configuracion'))
+            .toBe('/admin-dashboard');
     });
 });

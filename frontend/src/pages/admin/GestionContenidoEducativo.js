@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import React, { useCallback, useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import axios from 'axios';
 import { ADMIN_ROUTES } from '../../routes/routes';
 import toast from 'react-hot-toast';
+import { useSession } from '../../context/SessionContext';
 
 const GestionContenidoEducativo = () => {
     const [contenidos, setContenidos] = useState([]);
@@ -11,16 +12,26 @@ const GestionContenidoEducativo = () => {
     const [filtroEstado, setFiltroEstado] = useState('');
     const [filtroTipo, setFiltroTipo] = useState('');
     const [busqueda, setBusqueda] = useState('');
-    const navigate = useNavigate();
+    const { hasCapability, profiles } = useSession();
+    const canAuthor = hasCapability('content.author');
+    const canManageGlobal = hasCapability('content.manage_global');
+    const activePersonalId = profiles?.personal?.active
+        ? profiles.personal.id
+        : null;
 
-    const tipos = ['blog', 'video', 'tutorial', 'consejo', 'caso_estudio'];
+    const tipos = ['IMAGEN', 'VIDEO', 'TEXTO'];
     const estados = ['BORRADOR', 'PUBLICADO', 'ARCHIVADO'];
 
-    useEffect(() => {
-        cargarContenidos();
-    }, [filtroEstado, filtroTipo, busqueda]);
+    const puedeGestionarContenido = (contenido) => (
+        canManageGlobal
+        || (
+            canAuthor
+            && activePersonalId !== null
+            && Number(contenido?.autor?.id) === Number(activePersonalId)
+        )
+    );
 
-    const cargarContenidos = async () => {
+    const cargarContenidos = useCallback(async () => {
         const token = localStorage.getItem('access_token');
         
         try {
@@ -50,14 +61,19 @@ const GestionContenidoEducativo = () => {
         } finally {
             setCargando(false);
         }
-    };
+    }, [filtroEstado, filtroTipo, busqueda]);
 
-    const handleEliminar = async (id) => {
+    useEffect(() => {
+        cargarContenidos();
+    }, [cargarContenidos]);
+
+    const handleEliminar = async (contenido) => {
+        if (!puedeGestionarContenido(contenido)) return;
         if (window.confirm('¿Estás seguro que deseas eliminar este contenido?')) {
             const token = localStorage.getItem('access_token');
             
             try {
-                await axios.delete(`http://127.0.0.1:8000/api/gestion/contenido-educativo/${id}/`, {
+                await axios.delete(`http://127.0.0.1:8000/api/gestion/contenido-educativo/${contenido.id}/`, {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
                 
@@ -70,12 +86,13 @@ const GestionContenidoEducativo = () => {
         }
     };
 
-    const handleCambiarEstado = async (id, nuevoEstado) => {
+    const handleCambiarEstado = async (contenido, nuevoEstado) => {
+        if (!puedeGestionarContenido(contenido)) return;
         const token = localStorage.getItem('access_token');
         
         try {
             await axios.patch(
-                `http://127.0.0.1:8000/api/gestion/contenido-educativo/${id}/`,
+                `http://127.0.0.1:8000/api/gestion/contenido-educativo/${contenido.id}/`,
                 { estado: nuevoEstado },
                 { headers: { 'Authorization': `Bearer ${token}` } }
             );
@@ -118,13 +135,13 @@ const GestionContenidoEducativo = () => {
                             <h1 className="text-3xl font-bold text-gray-900">Contenido Educativo</h1>
                             <p className="text-gray-600 mt-2">Gestiona el contenido educativo para clientes</p>
                         </div>
-                        <Link
+                        {canAuthor && <Link
                             to={ADMIN_ROUTES.CREAR_CONTENIDO}
                             className="px-6 py-3 rounded-lg font-semibold text-white transition-colors"
                             style={{ backgroundColor: '#817773' }}
                         >
                             + Crear Contenido
-                        </Link>
+                        </Link>}
                     </div>
                 </div>
 
@@ -218,14 +235,18 @@ const GestionContenidoEducativo = () => {
                     <div className="bg-white rounded-lg shadow-md p-12 text-center">
                         <div className="text-gray-400 text-5xl mb-4">📝</div>
                         <h3 className="text-xl font-semibold text-gray-700 mb-2">Sin contenido aún</h3>
-                        <p className="text-gray-600 mb-6">Comienza a crear contenido educativo para tus clientes</p>
-                        <Link
+                        <p className="text-gray-600 mb-6">
+                            {canAuthor
+                                ? 'Comienza a crear contenido educativo para tus clientes'
+                                : 'No hay contenido disponible para administrar'}
+                        </p>
+                        {canAuthor && <Link
                             to={ADMIN_ROUTES.CREAR_CONTENIDO}
                             className="inline-block px-6 py-3 rounded-lg font-semibold text-white transition-colors"
                             style={{ backgroundColor: '#817773' }}
                         >
                             Crear Primer Contenido
-                        </Link>
+                        </Link>}
                     </div>
                 ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -267,6 +288,11 @@ const GestionContenidoEducativo = () => {
                                     <p className="text-gray-600 text-sm line-clamp-2 mb-3">
                                         {contenido.descripcion}
                                     </p>
+                                    <p className="text-xs text-gray-500 mb-3">
+                                        Autor: {contenido.autor
+                                            ? `${contenido.autor.nombre} ${contenido.autor.apellido || ''}`.trim()
+                                            : 'No informado'}
+                                    </p>
 
                                     {/* Estadísticas */}
                                     <div className="flex justify-between text-sm text-gray-500 mb-4 py-2 border-t border-b border-gray-200">
@@ -287,7 +313,7 @@ const GestionContenidoEducativo = () => {
                                     </div>
 
                                     {/* Botones de Acción */}
-                                    <div className="flex gap-2">
+                                    {puedeGestionarContenido(contenido) && <div className="flex gap-2">
                                         <Link
                                             to={`${ADMIN_ROUTES.EDITAR_CONTENIDO.replace(':id', contenido.id)}`}
                                             className="flex-1 px-3 py-2 text-center rounded-lg font-medium text-white transition-colors"
@@ -298,27 +324,34 @@ const GestionContenidoEducativo = () => {
                                         
                                         {contenido.estado === 'BORRADOR' ? (
                                             <button
-                                                onClick={() => handleCambiarEstado(contenido.id, 'PUBLICADO')}
+                                                onClick={() => handleCambiarEstado(contenido, 'PUBLICADO')}
                                                 className="flex-1 px-3 py-2 rounded-lg font-medium text-green-700 bg-green-100 hover:bg-green-200 transition-colors"
                                             >
                                                 Publicar
                                             </button>
-                                        ) : (
+                                        ) : contenido.estado === 'PUBLICADO' ? (
                                             <button
-                                                onClick={() => handleCambiarEstado(contenido.id, 'BORRADOR')}
+                                                onClick={() => handleCambiarEstado(contenido, 'ARCHIVADO')}
                                                 className="flex-1 px-3 py-2 rounded-lg font-medium text-yellow-700 bg-yellow-100 hover:bg-yellow-200 transition-colors"
                                             >
-                                                Borrador
+                                                Archivar
+                                            </button>
+                                        ) : (
+                                            <button
+                                                onClick={() => handleCambiarEstado(contenido, 'BORRADOR')}
+                                                className="flex-1 px-3 py-2 rounded-lg font-medium text-yellow-700 bg-yellow-100 hover:bg-yellow-200 transition-colors"
+                                            >
+                                                Reabrir
                                             </button>
                                         )}
 
                                         <button
-                                            onClick={() => handleEliminar(contenido.id)}
+                                            onClick={() => handleEliminar(contenido)}
                                             className="flex-1 px-3 py-2 rounded-lg font-medium text-red-700 bg-red-100 hover:bg-red-200 transition-colors"
                                         >
                                             Eliminar
                                         </button>
-                                    </div>
+                                    </div>}
                                 </div>
                             </div>
                         ))}
