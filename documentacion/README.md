@@ -99,12 +99,12 @@ Seguimiento separado del cierre de roles/permisos:
 - realizar smoke tests y verificaciones del entorno desplegado antes de
   producción.
 
-### [BH-062](BH-062/) — Incrementos 0 a 4 validados
+### [BH-062](BH-062/) — Incrementos 0 a 5 validados
 
 Análisis de la respuesta de la UI React a permisos efectivos en rutas,
 pantallas, datos, acciones y cambios durante la sesión, la contención
-prioritaria de contenido educativo y el contrato mínimo de capacidades
-efectivas. Contiene 6 documentos.
+prioritaria de contenido educativo, el contrato mínimo de capacidades efectivas
+y su regresión integral. Contiene 7 documentos.
 
 Documento principal:
 
@@ -114,6 +114,7 @@ Documento principal:
 - [Incremento 2: rutas y navegación por acceso efectivo](BH-062/IMPLEMENTACION_BH062_2_RUTAS_NAVEGACION.md)
 - [Incremento 3: acciones y formularios por acceso efectivo](BH-062/IMPLEMENTACION_BH062_3_ACCIONES_FORMULARIOS.md)
 - [Incremento 4: sesión dinámica y manejo uniforme de errores](BH-062/IMPLEMENTACION_BH062_4_SESION_DINAMICA_ERRORES.md)
+- [Incremento 5: pruebas y regresión integral](BH-062/IMPLEMENTACION_BH062_5_PRUEBAS_REGRESION.md)
 
 ## Documentación transversal
 

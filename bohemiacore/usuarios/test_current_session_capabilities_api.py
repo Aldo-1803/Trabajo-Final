@@ -300,6 +300,52 @@ class CurrentSessionCapabilityApiTests(APITestCase):
             CAPABILITY_TECHNICAL_BOOKING_REVIEW
         ])
 
+    def test_service_formula_capability_has_origin_parity(self):
+        role_user = self.create_user('formula-role-origin')
+        role_personal = self.create_personal(role_user)
+        self.assign_diagnosis_skill(role_personal)
+        self.assign_role(role_user, BusinessRole.PROFESIONAL)
+
+        group_user = self.create_user('formula-group-origin')
+        group_personal = self.create_personal(group_user)
+        self.assign_diagnosis_skill(group_personal)
+        technical_group = Group.objects.create(name='BH062_FORMULA_PARITY')
+        technical_group.permissions.add(
+            self.permission(BusinessPermission.MANAGE_FORMULAS)
+        )
+        group_user.groups.add(technical_group)
+
+        individual_user = self.create_user('formula-individual-origin')
+        individual_personal = self.create_personal(individual_user)
+        self.assign_diagnosis_skill(individual_personal)
+        self.grant(individual_user, BusinessPermission.MANAGE_FORMULAS)
+
+        cases = (
+            ('business-role', role_user, BusinessRole.PROFESIONAL),
+            ('technical-group', group_user, None),
+            ('individual', individual_user, None),
+        )
+        for origin, user, expected_role in cases:
+            with self.subTest(origin=origin):
+                response = self.get_session(user)
+                self.assertEqual(
+                    response.data['business_role'],
+                    expected_role,
+                )
+                self.assertIn(
+                    BusinessPermission.MANAGE_FORMULAS,
+                    response.data['permissions'],
+                )
+                self.assertTrue(response.data['capabilities'][
+                    CAPABILITY_SERVICE_FORMULA_MANAGE
+                ])
+                self.assertTrue(
+                    CanManagePricesOrFormulas().has_permission(
+                        self.request_for(user),
+                        None,
+                    )
+                )
+
     def test_is_staff_without_business_authority_has_no_capability(self):
         user = self.create_user('staff-only', is_staff=True)
 
