@@ -1899,6 +1899,48 @@ class Turno(models.Model):
         return sum(detalle.duracion_minutos for detalle in self.detalles.all())
 
 
+class FinalizacionTurno(models.Model):
+    """Resultado persistente e inmutable de finalizar un Turno."""
+
+    public_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    turno = models.OneToOneField(
+        Turno,
+        on_delete=models.PROTECT,
+        related_name='finalizacion',
+    )
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='finalizaciones_turno',
+    )
+    idempotency_key = models.CharField(max_length=128, unique=True)
+    command_fingerprint = models.CharField(max_length=64)
+    estado_anterior = models.CharField(max_length=20)
+    estado_final = models.CharField(max_length=20)
+    efectos = models.JSONField(default=dict)
+    finalizado_en = models.DateTimeField(default=timezone.now, editable=False)
+
+    class Meta:
+        verbose_name = 'Finalización de Turno'
+        verbose_name_plural = 'Finalizaciones de Turnos'
+        ordering = ['-finalizado_en', '-pk']
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError(
+                'Una finalización persistida es inmutable.'
+            )
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError(
+            'Una finalización persistida no puede eliminarse.'
+        )
+
+    def __str__(self):
+        return f'Finalización {self.public_id} - Turno {self.turno_id}'
+
+
 class DetalleTurno(models.Model):
     """Entidad Asociativa exigida por la cátedra"""
     turno = models.ForeignKey(Turno, on_delete=models.CASCADE, related_name='detalles')

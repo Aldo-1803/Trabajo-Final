@@ -40,7 +40,7 @@ jobs:
         include:
           - block: B1
             name: roles, usuarios y Personal
-            expected: 411
+            expected: 416
             timeout: 30
             database: test_bohemia_hair_ci_b1
             labels: >-
@@ -82,7 +82,7 @@ jobs:
               gestion.tests.test_audit_middleware
           - block: B2
             name: diagnóstico, ficha y rutinas
-            expected: 155
+            expected: 170
             timeout: 20
             database: test_bohemia_hair_ci_b2
             labels: >-
@@ -98,7 +98,7 @@ jobs:
               gestion.tests.test_technical_risk_profiles
           - block: B3
             name: agenda, turnos y CU-27
-            expected: 158
+            expected: 176
             timeout: 25
             database: test_bohemia_hair_ci_b3
             labels: >-
@@ -111,6 +111,7 @@ jobs:
               gestion.tests.test_turno_management_api
               gestion.tests.test_turno_read_authorization_api
               gestion.tests.test_turno_skill_compatibility
+              gestion.tests.test_turno_finalization_increment0.TurnoFinalizationApiTests
               gestion.tests.test_residual_authorization_closure_bh060_f1.ResidualAuthorizationClosureBh060F1Tests.test_anonymous_cannot_read_or_mutate_any_closed_surface
               gestion.tests.test_residual_authorization_closure_bh060_f1.ResidualAuthorizationClosureBh060F1Tests.test_client_staff_and_inactive_grants_have_zero_authority
               gestion.tests.test_residual_authorization_closure_bh060_f1.ResidualAuthorizationClosureBh060F1Tests.test_employee_and_professional_have_schedule_read_only
@@ -153,7 +154,7 @@ jobs:
               gestion.tests.test_refund_execution
           - block: B6
             name: Django Admin y auditoría
-            expected: 42
+            expected: 43
             timeout: 20
             database: test_bohemia_hair_ci_b6
             labels: >-
@@ -291,6 +292,7 @@ jobs:
         gestion.tests.test_provider_checkout_concurrency
         gestion.tests.test_refund_execution_concurrency
         gestion.tests.test_slot_hold_concurrency
+        gestion.tests.test_turno_finalization_increment0.TurnoFinalizationConcurrencyTests
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -348,7 +350,7 @@ jobs:
             echo
             echo '| Bloque | Tests esperados | Resultado | Duración | Referencia |'
             echo '|---|---:|---|---:|---|'
-            echo "| B7 | 64 | ${result} | ${duration} s | [run ${GITHUB_RUN_ID}](https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) / job ${GITHUB_JOB} |"
+            echo "| B7 | 67 | ${result} | ${duration} s | [run ${GITHUB_RUN_ID}](https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) / job ${GITHUB_JOB} |"
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Guardar log de fallo B7

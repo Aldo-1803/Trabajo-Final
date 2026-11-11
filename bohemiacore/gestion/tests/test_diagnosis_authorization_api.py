@@ -427,30 +427,30 @@ class DiagnosisAuthorizationApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
         self.assertTrue(DiagnosticoCapilar.objects.filter(pk=diagnosis.pk).exists())
 
-    def test_finalize_service_uses_same_diagnosis_capability_and_actor(self):
+    def test_finalize_service_is_independent_from_diagnosis_capability(self):
         hair_type = TipoCabello.objects.create(nombre='Tipo finalización')
         self.client_profile.tipo_cabello = hair_type
         self.client_profile.save(update_fields=['tipo_cabello'])
+        actor = self.create_user('finalize-diagnosis@test.com')
+        actor.user_permissions.add(self.finalize_permission)
+        personal = self.create_personal(actor)
         turno = Turno.objects.create(
             cliente=self.client_profile,
+            profesional=personal,
             fecha=timezone.localdate(),
             hora_inicio=timezone.localtime().time(),
-            estado=Turno.Estado.EN_PROCESO,
+            estado=Turno.Estado.CONFIRMADO,
         )
-        actor = self.create_user('finalize-diagnosis@test.com')
-        actor.user_permissions.add(self.finalize_permission, self.create_permission)
-        personal = self.create_personal(actor)
         self.client.force_authenticate(actor)
         url = reverse('turno-finalizar-turno', args=[turno.pk])
 
-        denied = self.client.post(url, {}, format='json')
-        self.assign_diagnosis_skill(personal)
-        allowed = self.client.post(url, {}, format='json')
+        response = self.client.post(url, {}, format='json')
 
-        self.assertEqual(denied.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertEqual(allowed.status_code, status.HTTP_200_OK)
-        diagnosis = DiagnosticoCapilar.objects.get(cliente=self.client_profile)
-        self.assertEqual(diagnosis.profesional, actor)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(actor.has_perm('gestion.create_diagnosis'))
+        self.assertFalse(
+            DiagnosticoCapilar.objects.filter(cliente=self.client_profile).exists()
+        )
 
     def test_diagnosis_recommendation_uses_canonical_availability_not_category_text(self):
         fixed_utc_now = datetime(2030, 1, 1, 15, 0, tzinfo=dt_timezone.utc)

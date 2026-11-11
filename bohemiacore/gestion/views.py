@@ -241,6 +241,13 @@ from .turno_arrival_services import (
     TurnoArrivalTargetNotFound,
     register_turno_arrival,
 )
+from .turno_finalization_services import (
+    TurnoFinalizationConflict,
+    TurnoFinalizationInvalid,
+    TurnoFinalizationNotFound,
+    TurnoFinalizationPermissionDenied,
+    finalize_turno,
+)
 from .turno_management_services import (
     CLIENT_CANCELLABLE_STATES,
     CLIENT_REPROGRAMMABLE_STATES,
@@ -1924,8 +1931,8 @@ class TurnoViewSet(viewsets.ModelViewSet):
         elif self.action == 'finalizar_turno':
             permission_classes = [
                 IsAuthenticated,
+                IsActiveUser,
                 CanFinalizeService,
-                CanCreateDiagnosisWithSkill,
             ]
         else:
             permission_classes = [IsAuthenticated]
@@ -2880,101 +2887,48 @@ class TurnoViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def finalizar_turno(self, request, pk=None):
-        """
-        Acción para marcar el turno como realizado y disparar 
-        las Reglas de Cuidado automáticas + crear diagnóstico post-servicio + Promociones de Retoque.
-        
-        POST /api/gestion/turnos/{id}/finalizar_turno/
-        """
-        turno = self.get_object()
-        
-        if turno.estado == Turno.Estado.REALIZADO:
-            return Response({"error": "Este turno ya fue finalizado anteriormente."}, status=400)
-
-        # 1. Cambiamos el estado del turno
-        turno.estado = Turno.Estado.REALIZADO
-        turno.save()
-
-        # 2. CREAR DIAGNÓSTICO POST-SERVICIO AUTOMÁTICAMENTE
-        # Se crea un nuevo diagnóstico después de cada servicio para reevaluar el estado del cabello
-        cliente = turno.cliente
-        
-        # Solo crear diagnóstico si el cliente tiene datos capilares registrados
-        if cliente.tipo_cabello or cliente.grosor_cabello or cliente.porosidad_cabello or cliente.cuero_cabelludo or cliente.estado_general:
-            diag = DiagnosticoCapilar.objects.create(
-                cliente=cliente,
-                profesional=request.user,
-                tipo_cabello=cliente.tipo_cabello,
-                grosor_cabello=cliente.grosor_cabello,
-                porosidad_cabello=cliente.porosidad_cabello,
-                cuero_cabelludo=cliente.cuero_cabelludo,
-                estado_general=cliente.estado_general,
-                procedencia=(
-                    DiagnosticoCapilar.Procedencia.POST_SERVICIO_AUTOMATICO
-                ),
+        """Finaliza un Turno con lock, atomicidad e identidad persistente."""
+        try:
+            result = finalize_turno(
+                actor=request.user,
+                turno_id=pk,
+                idempotency_key=request.headers.get('Idempotency-Key', ''),
             )
-            
-            # Ejecutar el motor diagnóstico automáticamente
-            DiagnosticoCapilarViewSet()._ejecutar_motor_diagnostico(diag)
+        except TurnoFinalizationPermissionDenied as exc:
+            return Response(
+                {'code': exc.code, 'detail': exc.detail},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        except TurnoFinalizationNotFound as exc:
+            return Response(
+                {'code': exc.code, 'detail': exc.detail},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except TurnoFinalizationConflict as exc:
+            return Response(
+                {'code': exc.code, 'detail': exc.detail},
+                status=status.HTTP_409_CONFLICT,
+            )
+        except TurnoFinalizationInvalid as exc:
+            return Response(
+                {
+                    'code': exc.code,
+                    'detail': exc.detail,
+                    'field': exc.field,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        # 3. PROCESO AUTOMATIZADO: Aplicar Reglas de Cuidado
-        # Buscamos todos los servicios que se hicieron en este turno
-        detalles = turno.detalles.all()
-        servicios_realizados = [d.servicio for d in detalles]
-
-        for servicio in servicios_realizados:
-            # Buscamos las reglas configuradas para este servicio
-            reglas = servicio.reglas_post_servicio.all()
-            
-            for regla in reglas:
-                # A. Notificar a la clienta (Instrucciones de cuidado)
-                Notificacion.objects.create(
-                    usuario=turno.cliente.usuario,
-                    tipo='recordatorio',
-                    titulo=f"Cuidados post {servicio.nombre}",
-                    mensaje=f"{regla.descripcion}. (Válido por {regla.dias_duracion} días)",
-                    origen_entidad='Turno',
-                    origen_id=turno.id
-                )
-
-                # B. Si la regla tiene una RUTINA asociada, se la asignamos automáticamente
-                if regla.rutina:
-                    ensure_internal_routine_assignment(
-                        cliente=turno.cliente,
-                        rutina=regla.rutina,
-                    )
-
-        # 4. LÓGICA P3: Programación de Retoque (Marketing Inteligente)
-        # Crea promociones diferidas para sugerir retoques en el momento ideal
-        for detalle in turno.detalles.all():
-            # Buscamos si el servicio tiene una regla de mantenimiento
-            config = ConfiguracionRetoque.objects.filter(servicio_principal=detalle.servicio).first()
-            
-            if config:
-                # Calculamos tiempos
-                fecha_ideal_retoque = timezone.localdate(
-                    timezone=timezone.get_default_timezone(),
-                ) + timedelta(days=config.dias_sugeridos)
-                # Programamos el aviso para 7 días antes de la fecha ideal
-                fecha_aviso = fecha_ideal_retoque - timedelta(days=7)
-
-                # Creamos la Promoción "Diferida"
-                Promocion.objects.create(
-                    nombre=f"Mantenimiento de {detalle.servicio.nombre}",
-                    descripcion=f"Es el momento ideal para retocar tu {detalle.servicio.nombre} y lucir impecable.",
-                    tipo='RETOQUE',
-                    descuento_porcentaje=config.descuento_retoque,
-                    fecha_inicio=fecha_aviso, 
-                    fecha_fin=fecha_ideal_retoque + timedelta(days=7),
-                    fecha_envio_notificacion=fecha_aviso,
-                    cliente_especifico=turno.cliente,
-                    is_active=True
-                )
-                logger.info(f"P3: Promoción de retoque programada para el cliente {turno.cliente} el día {fecha_aviso}")
-
+        finalization = result.finalization
         return Response({
-            "mensaje": "Turno finalizado. Se han enviado las recomendaciones de cuidado, se ha creado un nuevo diagnóstico y se han programado promociones de retoque.",
-            "estado": turno.estado
+            'mensaje': 'Turno finalizado correctamente.',
+            'estado': finalization.estado_final,
+            'changed': result.changed,
+            'finalization_id': str(finalization.public_id),
+            'idempotency_key': finalization.idempotency_key,
+            'estado_anterior': finalization.estado_anterior,
+            'estado_actual': finalization.estado_final,
+            'effects': finalization.efectos,
         })
 
 class MiAgendaCuidadosView(generics.ListAPIView):

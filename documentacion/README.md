@@ -143,7 +143,7 @@ tareas nuevas.
 ### [Generales](generales/)
 
 Análisis e impactos transversales sobre flujos, permisos, sesiones y acceso de
-Personal, además de la auditoría integral del proyecto. Contiene 10 documentos.
+Personal, además de la auditoría integral del proyecto. Contiene 12 documentos.
 
 Documentos principales:
 
@@ -151,5 +151,7 @@ Documentos principales:
 - [Corrección de fechas en recomendaciones de Turnos](generales/CORRECCION_FECHAS_RECOMENDACION_TURNOS.md)
 - [Corrección de zona horaria comercial de Posadas](generales/CORRECCION_ZONA_HORARIA_POSADAS.md)
 - [Flujo objetivo de turnos](generales/ANALISIS_FLUJO_OBJETIVO_TURNOS.md)
+- [Flujos profesionales y perfil capilar](generales/ANALISIS_FLUJOS_PROFESIONALES_PERFIL_CAPILAR.md)
+- [Flujos profesionales, Incremento 0: finalización](generales/IMPLEMENTACION_FLUJOS_PROFESIONALES_0_FINALIZACION.md)
 - [Roles y permisos](generales/ANALISIS_ROLES_PERMISOS.md)
 - [Gestión de acceso de Personal](generales/IMPACTO_GESTION_ACCESO_PERSONAL.md)
