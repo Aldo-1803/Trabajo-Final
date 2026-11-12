@@ -10,7 +10,9 @@ from gestion.models import (
     EstadoGeneral,
     PorosidadCabello,
     CueroCabelludo,
-    Servicio 
+    DiagnosticoCapilar,
+    Servicio,
+    VigenciaCampoPerfilCapilar,
 )
 from usuarios.access_services import assign_initial_client_role
 from usuarios.roles import BusinessPermission, get_business_role
@@ -172,6 +174,7 @@ class UsuarioPerfilReadSerializer(serializers.ModelSerializer):
     fecha_nacimiento = serializers.SerializerMethodField()
     sexo = serializers.SerializerMethodField()
     redes = serializers.SerializerMethodField()
+    productos_actuales = serializers.SerializerMethodField()
     
     # Campos con los IDs (para actualización)
     tipo_cabello = serializers.SerializerMethodField()
@@ -179,6 +182,12 @@ class UsuarioPerfilReadSerializer(serializers.ModelSerializer):
     porosidad_cabello = serializers.SerializerMethodField()
     cuero_cabelludo = serializers.SerializerMethodField()
     estado_general = serializers.SerializerMethodField()
+    tipo_cabello_id = serializers.SerializerMethodField()
+    grosor_cabello_id = serializers.SerializerMethodField()
+    porosidad_cabello_id = serializers.SerializerMethodField()
+    cuero_cabelludo_id = serializers.SerializerMethodField()
+    estado_general_id = serializers.SerializerMethodField()
+    perfil_capilar = serializers.SerializerMethodField()
     historial_servicios = serializers.SerializerMethodField()
 
     class Meta:
@@ -187,7 +196,9 @@ class UsuarioPerfilReadSerializer(serializers.ModelSerializer):
             'email', 'first_name', 'last_name', 'zona', 'numero', 'fecha_nacimiento',
             'sexo', 'redes','is_staff', 'tipo_cabello', 'grosor_cabello',
             'porosidad_cabello', 'cuero_cabelludo', 'estado_general',
-            'historial_servicios'
+            'tipo_cabello_id', 'grosor_cabello_id', 'porosidad_cabello_id',
+            'cuero_cabelludo_id', 'estado_general_id', 'perfil_capilar',
+            'productos_actuales', 'historial_servicios'
         ]
     
     def get_zona(self, obj):
@@ -204,6 +215,9 @@ class UsuarioPerfilReadSerializer(serializers.ModelSerializer):
     
     def get_redes(self, obj):
         return obj.cliente.redes if hasattr(obj, 'cliente') else None
+
+    def get_productos_actuales(self, obj):
+        return obj.cliente.productos_actuales if hasattr(obj, 'cliente') else None
     
     def get_tipo_cabello(self, obj):
         if hasattr(obj, 'cliente') and obj.cliente.tipo_cabello:
@@ -229,6 +243,63 @@ class UsuarioPerfilReadSerializer(serializers.ModelSerializer):
         if hasattr(obj, 'cliente') and obj.cliente.estado_general:
             return obj.cliente.estado_general.nombre
         return None
+
+    @staticmethod
+    def _get_hair_id(obj, field):
+        cliente = getattr(obj, 'cliente', None)
+        return getattr(cliente, f'{field}_id', None) if cliente else None
+
+    def get_tipo_cabello_id(self, obj):
+        return self._get_hair_id(obj, 'tipo_cabello')
+
+    def get_grosor_cabello_id(self, obj):
+        return self._get_hair_id(obj, 'grosor_cabello')
+
+    def get_porosidad_cabello_id(self, obj):
+        return self._get_hair_id(obj, 'porosidad_cabello')
+
+    def get_cuero_cabelludo_id(self, obj):
+        return self._get_hair_id(obj, 'cuero_cabelludo')
+
+    def get_estado_general_id(self, obj):
+        return self._get_hair_id(obj, 'estado_general')
+
+    def get_perfil_capilar(self, obj):
+        cliente = getattr(obj, 'cliente', None)
+        if cliente is None:
+            return {}
+        states = {
+            state.campo: state
+            for state in VigenciaCampoPerfilCapilar.objects.filter(
+                cliente=cliente
+            ).select_related('diagnostico_fuente', 'actor')
+        }
+        result = {}
+        for field in (
+            'tipo_cabello',
+            'grosor_cabello',
+            'porosidad_cabello',
+            'cuero_cabelludo',
+            'estado_general',
+        ):
+            value = getattr(cliente, field)
+            state = states.get(field)
+            result[field] = {
+                'id': value.pk if value else None,
+                'nombre': value.nombre if value else None,
+                'procedencia': (
+                    state.procedencia
+                    if state is not None
+                    else DiagnosticoCapilar.Procedencia.DESCONOCIDO
+                ),
+                'diagnostico_fuente_id': (
+                    state.diagnostico_fuente_id if state is not None else None
+                ),
+                'actualizado_en': (
+                    state.actualizado_en if state is not None else None
+                ),
+            }
+        return result
     
     def get_historial_servicios(self, obj):
         if hasattr(obj, 'cliente'):
@@ -289,20 +360,34 @@ class UsuarioPerfilUpdateSerializer(serializers.ModelSerializer):
 
     def to_internal_value(self, data):
         # Mapeo de nombres del frontend al modelo
-        if 'porosidad' in data and 'porosidad_cabello' not in data:
-            data['porosidad_cabello'] = data.pop('porosidad')
-        if 'grosor' in data and 'grosor_cabello' not in data:
-            data['grosor_cabello'] = data.pop('grosor')
+        normalized_data = data.copy()
+        if 'porosidad' in normalized_data and 'porosidad_cabello' not in normalized_data:
+            normalized_data['porosidad_cabello'] = normalized_data.pop('porosidad')
+        if 'grosor' in normalized_data and 'grosor_cabello' not in normalized_data:
+            normalized_data['grosor_cabello'] = normalized_data.pop('grosor')
         
-        return super().to_internal_value(data)
+        return super().to_internal_value(normalized_data)
 
 
     @transaction.atomic
     def update(self, instance, validated_data):
+        from gestion.hair_profile_services import record_client_self_report
+
+        hair_data = {
+            field: validated_data.pop(field)
+            for field in (
+                'tipo_cabello',
+                'grosor_cabello',
+                'porosidad_cabello',
+                'cuero_cabelludo',
+                'estado_general',
+            )
+            if field in validated_data
+        }
         # 1. Extraer campos del Usuario
         instance.first_name = validated_data.get('first_name', instance.first_name)
         instance.last_name = validated_data.get('last_name', instance.last_name)
-        instance.save()
+        instance.save(update_fields=['first_name', 'last_name'])
 
         # 2. Preparar datos para el Cliente
         cliente = instance.cliente
@@ -313,20 +398,26 @@ class UsuarioPerfilUpdateSerializer(serializers.ModelSerializer):
         cliente.fecha_nacimiento = validated_data.get('fecha_nacimiento', cliente.fecha_nacimiento)
         cliente.sexo = validated_data.get('sexo', cliente.sexo)
         cliente.redes = validated_data.get('redes', cliente.redes)
-        
-        # Relaciones ForeignKey
-        if 'tipo_cabello' in validated_data:
-            cliente.tipo_cabello = validated_data['tipo_cabello']
-        if 'grosor_cabello' in validated_data:
-            cliente.grosor_cabello = validated_data['grosor_cabello']
-        if 'porosidad_cabello' in validated_data:
-            cliente.porosidad_cabello = validated_data['porosidad_cabello']
-        if 'cuero_cabelludo' in validated_data:
-            cliente.cuero_cabelludo = validated_data['cuero_cabelludo']
-        if 'estado_general' in validated_data:
-            cliente.estado_general = validated_data['estado_general']
-        
-        cliente.save()
+        cliente.productos_actuales = validated_data.get(
+            'productos_actuales',
+            cliente.productos_actuales,
+        )
+        cliente.save(update_fields=[
+            'zona',
+            'numero',
+            'fecha_nacimiento',
+            'sexo',
+            'redes',
+            'productos_actuales',
+            'fecha_actualizacion',
+        ])
+        if hair_data:
+            record_client_self_report(
+                actor=instance,
+                values=hair_data,
+                reason='Actualización declarada por el Cliente desde su perfil.',
+            )
+            cliente.refresh_from_db()
 
         return instance
 
@@ -434,11 +525,17 @@ class RegistroSerializer(StrictInputFieldsMixin, serializers.ModelSerializer):
             'redes': validated_data.pop('redes', ''),
             'sexo': validated_data.pop('sexo', 'F'),
             'fecha_nacimiento': validated_data.pop('fecha_nacimiento', None),
-            'tipo_cabello': validated_data.pop('tipo_cabello', None),
-            'grosor_cabello': validated_data.pop('grosor_cabello', None),
-            'porosidad_cabello': validated_data.pop('porosidad_cabello', None),
-            'cuero_cabelludo': validated_data.pop('cuero_cabelludo', None),
-            'estado_general': validated_data.pop('estado_general', None),
+        }
+        hair_data = {
+            field: validated_data.pop(field)
+            for field in (
+                'tipo_cabello',
+                'grosor_cabello',
+                'porosidad_cabello',
+                'cuero_cabelludo',
+                'estado_general',
+            )
+            if field in validated_data and validated_data[field] is not None
         }
         
         # Crear el Usuario
@@ -447,25 +544,19 @@ class RegistroSerializer(StrictInputFieldsMixin, serializers.ModelSerializer):
         # Crear el Cliente con todos los datos
         cliente = Cliente.objects.create(usuario=user, **cliente_data)
         
-        # AUTOMÁTICO: Si hay datos capilares, crear diagnóstico
-        if cliente.tipo_cabello or cliente.grosor_cabello or cliente.porosidad_cabello or cliente.cuero_cabelludo or cliente.estado_general:
-            from gestion.models import DiagnosticoCapilar
+        # Los datos capilares opcionales se registran como autorreporte trazable.
+        if hair_data:
+            from gestion.hair_profile_services import record_client_self_report
             from gestion.views import DiagnosticoCapilarViewSet
-            
-            # Crear el diagnóstico inicial
-            diag = DiagnosticoCapilar.objects.create(
-                cliente=cliente,
-                tipo_cabello=cliente.tipo_cabello,
-                grosor_cabello=cliente.grosor_cabello,
-                porosidad_cabello=cliente.porosidad_cabello,
-                cuero_cabelludo=cliente.cuero_cabelludo,
-                estado_general=cliente.estado_general,
-                procedencia=DiagnosticoCapilar.Procedencia.AUTORREPORTE,
+
+            record_client_self_report(
+                actor=user,
+                values=hair_data,
+                reason='Autorreporte inicial del registro público.',
+                run_engine=(
+                    DiagnosticoCapilarViewSet()._ejecutar_motor_diagnostico
+                ),
             )
-            
-            # Ejecutar el motor diagnóstico automáticamente
-            viewset = DiagnosticoCapilarViewSet()
-            viewset._ejecutar_motor_diagnostico(diag)
 
         assign_initial_client_role(
             user,

@@ -2363,6 +2363,10 @@ class DiagnosticoCapilar(models.Model):
         MIGRADO = 'MIGRADO', 'Migrado'
         DESCONOCIDO = 'DESCONOCIDO', 'Desconocido'
 
+    class EstadoResultado(models.TextChoices):
+        CALCULADO = 'CALCULADO', 'Calculado'
+        INVALIDADO = 'INVALIDADO', 'Invalidado por corrección'
+
     cliente = models.ForeignKey(
         'usuarios.Cliente',
         on_delete=models.CASCADE,
@@ -2376,6 +2380,15 @@ class DiagnosticoCapilar(models.Model):
         null=True,
         blank=True,
         related_name='diagnosticos_realizados'
+    )
+
+    autor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='evaluaciones_capilares_creadas',
+        help_text='Usuario que registró la evaluación; no implica autoría profesional.',
     )
     
     # Estado del cabello en el momento del diagnóstico
@@ -2417,6 +2430,24 @@ class DiagnosticoCapilar(models.Model):
     # Observaciones y recomendaciones
     observaciones = models.TextField(blank=True, null=True)
     recomendaciones = models.TextField(blank=True, null=True)
+    campos_evaluados = models.JSONField(
+        null=True,
+        blank=True,
+        help_text=(
+            'Campos informados explícitamente en esta evaluación. '
+            'Null identifica registros históricos sin evidencia suficiente.'
+        ),
+    )
+    resultado_calculado = models.TextField(blank=True, null=True)
+    estado_resultado = models.CharField(
+        max_length=20,
+        choices=EstadoResultado.choices,
+        null=True,
+        blank=True,
+    )
+    resultado_calculado_en = models.DateTimeField(null=True, blank=True)
+    resultado_invalidado_en = models.DateTimeField(null=True, blank=True)
+    resultado_invalidacion_motivo = models.TextField(blank=True, null=True)
     
     # Regla que se aplicó
     regla_diagnostico = models.ForeignKey(
@@ -2484,6 +2515,150 @@ class DiagnosticoCapilar(models.Model):
     
     def __str__(self):
         return f"Diagnóstico {self.cliente} - {self.fecha_diagnostico.strftime('%d/%m/%Y')}"
+
+
+class CambioPerfilCapilar(models.Model):
+    """Evento inmutable que explica una sincronización del perfil vigente."""
+
+    class Operacion(models.TextChoices):
+        AUTORREPORTE = 'AUTORREPORTE', 'Autorreporte del Cliente'
+        EVALUACION_PROFESIONAL = (
+            'EVALUACION_PROFESIONAL',
+            'Nueva evaluación profesional',
+        )
+        CORRECCION = 'CORRECCION', 'Corrección trazable'
+        DERIVACION_AUTOMATICA = (
+            'DERIVACION_AUTOMATICA',
+            'Derivación automática',
+        )
+
+    public_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    cliente = models.ForeignKey(
+        'usuarios.Cliente',
+        on_delete=models.PROTECT,
+        related_name='cambios_perfil_capilar',
+    )
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='cambios_perfil_capilar_realizados',
+    )
+    diagnostico_fuente = models.ForeignKey(
+        DiagnosticoCapilar,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='cambios_perfil_generados',
+    )
+    operacion = models.CharField(max_length=30, choices=Operacion.choices)
+    procedencia = models.CharField(
+        max_length=30,
+        choices=DiagnosticoCapilar.Procedencia.choices,
+    )
+    motivo = models.TextField()
+    campos = models.JSONField(default=list)
+    valores_anteriores = models.JSONField(default=dict)
+    valores_nuevos = models.JSONField(default=dict)
+    creado_en = models.DateTimeField(default=timezone.now, editable=False)
+
+    class Meta:
+        ordering = ['-creado_en', '-pk']
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError('Un cambio de perfil persistido es inmutable.')
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Un cambio de perfil persistido no puede eliminarse.')
+
+
+class VigenciaCampoPerfilCapilar(models.Model):
+    """Procedencia vigente de cada dimensión mutable del perfil capilar."""
+
+    class Campo(models.TextChoices):
+        TIPO_CABELLO = 'tipo_cabello', 'Tipo de cabello'
+        GROSOR_CABELLO = 'grosor_cabello', 'Grosor de cabello'
+        POROSIDAD_CABELLO = 'porosidad_cabello', 'Porosidad de cabello'
+        CUERO_CABELLUDO = 'cuero_cabelludo', 'Cuero cabelludo'
+        ESTADO_GENERAL = 'estado_general', 'Estado general'
+
+    cliente = models.ForeignKey(
+        'usuarios.Cliente',
+        on_delete=models.CASCADE,
+        related_name='vigencias_perfil_capilar',
+    )
+    campo = models.CharField(max_length=30, choices=Campo.choices)
+    procedencia = models.CharField(
+        max_length=30,
+        choices=DiagnosticoCapilar.Procedencia.choices,
+    )
+    diagnostico_fuente = models.ForeignKey(
+        DiagnosticoCapilar,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='campos_perfil_vigentes',
+    )
+    cambio = models.ForeignKey(
+        CambioPerfilCapilar,
+        on_delete=models.PROTECT,
+        related_name='vigencias_resultantes',
+    )
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='vigencias_perfil_capilar_establecidas',
+    )
+    actualizado_en = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['cliente', 'campo'],
+                name='unique_current_hair_profile_field_source',
+            ),
+        ]
+        ordering = ['campo']
+
+
+class CorreccionDiagnosticoCapilar(models.Model):
+    """Corrección explícita de una evaluación; no representa una nueva observación."""
+
+    public_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    diagnostico = models.ForeignKey(
+        DiagnosticoCapilar,
+        on_delete=models.PROTECT,
+        related_name='correcciones_trazables',
+    )
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='correcciones_diagnostico_realizadas',
+    )
+    motivo = models.TextField()
+    campos = models.JSONField(default=list)
+    valores_anteriores = models.JSONField(default=dict)
+    valores_nuevos = models.JSONField(default=dict)
+    cambio_perfil = models.ForeignKey(
+        CambioPerfilCapilar,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='correcciones_diagnostico',
+    )
+    corregido_en = models.DateTimeField(default=timezone.now, editable=False)
+
+    class Meta:
+        ordering = ['-corregido_en', '-pk']
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError('Una corrección persistida es inmutable.')
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Una corrección persistida no puede eliminarse.')
 
 
 class PoliticaRiesgoTecnico(models.Model):

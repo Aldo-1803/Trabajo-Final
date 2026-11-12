@@ -8,6 +8,7 @@ import json
 from django.db import IntegrityError, transaction
 from usuarios.roles import BusinessPermission
 
+from .hair_profile_services import apply_automatic_profile_impact
 from .models import (
     AgendaCuidados,
     Auditoria,
@@ -116,7 +117,7 @@ def _service_impacts(details):
     ]
 
 
-def _apply_profile_impact(turno, details):
+def _apply_profile_impact(turno, details, actor):
     impacts = _service_impacts(details)
     if len(details) != 1:
         return {
@@ -131,26 +132,29 @@ def _apply_profile_impact(turno, details):
         }
 
     service = details[0].servicio
-    cliente = turno.cliente
-    updated_fields = []
-    if (
-        service.impacto_porosidad_id is not None
-        and cliente.porosidad_cabello_id != service.impacto_porosidad_id
-    ):
-        cliente.porosidad_cabello_id = service.impacto_porosidad_id
-        updated_fields.append('porosidad_cabello')
-    if (
-        service.impacto_estado_id is not None
-        and cliente.estado_general_id != service.impacto_estado_id
-    ):
-        cliente.estado_general_id = service.impacto_estado_id
-        updated_fields.append('estado_general')
-    if updated_fields:
-        cliente.save(update_fields=updated_fields)
+    explicit_values = {}
+    if service.impacto_porosidad_id is not None:
+        explicit_values['porosidad_cabello'] = service.impacto_porosidad_id
+    if service.impacto_estado_id is not None:
+        explicit_values['estado_general'] = service.impacto_estado_id
+    synchronization = apply_automatic_profile_impact(
+        actor=actor,
+        cliente_id=turno.cliente_id,
+        values=explicit_values,
+        reason=(
+            f'Impacto explícito del Servicio {service.pk} durante la '
+            f'finalización del Turno {turno.pk}.'
+        ),
+    )
     return {
-        'applied': bool(updated_fields),
+        'applied': bool(synchronization.updated_fields),
         'reason': 'SINGLE_SERVICE_EXPLICIT_IMPACT',
-        'updated_fields': updated_fields,
+        'updated_fields': list(synchronization.updated_fields),
+        'profile_change_id': (
+            synchronization.change.pk
+            if synchronization.change is not None
+            else None
+        ),
         'service_impacts': impacts,
     }
 
@@ -345,7 +349,7 @@ def finalize_turno(*, actor, turno_id, idempotency_key=''):
     turno.estado = Turno.Estado.REALIZADO
     turno.save(update_fields=['estado'])
 
-    profile_effect = _apply_profile_impact(turno, details)
+    profile_effect = _apply_profile_impact(turno, details, actor)
     care_effects = _create_care_effects(turno, details)
     care_effects['routine_assignment_ids'] = _assign_routines(turno, details)
     final_notification = Notificacion.objects.create(

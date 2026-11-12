@@ -82,11 +82,12 @@ jobs:
               gestion.tests.test_audit_middleware
           - block: B2
             name: diagnóstico, ficha y rutinas
-            expected: 170
+            expected: 187
             timeout: 20
             database: test_bohemia_hair_ci_b2
             labels: >-
               gestion.tests.test_diagnosis_authorization_api
+              gestion.tests.test_hair_profile_evaluations_increment1.HairProfileEvaluationApiTests
               gestion.tests.test_skills_api
               gestion.tests.test_skills_migration
               gestion.tests.test_technical_record_formula_routine_permissions_bh060_3
@@ -293,6 +294,7 @@ jobs:
         gestion.tests.test_refund_execution_concurrency
         gestion.tests.test_slot_hold_concurrency
         gestion.tests.test_turno_finalization_increment0.TurnoFinalizationConcurrencyTests
+        gestion.tests.test_hair_profile_evaluations_increment1.HairProfileWriterConcurrencyTests
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -350,7 +352,7 @@ jobs:
             echo
             echo '| Bloque | Tests esperados | Resultado | Duración | Referencia |'
             echo '|---|---:|---|---:|---|'
-            echo "| B7 | 67 | ${result} | ${duration} s | [run ${GITHUB_RUN_ID}](https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) / job ${GITHUB_JOB} |"
+            echo "| B7 | 68 | ${result} | ${duration} s | [run ${GITHUB_RUN_ID}](https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) / job ${GITHUB_JOB} |"
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Guardar log de fallo B7

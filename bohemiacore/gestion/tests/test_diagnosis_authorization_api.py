@@ -130,10 +130,12 @@ class DiagnosisAuthorizationApiTests(APITestCase):
     def test_permission_skill_and_active_personal_create_with_real_actor(self):
         actor, _ = self.authorize_writer('valid-diagnosis@test.com')
         spoofed_author = self.create_user('spoofed-author@test.com')
+        hair_type = TipoCabello.objects.create(nombre='Tipo evaluado')
 
         response = self.create_diagnosis(
             actor,
             profesional=spoofed_author.pk,
+            tipo_cabello=hair_type.pk,
             recomendaciones='Cuidado técnico',
         )
 
@@ -365,7 +367,7 @@ class DiagnosisAuthorizationApiTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
-    def test_update_protects_client_and_author(self):
+    def test_generic_patch_is_disabled_for_evaluation_and_correction(self):
         actor, _ = self.authorize_writer('diagnosis-updater@test.com')
         diagnosis = DiagnosticoCapilar.objects.create(
             cliente=self.client_profile,
@@ -390,11 +392,11 @@ class DiagnosisAuthorizationApiTests(APITestCase):
         )
         diagnosis.refresh_from_db()
 
-        self.assertEqual(author_response.status_code, status.HTTP_200_OK)
-        self.assertEqual(client_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(author_response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+        self.assertEqual(client_response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
         self.assertEqual(diagnosis.profesional, actor)
         self.assertEqual(diagnosis.cliente, self.client_profile)
-        self.assertEqual(diagnosis.recomendaciones, 'Actualizada')
+        self.assertIsNone(diagnosis.recomendaciones)
 
     def test_writer_without_global_management_cannot_update_another_author(self):
         actor, _ = self.authorize_writer('own-diagnosis-only@test.com')
@@ -404,9 +406,12 @@ class DiagnosisAuthorizationApiTests(APITestCase):
         )
         self.client.force_authenticate(actor)
 
-        response = self.client.patch(
-            reverse('diagnostico-capilar-detail', args=[diagnosis.pk]),
-            {'recomendaciones': 'No permitida'},
+        response = self.client.post(
+            reverse('diagnostico-capilar-corregir', args=[diagnosis.pk]),
+            {
+                'motivo': 'La recomendación original pertenecía a otra persona.',
+                'recomendaciones': 'No permitida',
+            },
             format='json',
         )
 

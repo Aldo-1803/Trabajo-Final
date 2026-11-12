@@ -92,13 +92,13 @@ const EditarPerfil = () => {
                     axios.get('/api/gestion/estados-generales/'),
                 ]);
                 
-                // (Usamos .results por la paginación de Django)
+                const items = (response) => response.data.results || response.data;
                 setCatalogos({
-                    tipos: tiposRes.data.results,
-                    porosidades: porosidadesRes.data.results,
-                    grosores: grosoresRes.data.results,
-                    cueros: cuerosRes.data.results,
-                    estados: estadosRes.data.results,
+                    tipos: items(tiposRes),
+                    porosidades: items(porosidadesRes),
+                    grosores: items(grosoresRes),
+                    cueros: items(cuerosRes),
+                    estados: items(estadosRes),
                 });
                 setLoadingCatalogos(false);
 
@@ -113,11 +113,11 @@ const EditarPerfil = () => {
                     first_name: perfilData.first_name || '',
                     last_name: perfilData.last_name || '',
                     email: perfilData.email || '',
-                    tipo_cabello: perfilData.tipo_cabello || '',
-                    porosidad: perfilData.porosidad || '',
-                    grosor: perfilData.grosor || '',
-                    cuero_cabelludo: perfilData.cuero_cabelludo || '',
-                    estado_general: perfilData.estado_general || '',
+                    tipo_cabello: perfilData.tipo_cabello_id || '',
+                    porosidad: perfilData.porosidad_cabello_id || '',
+                    grosor: perfilData.grosor_cabello_id || '',
+                    cuero_cabelludo: perfilData.cuero_cabelludo_id || '',
+                    estado_general: perfilData.estado_general_id || '',
                     productos_actuales: perfilData.productos_actuales || '',
                     historial_servicios: perfilData.historial_servicios || [], 
                 });
@@ -154,7 +154,7 @@ const EditarPerfil = () => {
         try {
             // El formData ya tiene 'historial_servicios' como un array [1, 5]
             // Axios lo enviará como JSON automáticamente.
-            const response = await axios.put('/api/usuarios/perfil/', formData);
+            await axios.put('/api/usuarios/perfil/', formData);
 
            setSuccessMessage('¡Perfil actualizado con éxito!');
             

@@ -9,7 +9,8 @@ from .models import (
     PerfilTecnicoServicio, PoliticaRiesgoTecnico,
     ReglaIntervaloTecnico, ReglaDiagnosticoTecnico,
     ReglaFrecuenciaTecnica,
-    TipoEquipamiento, FichaTecnica, DiagnosticoCapilar, RequisitoServicio,
+    TipoEquipamiento, FichaTecnica, DiagnosticoCapilar,
+    CorreccionDiagnosticoCapilar, RequisitoServicio,
     CategoriaProducto, Promocion, Configuracion, ConfiguracionRetoque,
     Carrito, CarritoItem, ContenidoEducativo, MeGusta, ContenidoGuardado,
     OrdenPendiente, OrdenCompra, OrdenItem, Pago, ConfiguracionDiagnostico,
@@ -1444,6 +1445,7 @@ class DiagnosticoCapilarSerializer(serializers.ModelSerializer):
     """
     cliente_email = serializers.CharField(source='cliente.usuario.email', read_only=True)
     profesional_nombre = serializers.CharField(source='profesional.get_full_name', read_only=True)
+    autor_nombre = serializers.CharField(source='autor.get_full_name', read_only=True)
     tipo_cabello_nombre = serializers.CharField(source='tipo_cabello.nombre', read_only=True)
     grosor_cabello_nombre = serializers.CharField(source='grosor_cabello.nombre', read_only=True)
     porosidad_cabello_nombre = serializers.CharField(source='porosidad_cabello.nombre', read_only=True)
@@ -1457,20 +1459,26 @@ class DiagnosticoCapilarSerializer(serializers.ModelSerializer):
     servicio_urgente_id = serializers.IntegerField(source='servicio_urgente.id', read_only=True, required=False)
     rutina_asignada_id = serializers.IntegerField(source='rutina_asignada.id', read_only=True, required=False)
     turno_sugerido_id = serializers.IntegerField(source='turno_sugerido.id', read_only=True, required=False)
-    # Campo personalizado: el mensaje profesional guardado en observaciones
-    mensaje_diagnostico = serializers.CharField(source='observaciones', read_only=True, required=False)
+    mensaje_diagnostico = serializers.SerializerMethodField()
+    correcciones_count = serializers.IntegerField(
+        source='correcciones_trazables.count',
+        read_only=True,
+    )
     
     class Meta:
         model = DiagnosticoCapilar
         fields = [
             'id', 'cliente', 'cliente_email',
-            'profesional', 'profesional_nombre',
+            'profesional', 'profesional_nombre', 'autor', 'autor_nombre',
             'tipo_cabello', 'tipo_cabello_nombre',
             'grosor_cabello', 'grosor_cabello_nombre',
             'porosidad_cabello', 'porosidad_cabello_nombre',
             'cuero_cabelludo', 'cuero_cabelludo_nombre',
             'estado_general', 'estado_general_nombre',
             'observaciones', 'mensaje_diagnostico', 'recomendaciones',
+            'campos_evaluados', 'resultado_calculado', 'estado_resultado',
+            'resultado_calculado_en', 'resultado_invalidado_en',
+            'resultado_invalidacion_motivo', 'correcciones_count',
             'regla_diagnostico', 'regla_diagnostico_mensaje', 'regla_diagnostico_accion',
             'rutina_sugerida', 'rutina_sugerida_nombre',
             'rutina_asignada', 'rutina_asignada_nombre', 'rutina_asignada_id',
@@ -1480,7 +1488,7 @@ class DiagnosticoCapilarSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             'id', 'fecha_diagnostico', 'cliente_email', 'profesional_nombre',
-            'profesional',
+            'profesional', 'autor', 'autor_nombre',
             'tipo_cabello_nombre', 'grosor_cabello_nombre', 'porosidad_cabello_nombre',
             'cuero_cabelludo_nombre', 'estado_general_nombre', 'regla_diagnostico_accion',
             'regla_diagnostico', 'regla_diagnostico_mensaje',
@@ -1488,8 +1496,16 @@ class DiagnosticoCapilarSerializer(serializers.ModelSerializer):
             'rutina_sugerida', 'rutina_asignada',
             'servicio_urgente', 'servicio_urgente_nombre', 'servicio_urgente_id',
             'rutina_asignada_id',
-            'turno_sugerido', 'turno_sugerido_id', 'procedencia'
+            'turno_sugerido', 'turno_sugerido_id', 'procedencia',
+            'campos_evaluados', 'resultado_calculado', 'estado_resultado',
+            'resultado_calculado_en', 'resultado_invalidado_en',
+            'resultado_invalidacion_motivo', 'correcciones_count',
         ]
+
+    def get_mensaje_diagnostico(self, obj):
+        # Compatibilidad para registros legacy cuyo resultado quedó mezclado en
+        # observaciones; los nuevos separan ambos textos.
+        return obj.resultado_calculado or obj.observaciones
 
     def validate(self, attrs):
         if self.instance is not None and 'cliente' in self.initial_data:
@@ -1499,6 +1515,63 @@ class DiagnosticoCapilarSerializer(serializers.ModelSerializer):
                     'cliente': 'El Cliente del diagnóstico no puede modificarse.'
                 })
         return attrs
+
+
+class CorreccionDiagnosticoCommandSerializer(serializers.Serializer):
+    motivo = serializers.CharField(
+        min_length=10,
+        max_length=2000,
+        allow_blank=False,
+        trim_whitespace=True,
+    )
+    tipo_cabello = serializers.PrimaryKeyRelatedField(
+        queryset=TipoCabello.objects.all(), required=False, allow_null=True,
+    )
+    grosor_cabello = serializers.PrimaryKeyRelatedField(
+        queryset=GrosorCabello.objects.all(), required=False, allow_null=True,
+    )
+    porosidad_cabello = serializers.PrimaryKeyRelatedField(
+        queryset=PorosidadCabello.objects.all(), required=False, allow_null=True,
+    )
+    cuero_cabelludo = serializers.PrimaryKeyRelatedField(
+        queryset=CueroCabelludo.objects.all(), required=False, allow_null=True,
+    )
+    estado_general = serializers.PrimaryKeyRelatedField(
+        queryset=EstadoGeneral.objects.all(), required=False, allow_null=True,
+    )
+    observaciones = serializers.CharField(
+        required=False, allow_null=True, allow_blank=True,
+    )
+    recomendaciones = serializers.CharField(
+        required=False, allow_null=True, allow_blank=True,
+    )
+
+    def validate(self, attrs):
+        correction_fields = set(attrs) - {'motivo'}
+        if not correction_fields:
+            raise serializers.ValidationError({
+                'non_field_errors': [
+                    'Debe indicar al menos un campo que necesita corrección.'
+                ]
+            })
+        return attrs
+
+
+class CorreccionDiagnosticoCapilarSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CorreccionDiagnosticoCapilar
+        fields = [
+            'public_id',
+            'diagnostico',
+            'actor',
+            'motivo',
+            'campos',
+            'valores_anteriores',
+            'valores_nuevos',
+            'cambio_perfil',
+            'corregido_en',
+        ]
+        read_only_fields = fields
 
 
 class ConfiguracionDiagnosticoSerializer(serializers.ModelSerializer):

@@ -20,6 +20,7 @@ from gestion.models import (
     Personal,
     PersonalHabilidad,
     Producto,
+    TipoCabello,
 )
 from usuarios.access_services import (
     change_administrative_business_role,
@@ -258,8 +259,13 @@ class PersonalAndSkillTransitionTests(CleanThreadLocalAPITestCase):
         )
         client = jwt_client(actor)
         url = reverse('diagnostico-capilar-list')
+        hair_type = TipoCabello.objects.create(nombre='Tipo evaluado dinámico')
 
-        allowed = client.post(url, {'cliente': client_profile.pk}, format='json')
+        allowed = client.post(
+            url,
+            {'cliente': client_profile.pk, 'tipo_cabello': hair_type.pk},
+            format='json',
+        )
         assignment.activa = False
         assignment.save(update_fields=['activa'])
         denied_skill = client.post(url, {'cliente': client_profile.pk}, format='json')

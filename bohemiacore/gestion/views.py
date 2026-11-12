@@ -78,7 +78,9 @@ from .serializers import (
     PagoSerializer, LegacyOrderPaymentCommandSerializer,
     ManualPaymentReconcileCommandSerializer,
     ManualPaymentRegisterCommandSerializer,
-    TipoEquipamientoSerializer, FichaTecnicaSerializer, RequisitoServicioSerializer, DiagnosticoCapilarSerializer,
+    TipoEquipamientoSerializer, FichaTecnicaSerializer, RequisitoServicioSerializer,
+    DiagnosticoCapilarSerializer, CorreccionDiagnosticoCommandSerializer,
+    CorreccionDiagnosticoCapilarSerializer,
     CategoriaProductoSerializer, PromocionSerializer, ConfiguracionSerializer, ConfiguracionRetoqueSummarySerializer,
     CarritoSerializer, CarritoItemSerializer, ContenidoEducativoSerializer, MeGustaSerializer, ContenidoGuardadoSerializer,
     OrdenPendienteSerializer, OrdenCompraSerializer, OrdenItemSerializer, ConfiguracionDiagnosticoSerializer,
@@ -247,6 +249,13 @@ from .turno_finalization_services import (
     TurnoFinalizationNotFound,
     TurnoFinalizationPermissionDenied,
     finalize_turno,
+)
+from .hair_profile_services import (
+    HairProfileInvalid,
+    HairProfileNotFound,
+    HairProfilePermissionDenied,
+    correct_diagnosis,
+    create_professional_evaluation,
 )
 from .turno_management_services import (
     CLIENT_CANCELLABLE_STATES,
@@ -5064,7 +5073,7 @@ class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
     search_fields = ['cliente__usuario__first_name', 'cliente__usuario__last_name']
     ordering_fields = ['fecha_diagnostico']
 
-    WRITE_ACTIONS = {'create', 'update', 'partial_update'}
+    WRITE_ACTIONS = {'create', 'update', 'partial_update', 'corregir'}
 
     def get_permissions(self):
         if self.action in self.WRITE_ACTIONS:
@@ -5101,19 +5110,82 @@ class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
             return queryset.filter(cliente=cliente)
         return queryset.none()
     
-    def perform_create(self, serializer):
-        """
-        Sobrescribimos perform_create para ejecutar el motor de diagnóstico
-        automáticamente después de guardar el diagnóstico.
-        """
-        # 1. Guarda el diagnóstico en la base de datos
-        diagnostico = serializer.save(
-            profesional=self.request.user,
-            procedencia=DiagnosticoCapilar.Procedencia.PROFESIONAL,
+    @transaction.atomic
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        cliente = serializer.validated_data['cliente']
+        try:
+            diagnostico = create_professional_evaluation(
+                actor=request.user,
+                cliente_id=cliente.pk,
+                data=serializer.validated_data,
+                run_engine=self._ejecutar_motor_diagnostico,
+            )
+        except HairProfilePermissionDenied as exc:
+            raise PermissionDenied(exc.detail) from exc
+        except HairProfileNotFound as exc:
+            return Response(
+                {'code': exc.code, 'detail': exc.detail},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except HairProfileInvalid as exc:
+            return Response(
+                {'code': exc.code, 'detail': exc.detail, 'field': exc.field},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        output = self.get_serializer(diagnostico)
+        headers = self.get_success_headers(output.data)
+        return Response(
+            output.data,
+            status=status.HTTP_201_CREATED,
+            headers=headers,
         )
-        
-        # 2. Dispara el motor de análisis (dos niveles)
-        self._ejecutar_motor_diagnostico(diagnostico)
+
+    def update(self, request, *args, **kwargs):
+        raise MethodNotAllowed(request.method)
+
+    def partial_update(self, request, *args, **kwargs):
+        raise MethodNotAllowed(request.method)
+
+    @action(detail=True, methods=['post'])
+    def corregir(self, request, pk=None):
+        command = CorreccionDiagnosticoCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        reason = command.validated_data['motivo']
+        corrections = {
+            field: value
+            for field, value in command.validated_data.items()
+            if field != 'motivo'
+        }
+        try:
+            result = correct_diagnosis(
+                actor=request.user,
+                diagnosis_id=pk,
+                corrections=corrections,
+                reason=reason,
+            )
+        except HairProfilePermissionDenied as exc:
+            return Response(
+                {'code': exc.code, 'detail': exc.detail},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        except HairProfileNotFound as exc:
+            return Response(
+                {'code': exc.code, 'detail': exc.detail},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except HairProfileInvalid as exc:
+            return Response(
+                {'code': exc.code, 'detail': exc.detail, 'field': exc.field},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response({
+            'diagnostico': self.get_serializer(result.diagnosis).data,
+            'correccion': CorreccionDiagnosticoCapilarSerializer(
+                result.correction
+            ).data,
+        })
     
     def destroy(self, request, *args, **kwargs):
         raise MethodNotAllowed(request.method)
@@ -5242,13 +5314,29 @@ class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
             servicio_urgente, regla_matcheada
         )
         
-        # 3. Guardar resultados en el Diagnóstico
+        # 3. Guardar el resultado derivado sin sobrescribir el texto original.
         diagnostico.servicio_urgente = servicio_urgente
         diagnostico.rutina_asignada = rutina_final
         diagnostico.rutina_sugerida = rutina_final
         diagnostico.regla_diagnostico = regla_matcheada
-        diagnostico.observaciones = mensaje_profesional
-        diagnostico.save()
+        diagnostico.resultado_calculado = mensaje_profesional
+        diagnostico.estado_resultado = (
+            DiagnosticoCapilar.EstadoResultado.CALCULADO
+        )
+        diagnostico.resultado_calculado_en = timezone.now()
+        diagnostico.resultado_invalidado_en = None
+        diagnostico.resultado_invalidacion_motivo = None
+        diagnostico.save(update_fields=[
+            'servicio_urgente',
+            'rutina_asignada',
+            'rutina_sugerida',
+            'regla_diagnostico',
+            'resultado_calculado',
+            'estado_resultado',
+            'resultado_calculado_en',
+            'resultado_invalidado_en',
+            'resultado_invalidacion_motivo',
+        ])
 
         # 4. Recomendar Turno (Si el score es bajo o la regla lo pide)
         if servicio_urgente:
@@ -5438,7 +5526,11 @@ class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
                         )
                     
                     # Usar el mensaje profesional del diagnóstico que ya fue generado
-                    mensaje_notificacion = diagnostico.observaciones or "Te recomendamos agendar tu cita"
+                    mensaje_notificacion = (
+                        diagnostico.resultado_calculado
+                        or diagnostico.observaciones
+                        or "Te recomendamos agendar tu cita"
+                    )
                     
                     notif = Notificacion.objects.create(
                         usuario=diagnostico.cliente.usuario,
