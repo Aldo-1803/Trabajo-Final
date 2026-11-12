@@ -1,0 +1,122 @@
+@startuml
+title UC-15 Gestionar Agenda (DSS)
+
+actor Profesional
+participant ":Sistema"
+
+'==================== PRECONDICIÓN ====================
+note over Profesional,":Sistema"
+Precondición: 
+- Usuario con rol Profesional autenticado.
+- Configuración inicial del salón existe (días laborales, horario default).
+Objetivo: definir/modificar disponibilidad del salón (horarios, bloqueos, excepciones).
+IRQ: Agendas y Disponibilidad, Turnos, Notificaciones, Seña de turnos.
+end note
+
+'==================== SECUENCIA NORMAL =================
+Profesional -> ":Sistema": navegarSeccionAgenda()
+":Sistema" --> Profesional: mostrarVistaCalendario(agendaActual)
+
+Profesional -> ":Sistema": seleccionarFechaRango(fecha/rango)
+":Sistema" --> Profesional: marcarSeleccion()
+
+Profesional -> ":Sistema": elegirDefinirHorariosLaborales()
+":Sistema" --> Profesional: solicitarHorarios()
+
+Profesional -> ":Sistema": ingresarHorarios(horaInicio, horaFin, fechas)
+activate ":Sistema"
+":Sistema" -> ":Sistema": validarFormatoFechaHora()
+
+alt formato válido
+  ":Sistema" -> ":Sistema": validarConsistenciaHorarios()\n(horaFin > horaInicio)
+  
+  alt horarios consistentes
+    ":Sistema" -> ":Sistema": guardarHorariosLaborales(fechas, horaInicio, horaFin)
+    ":Sistema" -> ":Sistema": reflejarEnAgenda()
+    ":Sistema" --> Profesional: confirmarActualizacion()
+    deactivate ":Sistema"
+  
+  else horario fin < horario inicio
+    ":Sistema" --> Profesional: errorHorarioNoValido()\nmensaje = "Hora fin debe ser posterior a hora inicio"
+    deactivate ":Sistema"
+  end
+
+else formato inválido
+  ":Sistema" --> Profesional: errorFormatoInvalido()\nmensaje = "Formato de fecha/hora no válido"
+  deactivate ":Sistema"
+end
+
+'==================== SECUENCIA ALTERNATIVA 1: BLOQUEAR HORARIO ====================
+note over Profesional,":Sistema"
+**SECUENCIA ALTERNATIVA 1: Bloquear un Horario Específico**
+end note
+
+Profesional -> ":Sistema": seleccionarBloqueHorario(fecha, horaInicio, horaFin)
+":Sistema" --> Profesional: mostrarSeleccion()
+
+Profesional -> ":Sistema": elegirBloquearHorario()
+":Sistema" --> Profesional: solicitarMotivoBloqueo()
+
+Profesional -> ":Sistema": ingresarMotivo(motivo)
+activate ":Sistema"
+":Sistema" -> ":Sistema": verificarTurnosAgendados(fecha, horaInicio, horaFin)
+
+alt NO hay turnos
+  ":Sistema" -> ":Sistema": marcarHorarioNoDisponible(bloqueoId)
+  ":Sistema" --> Profesional: confirmarBloqueo()
+  deactivate ":Sistema"
+
+else HAY turnos agendados
+  ":Sistema" --> Profesional: mostrarAdvertencia(turnosAfectados[])\nsolicitar = "confirmacionFinal"
+  deactivate ":Sistema"
+  
+  Profesional -> ":Sistema": confirmarCancelacionTurnos()
+  activate ":Sistema"
+  ":Sistema" -> ":Sistema": marcarHorarioNoDisponible(bloqueoId)
+  ":Sistema" -> ":Sistema": cambiarEstadoTurnos(turnosAfectados[], "CANCELADO_POR_PROFESIONAL")
+  ":Sistema" -> ":Sistema": enviarNotificacionesClientes(turnosAfectados[])
+  ":Sistema" --> Profesional: confirmarBloqueoYCancelaciones()
+  deactivate ":Sistema"
+end
+
+'==================== SECUENCIA ALTERNATIVA 2: MARCAR DÍA NO LABORABLE ====================
+note over Profesional,":Sistema"
+**SECUENCIA ALTERNATIVA 2: Marcar un Día como No Laborable / Feriado**
+end note
+
+Profesional -> ":Sistema": seleccionarDiaCompleto(fecha)
+":Sistema" --> Profesional: marcarDiaSeleccionado()
+
+Profesional -> ":Sistema": elegirMarcarDiaNoLaborable()
+":Sistema" --> Profesional: solicitarTipoDiaNoLaborable()
+
+Profesional -> ":Sistema": seleccionarTipo(tipo)  ' "Feriado" o "Vacaciones"
+activate ":Sistema"
+":Sistema" -> ":Sistema": marcarDiaCompletoNoDisponible(fecha, tipo)
+":Sistema" -> ":Sistema": bloquearAgendamientoTurnosFecha(fecha)
+":Sistema" --> Profesional: confirmarDiaNoLaborable()
+deactivate ":Sistema"
+
+'==================== POSTCONDICIÓN ====================
+note over Profesional,":Sistema"
+Postcondición (flujo exitoso):
+- Agenda del salón actualizada.
+- Estados de turnos actualizados si hubo bloqueos.
+- Notificaciones enviadas a clientes afectados.
+end note
+
+'==================== RENDIMIENTO ======================
+note right of ":Sistema"
+Rendimiento (paso 2):
+Carga de agenda completa <= 1 segundo.
+end note
+
+'==================== COMENTARIOS ======================
+note over ":Sistema"
+Tecnología:
+- Django backend gestiona lógica de bloqueos y cancelaciones.
+- React.js frontend con interfaz de calendario intuitiva.
+- Indicadores visuales claros para estados de turno.
+- Notificaciones automáticas vía email/push.
+end note
+@enduml

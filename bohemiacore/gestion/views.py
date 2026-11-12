@@ -1,39 +1,648 @@
-from rest_framework import viewsets, status, serializers
+from rest_framework import mixins, viewsets, status, serializers
 from rest_framework.decorators import api_view, permission_classes, action
-from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
-from rest_framework.exceptions import ValidationError, PermissionDenied
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.exceptions import (
+    MethodNotAllowed,
+    PermissionDenied,
+    ValidationError,
+)
 from rest_framework import generics
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from datetime import datetime, date, timedelta, time
-import datetime as dt
-from django.db import transaction
-from django.db.models import Q
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import SearchFilter, OrderingFilter
+from rest_framework.pagination import PageNumberPagination
+from datetime import datetime, timedelta, time
+from django.db import DatabaseError, transaction
+from django.db.models import Q, F, Sum
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
+from django.core.files.storage import default_storage
+from django.core.files.base import ContentFile
 import logging
+import datetime as dt
+import os
+from uuid import uuid4
+
+from django.http import FileResponse, Http404
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.shortcuts import get_object_or_404
+
+# Configurar logger global
+logger = logging.getLogger(__name__)
 
 from .models import (
     TipoCabello, GrosorCabello, PorosidadCabello, CueroCabelludo, EstadoGeneral, CategoriaServicio, Servicio, Turno, DetalleTurno,
-    Configuracion, ListaEspera, Producto, Equipamiento, Rutina, Notificacion, AgendaCuidados, Producto, ReglaDiagnostico,
-    RutinaCliente, HorarioLaboral, BloqueoAgenda, Personal, TipoEquipamiento, FichaTecnica, DiagnosticoCapilar, RequisitoServicio,
-    DiasSemana,
+    Configuracion, ListaEspera, Producto, ImagenProducto, Equipamiento, Rutina, Notificacion, AgendaCuidados, Producto, ReglaDiagnostico,
+    RutinaCliente, HorarioLaboral, BloqueoAgenda, Personal, Habilidad, PersonalHabilidad, TipoEquipamiento, FichaTecnica, DiagnosticoCapilar, RequisitoServicio,
+    CategoriaProducto, Promocion, ConfiguracionRetoque, DiasSemana, Carrito, CarritoItem, ContenidoEducativo, MeGusta, ContenidoGuardado,
+    OrdenPendiente, OrdenCompra, OrdenItem, Pago, ConfiguracionDiagnostico,
+    FamiliaProcesoTecnico, PerfilTecnicoServicio, PoliticaRiesgoTecnico,
+    ReglaIntervaloTecnico, ReglaDiagnosticoTecnico, ReglaFrecuenciaTecnica,
+    PaymentIntent, SlotHold, SolicitudTecnicaReserva, MovimientoStock,
+    ProviderPaymentAttempt,
     #PasoRutinaCliente
     #PasoRutina
 )
 
 from .serializers import (
     TipoCabelloSerializer, GrosorCabelloSerializer, PorosidadCabelloSerializer, CueroCabelludoSerializer, EstadoGeneralSerializer,
-    CategoriaServicioSerializer, ServicioSerializer, TurnoSerializer, RutinaSerializer, RutinaClienteSerializer,
-    RutinaClienteCreateSerializer, ReglaDiagnosticoSerializer, NotificacionSerializer, ProductoSerializer, EquipamientoSerializer,
-    UsuarioAdminSerializer, AgendaCuidadosSerializer, HorarioLaboralSerializer, BloqueoAgendaSerializer, PersonalSerializer,
-    TipoEquipamientoSerializer, FichaTecnicaSerializer, RequisitoServicioSerializer, DiagnosticoCapilarSerializer,
+    CategoriaServicioSerializer, ServicioSerializer, TurnoSerializer,
+    TurnoAgendaReadSerializer, TurnoClienteReadSerializer,
+    TurnoComprobanteUploadSerializer, TurnoReservaCommandSerializer,
+    TurnoParaClienteCommandSerializer, TurnoArrivalCommandSerializer,
+    TurnoCancellationCommandSerializer, TurnoClientRescheduleCommandSerializer,
+    TurnoRescheduleCommandSerializer,
+    RutinaSerializer, RutinaClienteSerializer,
+    RutinaClienteAssignCommandSerializer, RutinaClienteCreateSerializer,
+    ReglaDiagnosticoSerializer, NotificacionSerializer, ProductoSerializer, ImagenProductoSerializer, EquipamientoSerializer,
+    UsuarioAccountStatusCommandSerializer,
+    UsuarioAdminIdentityUpdateSerializer,
+    UsuarioAdminReadSerializer, AgendaCuidadosSerializer,
+    UsuarioBusinessRoleChangeCommandSerializer,
+    AgendaBlockCreateCommandSerializer,
+    HorarioLaboralSerializer, BloqueoAgendaSerializer, PersonalSerializer,
+    HabilidadSerializer, PersonalHabilidadSerializer,
+    PersonalSkillDirectorySerializer,
+    FamiliaProcesoTecnicoSerializer, PerfilTecnicoServicioSerializer,
+    PoliticaRiesgoTecnicoSerializer, ReglaIntervaloTecnicoSerializer,
+    ReglaDiagnosticoTecnicoSerializer, ReglaFrecuenciaTecnicaSerializer,
+    PersonalHabilidadAssignCommandSerializer,
+    PersonalHabilidadCommandSerializer,
+    PersonalAccessCreateCommandSerializer,
+    PersonalBusinessRoleChangeCommandSerializer,
+    PersonalStatusChangeCommandSerializer,
+    PersonalUserLinkCommandSerializer,
+    PagoSerializer, LegacyOrderPaymentCommandSerializer,
+    ManualPaymentReconcileCommandSerializer,
+    ManualPaymentRegisterCommandSerializer,
+    TipoEquipamientoSerializer, FichaTecnicaSerializer, RequisitoServicioSerializer,
+    DiagnosticoCapilarSerializer, CorreccionDiagnosticoCommandSerializer,
+    CorreccionDiagnosticoCapilarSerializer,
+    CategoriaProductoSerializer, PromocionSerializer, ConfiguracionSerializer, ConfiguracionRetoqueSummarySerializer,
+    CarritoSerializer, CarritoItemSerializer, ContenidoEducativoSerializer, MeGustaSerializer, ContenidoGuardadoSerializer,
+    OrdenPendienteSerializer, OrdenCompraSerializer, OrdenItemSerializer, ConfiguracionDiagnosticoSerializer,
+    TechnicalBookingRequestCreateSerializer,
+    TechnicalBookingRequestPublicSerializer,
+    TechnicalBookingRequestReevaluateSerializer,
+    TechnicalBookingRequestReviewSerializer,
+    TechnicalBookingReviewCommandSerializer,
+    SlotHoldCreateCommandSerializer,
+    SlotHoldPublicSerializer,
+    SlotHoldReleaseCommandSerializer,
+    PaymentIntentCancelCommandSerializer,
+    PaymentIntentCreateCommandSerializer,
+    PaymentIntentOperationalSerializer,
+    PaymentIntentOptionsQuerySerializer,
+    PaymentIntentPublicSerializer,
+    ProviderCheckoutCommandSerializer,
+    ProviderPaymentAttemptPublicSerializer,
+    StockAdjustCommandSerializer,
+    StockCorrectionCommandSerializer,
+    StockMovementSerializer,
+    StockReceiveCommandSerializer,
     #PasoRutinaSerializer,
 )
+from .permissions import (
+    CanCancelAnyTurno,
+    CanCreateDiagnosisWithSkill,
+    CanCreateTurnoForClient,
+    CanFinalizeService,
+    CanReadOwnedOrManageDiagnosis,
+    CanRegisterTurnoArrival,
+    CanReprogramAnyTurno,
+    CanViewGlobalAgenda,
+    CanViewGlobalAgendaOrManageConfiguration,
+    CanManagePersonal,
+    CanManageConfiguration,
+    CanManageSkills,
+    CanManageTechnicalRiskPolicy,
+    CanReviewTechnicalBooking,
+    CanViewFinancialReports,
+    CanViewReports,
+    CanManageStock,
+    CanViewStock,
+    CanManageProducts,
+    CanManagePrices,
+    CanManagePromotions,
+    CanManageProductsOrPrices,
+    CanManageProductsAndPrices,
+    CanManagePricesOrFormulas,
+    CanManageTechnicalRecordWithSkill,
+    CanReadOwnedOrManageTechnicalRecord,
+    CanAssignRoutines,
+    IsActiveUser,
+)
+from .inventory_services import (
+    StockConflict,
+    StockError,
+    StockInvalid,
+    StockNotFound,
+    StockPermissionDenied,
+    adjust_stock,
+    correct_stock_movement,
+    receive_stock,
+)
+from .agenda_services import (
+    AgendaBlockConflict,
+    AgendaBlockInvalid,
+    AgendaBlockPermissionDenied,
+    create_agenda_block,
+)
+from .routine_services import (
+    RoutineAssignmentConflict,
+    RoutineAssignmentInvalid,
+    assign_routine_copy,
+    ensure_internal_routine_assignment,
+)
+from .order_inventory_services import (
+    OrderInventoryError,
+    apply_order_inventory_effect,
+    apply_pending_order_inventory_effect,
+    create_order_stock_commitments,
+    release_order_stock_commitments,
+    release_pending_order_stock_commitments,
+)
+from .technical_booking_request_services import (
+    TechnicalBookingRequestError,
+    TechnicalBookingRequestNotFound,
+    TechnicalBookingRequestPermissionDenied,
+    TechnicalBookingRequestTransitionError,
+    accept_technical_warning,
+    create_technical_booking_request,
+    eligible_review_requests,
+    reevaluate_technical_booking_request,
+    review_technical_booking_request,
+)
+from .technical_risk_policy_services import (
+    TechnicalRiskPolicyInvalid,
+    TechnicalRiskPolicyNotFound,
+    TechnicalRiskPolicyPermissionDenied,
+    TechnicalRiskPolicyStateError,
+    publish_technical_risk_policy,
+)
+from .turno_creation_services import (
+    TurnoAvailabilityService,
+    TurnoCreationError,
+    TurnoCreationService,
+)
+from .slot_hold_clock import database_now
+from .slot_hold_services import (
+    SlotHoldConflict,
+    SlotHoldError,
+    SlotHoldNotFound,
+    create_slot_hold,
+    release_slot_hold,
+)
+from .payment_intent_services import (
+    PaymentIntentConflict,
+    PaymentIntentError,
+    PaymentIntentNotFound,
+    cancel_payment_intent,
+    create_payment_intent,
+    get_payment_intent_options,
+)
+from .provider_checkout_services import (
+    ProviderCheckoutConflict,
+    ProviderCheckoutError,
+    ProviderCheckoutNotFound,
+    ProviderCheckoutPermissionDenied,
+    start_booking_checkout,
+    start_cart_checkout,
+    start_order_checkout,
+)
+from .provider_event_services import (
+    ProviderEventAuthenticationError,
+    ProviderEventConfigurationError,
+    ProviderEventConflict,
+    ProviderEventError,
+    receive_mercado_pago_order_event,
+)
+from .manual_payment_services import (
+    ManualPaymentConflict,
+    ManualPaymentError,
+    ManualPaymentNotFound,
+    ManualPaymentPermissionDenied,
+    actor_can_read_payment,
+    financial_snapshot,
+    reconcile_manual_payment,
+    register_manual_payment,
+)
+from .legacy_order_payment_services import (
+    LegacyOrderPaymentConflict,
+    LegacyOrderPaymentError,
+    LegacyOrderPaymentNotFound,
+    LegacyOrderPaymentPermissionDenied,
+    register_legacy_order_payment,
+)
+from .turno_arrival_services import (
+    InvalidTurnoArrivalTransition,
+    PermissionDeniedForTurnoArrival,
+    TurnoArrivalTargetNotFound,
+    register_turno_arrival,
+)
+from .turno_finalization_services import (
+    TurnoFinalizationConflict,
+    TurnoFinalizationInvalid,
+    TurnoFinalizationNotFound,
+    TurnoFinalizationPermissionDenied,
+    finalize_turno,
+)
+from .hair_profile_services import (
+    HairProfileInvalid,
+    HairProfileNotFound,
+    HairProfilePermissionDenied,
+    correct_diagnosis,
+    create_professional_evaluation,
+)
+from .turno_management_services import (
+    CLIENT_CANCELLABLE_STATES,
+    CLIENT_REPROGRAMMABLE_STATES,
+    InvalidTurnoManagementTransition,
+    PermissionDeniedForTurnoManagement,
+    TurnoManagementError,
+    TurnoManagementTargetNotFound,
+    cancel_owned_turno,
+    cancel_turno,
+    reprogram_owned_turno,
+    reprogram_turno,
+)
+from .personal_access_services import (
+    ClientProfileRequired,
+    EmailAlreadyExists,
+    FullWorkAccessRevocationConflict,
+    InactiveUserForWorkAccessRevocation,
+    InvalidFullWorkAccessRevocationReason,
+    InvalidPersonalAccessEmail,
+    InvalidPersonalAccessRole,
+    InvalidPersonalBusinessRoleReason,
+    InvalidPersonalBusinessRoleTarget,
+    InvalidPersonalLinkReason,
+    InvalidPersonalLinkTarget,
+    InvalidPersonalLinkUser,
+    InvalidPersonalStatusReason,
+    InvalidTemporaryPassword,
+    InvalidWorkAccessState,
+    InvalidWorkAccessRevocationReason,
+    PermissionDeniedForPersonalLink,
+    PermissionDeniedForPersonalBusinessRoleChange,
+    PermissionDeniedForPersonalStatusChange,
+    PermissionDeniedForFullWorkAccessRevocation,
+    PermissionDeniedForWorkAccessRevocation,
+    PersonalAccessConflict,
+    PersonalAlreadyLinked,
+    PersonalAlreadyHasAccess,
+    PersonalBusinessRoleChangeConflict,
+    PersonalBusinessRoleChangeNotAllowed,
+    PersonalInactiveForAccess,
+    PersonalInactiveForRoleChange,
+    PersonalHasNoUser,
+    PersonalLinkConflict,
+    PersonalStatusConflict,
+    PersonalWithoutUserForRoleChange,
+    SelfWorkAccessRevocationNotAllowed,
+    MultiplePersonalBusinessRoles,
+    UserAlreadyLinkedToPersonal,
+    create_access_for_personal,
+    change_personal_business_role,
+    deactivate_personal,
+    link_user_to_personal,
+    reactivate_personal,
+    revoke_work_access_and_disable_account,
+    revoke_work_access_keep_client,
+    WorkAccessRevocationConflict,
+)
+from .personal_skill_services import (
+    InactiveSkill,
+    InvalidPersonalSkillReason,
+    PersonalSkillAssignmentNotFound,
+    PersonalSkillNotFound,
+    PersonalSkillPermissionDenied,
+    assign_skill,
+    reactivate_skill,
+    revoke_skill,
+)
+from .service_skill_compatibility import service_skill_policy
+from .effective_access import (
+    active_personal_for_user,
+    user_can_manage_content_globally,
+    user_can_manage_service_formula,
+    user_can_read_global_technical_record,
+)
+from usuarios.access_services import (
+    AccountDeactivationConflict,
+    AccountReactivationConflict,
+    InactivePersonal,
+    InconsistentBusinessRoleState,
+    InvalidAccountDeactivationReason,
+    InvalidAccountDeactivationTarget,
+    InvalidAccountReactivationReason,
+    InvalidAccountReactivationTarget,
+    InvalidBusinessRole,
+    InvalidRoleAssignmentTarget,
+    InvalidRoleChangeReason,
+    LastActiveAdministrator,
+    LastActiveAdministratorRoleChange,
+    MissingClientProfile,
+    MissingPersonalProfile,
+    PermissionDeniedForAccountDeactivation,
+    PermissionDeniedForAccountReactivation,
+    PermissionDeniedForRoleAssignment,
+    ProtectedSuperuser,
+    ResidualAdministrativeCapabilities,
+    SelfDeactivationNotAllowed,
+    SelfRoleAssignmentNotAllowed,
+    UserHasNoBusinessRole,
+    change_administrative_business_role,
+    deactivate_account,
+    reactivate_account,
+)
 
-from .services import DisponibilidadService 
 from usuarios.models import Usuario, Cliente
+from usuarios.filters import UsuarioFilter
+from usuarios.permissions import (
+    CanManageUsers,
+    CanManageUsersAndAssignRoles,
+)
+from usuarios.access_read_services import build_administrative_access_summary
+from usuarios.roles import BusinessPermission
+from .filters import (
+    ProductoFilter, TurnoFilter, PersonalFilter, ServicioFilter, 
+    ClienteFilter, RutinaFilter, TipoEquipamientoFilter, EquipamientoFilter, DiagnosticoCapilarFilter,
+    ConfiguracionFilter
+)
+
+# --- UPLOAD DE IMÁGENES ---
+@api_view(['POST'])
+@permission_classes([IsAuthenticated, CanManageProducts])
+def upload_imagen(request):
+    """
+    Endpoint para subir imágenes de productos.
+    Retorna la URL de la imagen subida.
+    """
+    if 'imagen' not in request.FILES:
+        return Response(
+            {'error': 'No se proporcionó imagen'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    imagen = request.FILES['imagen']
+    
+    extensiones_por_tipo = {
+        'image/jpeg': '.jpg',
+        'image/png': '.png',
+        'image/gif': '.gif',
+        'image/webp': '.webp',
+    }
+    extension = extensiones_por_tipo.get(imagen.content_type)
+    if extension is None:
+        return Response(
+            {'error': 'Solo se permiten archivos de imagen (JPEG, PNG, GIF, WebP)'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    # Validar tamaño (máx 5MB)
+    if imagen.size > 5 * 1024 * 1024:
+        return Response(
+            {'error': 'La imagen es demasiado grande. Máximo 5MB'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    ruta = None
+    try:
+        # Generar nombre único para el archivo
+        nombre_archivo = f'productos/{uuid4()}{extension}'
+        
+        # Guardar archivo en el storage (local o cloud)
+        ruta = default_storage.save(nombre_archivo, ContentFile(imagen.read()))
+        
+        # Obtener URL accesible de la imagen
+        url = default_storage.url(ruta)
+        
+        logger.info(f'Imagen subida exitosamente: {ruta}')
+        
+        return Response({
+            'url': url,
+            'nombre': imagen.name,
+            'tamano': imagen.size
+        }, status=status.HTTP_201_CREATED)
+        
+    except Exception:
+        if ruta is not None:
+            try:
+                if default_storage.exists(ruta):
+                    default_storage.delete(ruta)
+            except Exception:
+                logger.exception(
+                    'No se pudo limpiar la imagen después de un error de storage.'
+                )
+        logger.exception('Error al subir una imagen de producto.')
+        return Response(
+            {'error': 'Error al guardar la imagen'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+def _checkout_error_response(exc):
+    if isinstance(exc, ProviderCheckoutPermissionDenied):
+        response_status = status.HTTP_403_FORBIDDEN
+    elif isinstance(exc, ProviderCheckoutNotFound):
+        response_status = status.HTTP_404_NOT_FOUND
+    elif isinstance(exc, ProviderCheckoutConflict):
+        response_status = status.HTTP_409_CONFLICT
+    else:
+        response_status = status.HTTP_400_BAD_REQUEST
+    return Response(
+        {'code': exc.code, 'detail': exc.detail, 'field': exc.field},
+        status=response_status,
+    )
+
+
+def _checkout_result_response(result, request, *, cart_compatibility=False):
+    attempt = result.attempt
+    data = ProviderPaymentAttemptPublicSerializer(
+        attempt,
+        context={'request': request},
+    ).data
+    if cart_compatibility:
+        data.update({
+            'init_point': data['checkout_url'],
+            'orden_id': attempt.order_id,
+            'orden_codigo': attempt.order.codigo if attempt.order_id else None,
+            'total': float(attempt.amount),
+        })
+    if attempt.status == ProviderPaymentAttempt.Status.READY:
+        response_status = (
+            status.HTTP_201_CREATED if result.created else status.HTTP_200_OK
+        )
+    elif attempt.status in {
+        ProviderPaymentAttempt.Status.PROCESSING,
+        ProviderPaymentAttempt.Status.OUTCOME_UNKNOWN,
+    }:
+        response_status = status.HTTP_202_ACCEPTED
+    elif attempt.status == ProviderPaymentAttempt.Status.FAILED:
+        response_status = status.HTTP_503_SERVICE_UNAVAILABLE
+    else:
+        response_status = status.HTTP_409_CONFLICT
+    return Response(data, status=response_status)
+
+
+class GenerarPagoMercadoPagoView(APIView):
+    """
+    Endpoint para convertir el carrito actual en una OrdenCompra y generar
+    el link oficial de Mercado Pago.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            result = start_cart_checkout(
+                actor=request.user,
+                idempotency_key=request.headers.get('Idempotency-Key', ''),
+            )
+            return _checkout_result_response(
+                result,
+                request,
+                cart_compatibility=True,
+            )
+        except ProviderCheckoutError as exc:
+            return _checkout_error_response(exc)
+        except Exception as e:
+            logger.error(f"Error generando pago Mercado Pago: {str(e)}", exc_info=True)
+            return Response(
+                {'error': 'Error al generar el pago de Mercado Pago'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class WebhookMercadoPagoView(APIView):
+    """Inbox firmado de Orders API; nunca ejecuta efectos financieros."""
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        try:
+            received = receive_mercado_pago_order_event(
+                headers=request.headers,
+                query=request.query_params,
+                payload=request.data,
+            )
+        except ProviderEventAuthenticationError as exc:
+            return Response(
+                {'code': exc.code, 'detail': exc.detail},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        except ProviderEventConfigurationError as exc:
+            return Response(
+                {'code': exc.code, 'detail': exc.detail},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except ProviderEventConflict as exc:
+            return Response(
+                {'code': exc.code, 'detail': exc.detail},
+                status=status.HTTP_409_CONFLICT,
+            )
+        except ProviderEventError as exc:
+            return Response(
+                {'code': exc.code, 'detail': exc.detail},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except DatabaseError:
+            logger.exception('No se pudo persistir el webhook de Mercado Pago.')
+            return Response(
+                {'code': 'INBOX_UNAVAILABLE'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        return Response(
+            {
+                'status': 'received',
+                'duplicate': not received.created,
+            },
+            status=(
+                status.HTTP_201_CREATED
+                if received.created
+                else status.HTTP_200_OK
+            ),
+        )
+
+
+class ConfiguracionViewSet(viewsets.ModelViewSet):
+    queryset = Configuracion.objects.all()
+    serializer_class = ConfiguracionSerializer
+    permission_classes = [IsAuthenticated, CanManageConfiguration]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = ConfiguracionFilter
+    
+    def _ensure_singleton_exists(self):
+        """
+        Garantiza que existe el record singleton con pk=1.
+        Si no existe, lo crea con valores por defecto.
+        """
+        config, created = Configuracion.objects.get_or_create(pk=1)
+        if created:
+            logger.info("Configuración singleton creada automáticamente con valores por defecto")
+        return config
+    
+    def get_queryset(self):
+        # Asegurar que existe el singleton antes de consultar
+        self._ensure_singleton_exists()
+        # El singleton siempre retorna 1 solo objeto
+        return Configuracion.objects.filter(pk=1)
+
+    def update(self, request, *args, **kwargs):
+        # Log de quién cambió qué
+        logger.info(f"Usuario {request.user} ({request.user.email}) modificó Configuración Global del Sistema")
+        return super().update(request, *args, **kwargs)
+
+    def retrieve(self, request, *args, **kwargs):
+        # Asegurar que existe antes de recuperar
+        self._ensure_singleton_exists()
+        return super().retrieve(request, *args, **kwargs)
+
+    @action(detail=False, methods=['get'], url_path='publica', permission_classes=[AllowAny])
+    def configuracion_publica(self, request):
+        config = Configuracion.objects.filter(pk=1).first() or Configuracion()
+        return Response({
+            'empresa_nombre': config.empresa_nombre or 'Bohemia Hair'
+        })
+
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path='comprobante',
+        permission_classes=[IsAuthenticated, CanViewFinancialReports],
+    )
+    def configuracion_comprobante(self, request):
+        """Proyección fiscal mínima para comprobantes financieros."""
+        config = Configuracion.objects.filter(pk=1).first() or Configuracion()
+        return Response({
+            'empresa_nombre': config.empresa_nombre or 'Bohemia Hair',
+            'comprobante_razon_social': config.comprobante_razon_social,
+            'comprobante_cuil': config.comprobante_cuil,
+            'comprobante_fecha_inicio_actividad': (
+                config.comprobante_fecha_inicio_actividad
+            ),
+        })
+
+
+class ConfiguracionDiagnosticoViewSet(viewsets.ModelViewSet):
+    queryset = ConfiguracionDiagnostico.objects.all()
+    serializer_class = ConfiguracionDiagnosticoSerializer
+    permission_classes = [IsAuthenticated, CanManageConfiguration]
+
+    def _ensure_singleton_exists(self):
+        ConfiguracionDiagnostico.get_singleton()
+
+    def get_queryset(self):
+        self._ensure_singleton_exists()
+        return ConfiguracionDiagnostico.objects.filter(pk=1)
+
+    def retrieve(self, request, *args, **kwargs):
+        self._ensure_singleton_exists()
+        return super().retrieve(request, *args, **kwargs)
 
 class CatalogoBaseListView(generics.ListAPIView):
     permission_classes = [AllowAny]
@@ -58,31 +667,96 @@ class CueroCabelludoView(CatalogoBaseListView):
 class EstadoGeneralView(CatalogoBaseListView):
     queryset = EstadoGeneral.objects.all()
     serializer_class = EstadoGeneralSerializer
-class TipoCabelloViewSet(viewsets.ModelViewSet):
+
+
+class PublicReadManageConfigurationMixin:
+    """Preserva lectura pública y protege toda operación no lectora."""
+
+    def get_permissions(self):
+        permission_classes = (
+            [AllowAny]
+            if self.action in {'list', 'retrieve'}
+            else [IsAuthenticated, CanManageConfiguration]
+        )
+        return [permission() for permission in permission_classes]
+
+
+class AuthenticatedReadManageConfigurationMixin:
+    """Mantiene lectura autenticada y exige autoridad efectiva al escribir."""
+
+    authenticated_read_actions = {'list', 'retrieve'}
+
+    def get_permissions(self):
+        permission_classes = (
+            [IsAuthenticated]
+            if self.action in self.authenticated_read_actions
+            else [IsAuthenticated, CanManageConfiguration]
+        )
+        return [permission() for permission in permission_classes]
+
+
+class SoftDeleteActiveMixin:
+    """Desactiva catálogos para preservar referencias históricas."""
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        instance.activo = False
+        instance.save(update_fields=['activo'])
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class TipoCabelloViewSet(
+    PublicReadManageConfigurationMixin,
+    SoftDeleteActiveMixin,
+    viewsets.ModelViewSet,
+):
     queryset = TipoCabello.objects.all()
     serializer_class = TipoCabelloSerializer
-    permission_classes = [AllowAny]
-class GrosorCabelloViewSet(viewsets.ModelViewSet):
+
+
+class GrosorCabelloViewSet(
+    PublicReadManageConfigurationMixin,
+    SoftDeleteActiveMixin,
+    viewsets.ModelViewSet,
+):
     queryset = GrosorCabello.objects.all()
     serializer_class = GrosorCabelloSerializer
-    permission_classes = [AllowAny]
-class PorosidadCabelloViewSet(viewsets.ModelViewSet):
+
+
+class PorosidadCabelloViewSet(
+    PublicReadManageConfigurationMixin,
+    SoftDeleteActiveMixin,
+    viewsets.ModelViewSet,
+):
     queryset = PorosidadCabello.objects.all()
     serializer_class = PorosidadCabelloSerializer
-    permission_classes = [AllowAny]
-class CueroCabelludoViewSet(viewsets.ModelViewSet):
+
+
+class CueroCabelludoViewSet(
+    PublicReadManageConfigurationMixin,
+    SoftDeleteActiveMixin,
+    viewsets.ModelViewSet,
+):
     queryset = CueroCabelludo.objects.all()
     serializer_class = CueroCabelludoSerializer
-    permission_classes = [AllowAny]
-class EstadoGeneralViewSet(viewsets.ModelViewSet):
+
+
+class EstadoGeneralViewSet(
+    PublicReadManageConfigurationMixin,
+    SoftDeleteActiveMixin,
+    viewsets.ModelViewSet,
+):
     queryset = EstadoGeneral.objects.all()
     serializer_class = EstadoGeneralSerializer
-    permission_classes = [AllowAny]
 
-class CategoriaServicioViewSet(viewsets.ModelViewSet):
+
+class CategoriaServicioViewSet(
+    PublicReadManageConfigurationMixin,
+    SoftDeleteActiveMixin,
+    viewsets.ModelViewSet,
+):
     queryset = CategoriaServicio.objects.all()
     serializer_class = CategoriaServicioSerializer
-    permission_classes = [AllowAny]
 
 class ServicioViewSet(viewsets.ModelViewSet):
     """
@@ -91,6 +765,10 @@ class ServicioViewSet(viewsets.ModelViewSet):
     serializer_class = ServicioSerializer
     permission_classes = [AllowAny]
     pagination_class = None
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = ServicioFilter
+    search_fields = ['nombre', 'descripcion']
+    ordering_fields = ['nombre', 'precio_base']
     
     def get_queryset(self):
         return Servicio.objects.all().order_by('nombre')
@@ -120,91 +798,1074 @@ class ServiciosQuimicosViewSet(viewsets.ReadOnlyModelViewSet):
         ).order_by('nombre')
 
 
+class HabilidadViewSet(viewsets.ReadOnlyModelViewSet):
+    """Catálogo administrativo de skills técnicas."""
+    queryset = Habilidad.objects.all().order_by('nombre')
+    serializer_class = HabilidadSerializer
+    permission_classes = [IsAuthenticated, CanManageSkills]
+    pagination_class = None
+
+
+class TechnicalRiskAdminViewSetMixin:
+    permission_classes = [IsAuthenticated, CanManageTechnicalRiskPolicy]
+    pagination_class = None
+
+
+class FamiliaProcesoTecnicoViewSet(
+    TechnicalRiskAdminViewSetMixin,
+    viewsets.ModelViewSet,
+):
+    queryset = FamiliaProcesoTecnico.objects.all().order_by('nombre')
+    serializer_class = FamiliaProcesoTecnicoSerializer
+
+
+class PerfilTecnicoServicioViewSet(
+    TechnicalRiskAdminViewSetMixin,
+    viewsets.ModelViewSet,
+):
+    queryset = PerfilTecnicoServicio.objects.select_related(
+        'servicio', 'familia'
+    ).order_by('servicio__nombre')
+    serializer_class = PerfilTecnicoServicioSerializer
+
+
+class PoliticaRiesgoTecnicoViewSet(
+    TechnicalRiskAdminViewSetMixin,
+    viewsets.ModelViewSet,
+):
+    queryset = PoliticaRiesgoTecnico.objects.select_related(
+        'publicada_por'
+    ).all()
+    serializer_class = PoliticaRiesgoTecnicoSerializer
+
+    def update(self, request, *args, **kwargs):
+        policy = self.get_object()
+        if policy.estado != PoliticaRiesgoTecnico.Estado.BORRADOR:
+            raise MethodNotAllowed(
+                request.method,
+                detail='Una política publicada o retirada es inmutable.',
+            )
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        policy = self.get_object()
+        if policy.estado != PoliticaRiesgoTecnico.Estado.BORRADOR:
+            raise MethodNotAllowed(
+                request.method,
+                detail='Una política publicada o retirada no puede eliminarse.',
+            )
+        return super().destroy(request, *args, **kwargs)
+
+    @action(detail=True, methods=['post'])
+    def publicar(self, request, pk=None):
+        try:
+            policy = publish_technical_risk_policy(
+                actor=request.user,
+                policy_id=pk,
+            )
+        except TechnicalRiskPolicyPermissionDenied:
+            raise PermissionDenied(
+                'No tiene permisos para publicar políticas de riesgo técnico.'
+            )
+        except TechnicalRiskPolicyNotFound:
+            raise Http404
+        except TechnicalRiskPolicyStateError as exc:
+            return Response(
+                {'error': {'code': 'INVALID_POLICY_STATE', 'detail': str(exc)}},
+                status=status.HTTP_409_CONFLICT,
+            )
+        except TechnicalRiskPolicyInvalid as exc:
+            return Response(
+                {
+                    'error': {
+                        'code': 'INVALID_TECHNICAL_RISK_POLICY',
+                        'detail': str(exc),
+                        'errors': exc.errors,
+                    }
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(self.get_serializer(policy).data)
+
+
+class TechnicalRiskRuleViewSetMixin(TechnicalRiskAdminViewSetMixin):
+    def update(self, request, *args, **kwargs):
+        rule = self.get_object()
+        if rule.politica.estado != PoliticaRiesgoTecnico.Estado.BORRADOR:
+            raise MethodNotAllowed(
+                request.method,
+                detail='Las reglas de una política publicada son inmutables.',
+            )
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        rule = self.get_object()
+        if rule.politica.estado != PoliticaRiesgoTecnico.Estado.BORRADOR:
+            raise MethodNotAllowed(
+                request.method,
+                detail='Las reglas de una política publicada son inmutables.',
+            )
+        try:
+            return super().destroy(request, *args, **kwargs)
+        except DjangoValidationError as exc:
+            raise ValidationError(exc.messages)
+
+
+class ReglaIntervaloTecnicoViewSet(
+    TechnicalRiskRuleViewSetMixin,
+    viewsets.ModelViewSet,
+):
+    queryset = ReglaIntervaloTecnico.objects.select_related(
+        'politica', 'servicio_origen', 'familia_origen',
+        'servicio_destino', 'familia_destino',
+    ).all()
+    serializer_class = ReglaIntervaloTecnicoSerializer
+
+
+class ReglaDiagnosticoTecnicoViewSet(
+    TechnicalRiskRuleViewSetMixin,
+    viewsets.ModelViewSet,
+):
+    queryset = ReglaDiagnosticoTecnico.objects.select_related(
+        'politica', 'servicio_destino', 'familia_destino'
+    ).all()
+    serializer_class = ReglaDiagnosticoTecnicoSerializer
+
+
+class ReglaFrecuenciaTecnicaViewSet(
+    TechnicalRiskRuleViewSetMixin,
+    viewsets.ModelViewSet,
+):
+    queryset = ReglaFrecuenciaTecnica.objects.select_related(
+        'politica', 'servicio', 'familia'
+    ).all()
+    serializer_class = ReglaFrecuenciaTecnicaSerializer
+
+
 class PersonalViewSet(viewsets.ModelViewSet):
     """
-    ViewSet para gestionar el personal / staff del salón (CRUD completo).
+    Gestiona Personal mediante altas, edición y operaciones semánticas.
+
+    La eliminación física no forma parte de esta API.
     """
-    queryset = Personal.objects.all()
+    queryset = (
+        Personal.objects.select_related('usuario')
+        .prefetch_related('usuario__groups', 'horarios')
+    )
     serializer_class = PersonalSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = None
-    
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = PersonalFilter
+    search_fields = ['nombre']
+    ordering_fields = ['nombre']
 
+    def get_permissions(self):
+        if self.action in [
+            'skill_directory',
+            'habilidades',
+            'asignar_habilidad',
+            'revocar_habilidad',
+            'reactivar_habilidad',
+        ]:
+            permission_classes = [IsAuthenticated, CanManageSkills]
+        elif self.action in [
+            'destroy',
+            'vincular_usuario',
+            'crear_acceso',
+            'cambiar_rol_acceso',
+            'desactivar',
+            'reactivar',
+            'revocar_acceso_laboral',
+            'revocar_acceso_total',
+        ]:
+            permission_classes = [IsAuthenticated]
+        elif self.action in [
+            'list',
+            'retrieve',
+            'create',
+            'update',
+            'partial_update',
+        ]:
+            permission_classes = [IsAuthenticated, CanManagePersonal]
+        else:
+            permission_classes = [IsAuthenticated, CanManagePersonal]
+        return [permission() for permission in permission_classes]
+
+    @action(detail=False, methods=['get'], url_path='directorio-habilidades')
+    def skill_directory(self, request):
+        """Expose only the minimum personnel data required to manage skills."""
+        personnel = self.get_queryset().order_by('nombre', 'apellido', 'pk')
+        serializer = PersonalSkillDirectorySerializer(personnel, many=True)
+        return Response(serializer.data)
+
+    def destroy(self, request, *args, **kwargs):
+        """Personal has no ordinary hard-delete operation."""
+        raise MethodNotAllowed(
+            request.method,
+            detail=(
+                'Personal no puede eliminarse. Utilice las operaciones '
+                'semánticas de estado o revocación de acceso.'
+            ),
+        )
+
+    @staticmethod
+    def _skill_error(code, detail, status_code):
+        return Response(
+            {'error': {'code': code, 'detail': detail}},
+            status=status_code,
+        )
+
+    def _run_skill_command(self, command, *, skill_id, reason):
+        try:
+            return command(
+                actor=self.request.user,
+                personal_id=self.kwargs['pk'],
+                skill_id=skill_id,
+                reason=reason,
+            )
+        except InvalidPersonalSkillReason:
+            return self._skill_error(
+                'INVALID_REASON',
+                'El motivo administrativo es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except PersonalSkillPermissionDenied:
+            return self._skill_error(
+                'PERMISSION_DENIED',
+                'No tiene permisos para gestionar habilidades técnicas.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except PersonalSkillNotFound:
+            return self._skill_error(
+                'SKILL_OR_PERSONAL_NOT_FOUND',
+                'El Personal o la habilidad solicitada no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+        except PersonalSkillAssignmentNotFound:
+            return self._skill_error(
+                'SKILL_ASSIGNMENT_NOT_FOUND',
+                'El Personal no tiene asignada esa habilidad.',
+                status.HTTP_404_NOT_FOUND,
+            )
+        except InactiveSkill:
+            return self._skill_error(
+                'INACTIVE_SKILL',
+                'La habilidad está inactiva y no puede asignarse ni reactivarse.',
+                status.HTTP_409_CONFLICT,
+            )
+
+    def _validate_skill_command(self, serializer_class, data):
+        command = serializer_class(data=data)
+        if command.is_valid():
+            return command
+        code = (
+            'INVALID_REASON'
+            if set(command.errors) == {'motivo'}
+            else 'INVALID_PAYLOAD'
+        )
+        detail = (
+            'El motivo administrativo es inválido.'
+            if code == 'INVALID_REASON'
+            else 'El payload de la operación de habilidad es inválido.'
+        )
+        return self._skill_error(
+            code,
+            detail,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+    @action(detail=True, methods=['get'], url_path='habilidades')
+    def habilidades(self, request, pk=None):
+        personal = self.get_object()
+        assignments = (
+            PersonalHabilidad.objects.filter(personal=personal)
+            .select_related('habilidad')
+            .order_by('habilidad__nombre')
+        )
+        return Response(PersonalHabilidadSerializer(assignments, many=True).data)
+
+    @action(detail=True, methods=['post'], url_path='habilidades/asignar')
+    def asignar_habilidad(self, request, pk=None):
+        command = self._validate_skill_command(
+            PersonalHabilidadAssignCommandSerializer,
+            request.data,
+        )
+        if isinstance(command, Response):
+            return command
+        result = self._run_skill_command(
+            assign_skill,
+            skill_id=command.validated_data['habilidad_id'],
+            reason=command.validated_data['motivo'],
+        )
+        if isinstance(result, Response):
+            return result
+        return Response({
+            'changed': result.changed,
+            'event': result.event,
+            'assignment': PersonalHabilidadSerializer(result.assignment).data,
+        })
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path=r'habilidades/(?P<habilidad_id>[^/.]+)/revocar',
+    )
+    def revocar_habilidad(self, request, pk=None, habilidad_id=None):
+        command = self._validate_skill_command(
+            PersonalHabilidadCommandSerializer,
+            request.data,
+        )
+        if isinstance(command, Response):
+            return command
+        result = self._run_skill_command(
+            revoke_skill,
+            skill_id=habilidad_id,
+            reason=command.validated_data['motivo'],
+        )
+        if isinstance(result, Response):
+            return result
+        return Response({
+            'changed': result.changed,
+            'event': result.event,
+            'assignment': PersonalHabilidadSerializer(result.assignment).data,
+        })
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path=r'habilidades/(?P<habilidad_id>[^/.]+)/reactivar',
+    )
+    def reactivar_habilidad(self, request, pk=None, habilidad_id=None):
+        command = self._validate_skill_command(
+            PersonalHabilidadCommandSerializer,
+            request.data,
+        )
+        if isinstance(command, Response):
+            return command
+        result = self._run_skill_command(
+            reactivate_skill,
+            skill_id=habilidad_id,
+            reason=command.validated_data['motivo'],
+        )
+        if isinstance(result, Response):
+            return result
+        return Response({
+            'changed': result.changed,
+            'event': result.event,
+            'assignment': PersonalHabilidadSerializer(result.assignment).data,
+        })
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='vincular-usuario',
+        permission_classes=[IsAuthenticated],
+    )
+    def vincular_usuario(self, request, pk=None):
+        try:
+            personal = self.get_object()
+        except Http404:
+            return self._link_error(
+                'PERSONAL_NOT_FOUND',
+                'El Personal solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        command = PersonalUserLinkCommandSerializer(data=request.data)
+        if not command.is_valid():
+            error_code = (
+                'INVALID_REASON'
+                if set(command.errors) == {'motivo'}
+                else 'INVALID_PAYLOAD'
+            )
+            return self._link_error(
+                error_code,
+                'El payload de vinculación es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+                fields=command.errors,
+            )
+
+        try:
+            user = Usuario.objects.get(
+                pk=command.validated_data['usuario_id']
+            )
+        except Usuario.DoesNotExist:
+            return self._link_error(
+                'USER_NOT_FOUND',
+                'El Usuario solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            result = link_user_to_personal(
+                actor=request.user,
+                personal=personal,
+                user=user,
+                reason=command.validated_data['motivo'],
+            )
+        except PermissionDeniedForPersonalLink:
+            return self._link_error(
+                'PERMISSION_DENIED',
+                'No tiene permisos para vincular usuarios a Personal.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except ProtectedSuperuser:
+            return self._link_error(
+                'PROTECTED_SUPERUSER',
+                'El Usuario protegido no puede vincularse mediante esta acción.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except PersonalAlreadyLinked:
+            return self._link_error(
+                'PERSONAL_ALREADY_LINKED',
+                'El Personal ya está vinculado a otro Usuario.',
+                status.HTTP_409_CONFLICT,
+            )
+        except UserAlreadyLinkedToPersonal:
+            return self._link_error(
+                'USER_ALREADY_LINKED_TO_PERSONAL',
+                'El Usuario ya está vinculado a otro Personal.',
+                status.HTTP_409_CONFLICT,
+            )
+        except InconsistentBusinessRoleState:
+            return self._link_error(
+                'INCONSISTENT_BUSINESS_ROLES',
+                'El Usuario tiene múltiples roles de negocio.',
+                status.HTTP_409_CONFLICT,
+            )
+        except PersonalLinkConflict:
+            return self._link_error(
+                'PERSONAL_LINK_CONFLICT',
+                'El vínculo entra en conflicto con otra operación.',
+                status.HTTP_409_CONFLICT,
+            )
+        except InvalidPersonalLinkTarget:
+            return self._link_error(
+                'PERSONAL_NOT_FOUND',
+                'El Personal solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+        except InvalidPersonalLinkUser:
+            return self._link_error(
+                'USER_NOT_FOUND',
+                'El Usuario solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+        except InvalidPersonalLinkReason:
+            return self._link_error(
+                'INVALID_REASON',
+                'El motivo de vinculación es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response({
+            'changed': result.changed,
+            'personal_id': result.personal_id,
+            'usuario_id': result.user_id,
+            'personal_activo': result.personal_is_active,
+            'usuario_activo': result.user_is_active,
+            'rol': result.business_role,
+            'warnings': list(result.warnings),
+        }, status=status.HTTP_200_OK)
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='crear-acceso',
+        permission_classes=[IsAuthenticated],
+    )
+    def crear_acceso(self, request, pk=None):
+        try:
+            personal = self.get_object()
+        except Http404:
+            return self._link_error(
+                'PERSONAL_NOT_FOUND',
+                'El Personal solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        command = PersonalAccessCreateCommandSerializer(data=request.data)
+        if not command.is_valid():
+            error_fields = set(command.errors)
+            error_code = (
+                'INVALID_ROLE'
+                if error_fields == {'role'}
+                else 'INVALID_REASON'
+                if error_fields == {'motivo'}
+                else 'INVALID_PAYLOAD'
+            )
+            return self._link_error(
+                error_code,
+                'El payload de creación de acceso es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+                fields=command.errors,
+            )
+
+        try:
+            result = create_access_for_personal(
+                actor=request.user,
+                personal=personal,
+                email=command.validated_data['email'],
+                raw_password=command.validated_data['password_temporal'],
+                role=command.validated_data['role'],
+                reason=command.validated_data['motivo'],
+            )
+        except PermissionDeniedForPersonalLink:
+            return self._link_error(
+                'PERMISSION_DENIED',
+                'No tiene permisos para crear acceso para Personal.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except InvalidTemporaryPassword:
+            return self._link_error(
+                'INVALID_PASSWORD',
+                'La contraseña temporal no cumple los requisitos de seguridad.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except InvalidPersonalAccessRole:
+            return self._link_error(
+                'INVALID_ROLE',
+                'El rol solicitado no está permitido para acceso laboral.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except InvalidPersonalLinkReason:
+            return self._link_error(
+                'INVALID_REASON',
+                'El motivo de creación de acceso es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except InvalidPersonalAccessEmail:
+            return self._link_error(
+                'INVALID_PAYLOAD',
+                'El email proporcionado es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except InvalidPersonalLinkTarget:
+            return self._link_error(
+                'PERSONAL_NOT_FOUND',
+                'El Personal solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+        except EmailAlreadyExists:
+            return self._link_error(
+                'EMAIL_ALREADY_EXISTS',
+                'Ya existe un Usuario con ese email; utilice vincular-usuario.',
+                status.HTTP_409_CONFLICT,
+            )
+        except (PersonalAlreadyHasAccess, PersonalAlreadyLinked):
+            return self._link_error(
+                'PERSONAL_ALREADY_HAS_ACCESS',
+                'El Personal ya tiene un Usuario vinculado.',
+                status.HTTP_409_CONFLICT,
+            )
+        except PersonalInactiveForAccess:
+            return self._link_error(
+                'PERSONAL_INACTIVE',
+                'No se puede crear acceso para Personal inactivo.',
+                status.HTTP_409_CONFLICT,
+            )
+        except InconsistentBusinessRoleState:
+            return self._link_error(
+                'INCONSISTENT_BUSINESS_ROLES',
+                'El estado de roles de negocio es inconsistente.',
+                status.HTTP_409_CONFLICT,
+            )
+        except (PersonalAccessConflict, PersonalLinkConflict):
+            return self._link_error(
+                'PERSONAL_ACCESS_CONFLICT',
+                'La creación de acceso entra en conflicto con otra operación.',
+                status.HTTP_409_CONFLICT,
+            )
+
+        return Response({
+            'created': result.changed,
+            'personal_id': result.personal_id,
+            'usuario_id': result.user_id,
+            'email': result.email,
+            'rol': result.role,
+            'personal_activo': result.personal_active,
+            'usuario_activo': result.user_active,
+        }, status=status.HTTP_201_CREATED)
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='cambiar-rol-acceso',
+        permission_classes=[IsAuthenticated],
+    )
+    def cambiar_rol_acceso(self, request, pk=None):
+        try:
+            personal = self.get_object()
+        except Http404:
+            return self._link_error(
+                'PERSONAL_NOT_FOUND',
+                'El Personal solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        command = PersonalBusinessRoleChangeCommandSerializer(
+            data=request.data
+        )
+        if not command.is_valid():
+            error_fields = set(command.errors)
+            error_code = (
+                'INVALID_TARGET_ROLE'
+                if error_fields == {'role'}
+                else 'INVALID_REASON'
+                if error_fields == {'motivo'}
+                else 'INVALID_PAYLOAD'
+            )
+            return self._link_error(
+                error_code,
+                'El payload de cambio de rol de acceso es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+                fields=command.errors,
+            )
+
+        try:
+            result = change_personal_business_role(
+                actor=request.user,
+                personal=personal,
+                target_role=command.validated_data['role'],
+                reason=command.validated_data['motivo'],
+            )
+        except PermissionDeniedForPersonalBusinessRoleChange:
+            return self._link_error(
+                'PERMISSION_DENIED',
+                'No tiene permisos para cambiar el rol de acceso.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except InvalidPersonalBusinessRoleTarget:
+            return self._link_error(
+                'INVALID_TARGET_ROLE',
+                'Solo se permite asignar EMPLEADO o PROFESIONAL.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except InvalidPersonalBusinessRoleReason:
+            return self._link_error(
+                'INVALID_REASON',
+                'El motivo del cambio de rol es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except PersonalWithoutUserForRoleChange:
+            return self._link_error(
+                'PERSONAL_WITHOUT_USER',
+                'El Personal no tiene un Usuario vinculado.',
+                status.HTTP_409_CONFLICT,
+            )
+        except PersonalInactiveForRoleChange:
+            return self._link_error(
+                'PERSONAL_INACTIVE',
+                'El Personal debe estar activo para tener un rol laboral.',
+                status.HTTP_409_CONFLICT,
+            )
+        except MultiplePersonalBusinessRoles:
+            return self._link_error(
+                'MULTIPLE_BUSINESS_ROLES',
+                'El Usuario tiene múltiples roles de negocio.',
+                status.HTTP_409_CONFLICT,
+            )
+        except PersonalBusinessRoleChangeNotAllowed:
+            return self._link_error(
+                'ROLE_CHANGE_NOT_ALLOWED',
+                'El rol actual no puede cambiarse mediante esta acción.',
+                status.HTTP_409_CONFLICT,
+            )
+        except InvalidPersonalLinkTarget:
+            return self._link_error(
+                'PERSONAL_NOT_FOUND',
+                'El Personal solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+        except PersonalBusinessRoleChangeConflict:
+            return self._link_error(
+                'ROLE_CHANGE_CONFLICT',
+                'El cambio de rol entra en conflicto con otra operación.',
+                status.HTTP_409_CONFLICT,
+            )
+
+        return Response({
+            'changed': result.changed,
+            'personal_id': result.personal_id,
+            'usuario_id': result.user_id,
+            'previous_role': result.previous_role,
+            'new_role': result.new_role,
+        }, status=status.HTTP_200_OK)
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='desactivar',
+        permission_classes=[IsAuthenticated],
+    )
+    def desactivar(self, request, pk=None):
+        return self._change_status(request, deactivate_personal)
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='reactivar',
+        permission_classes=[IsAuthenticated],
+    )
+    def reactivar(self, request, pk=None):
+        return self._change_status(request, reactivate_personal)
+
+    def _change_status(self, request, service):
+        try:
+            personal = self.get_object()
+        except Http404:
+            return self._link_error(
+                'PERSONAL_NOT_FOUND',
+                'El Personal solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        command = PersonalStatusChangeCommandSerializer(data=request.data)
+        if not command.is_valid():
+            error_code = (
+                'INVALID_REASON'
+                if set(command.errors) == {'motivo'}
+                else 'INVALID_PAYLOAD'
+            )
+            return self._link_error(
+                error_code,
+                'El payload de cambio de estado es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+                fields=command.errors,
+            )
+
+        try:
+            result = service(
+                actor=request.user,
+                personal=personal,
+                reason=command.validated_data['motivo'],
+            )
+        except PermissionDeniedForPersonalStatusChange:
+            return self._link_error(
+                'PERMISSION_DENIED',
+                'No tiene permisos para cambiar el estado del Personal.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except InvalidPersonalStatusReason:
+            return self._link_error(
+                'INVALID_REASON',
+                'El motivo del cambio de estado es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except InvalidPersonalLinkTarget:
+            return self._link_error(
+                'PERSONAL_NOT_FOUND',
+                'El Personal solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+        except PersonalStatusConflict:
+            return self._link_error(
+                'PERSONAL_STATUS_CONFLICT',
+                'El estado del Personal cambió durante la operación.',
+                status.HTTP_409_CONFLICT,
+            )
+
+        return Response({
+            'changed': result.changed,
+            'personal_id': result.personal_id,
+            'activo_anterior': result.previous_active,
+            'activo_actual': result.current_active,
+            'usuario_id': result.user_id,
+            'usuario_activo': result.user_active,
+            'rol': result.current_role,
+            'warnings': list(result.warnings),
+        }, status=status.HTTP_200_OK)
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='revocar-acceso-laboral',
+        permission_classes=[IsAuthenticated],
+    )
+    def revocar_acceso_laboral(self, request, pk=None):
+        try:
+            personal = self.get_object()
+        except Http404:
+            return self._link_error(
+                'PERSONAL_NOT_FOUND',
+                'El Personal solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        command = PersonalStatusChangeCommandSerializer(data=request.data)
+        if not command.is_valid():
+            error_code = (
+                'INVALID_REASON'
+                if set(command.errors) == {'motivo'}
+                else 'INVALID_PAYLOAD'
+            )
+            return self._link_error(
+                error_code,
+                'El payload de revocación laboral es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+                fields=command.errors,
+            )
+
+        try:
+            result = revoke_work_access_keep_client(
+                actor=request.user,
+                personal=personal,
+                reason=command.validated_data['motivo'],
+            )
+        except PermissionDeniedForWorkAccessRevocation:
+            return self._link_error(
+                'PERMISSION_DENIED',
+                'No tiene permisos para revocar acceso laboral.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except ProtectedSuperuser:
+            return self._link_error(
+                'PROTECTED_SUPERUSER',
+                'El Usuario protegido no puede gestionarse mediante esta acción.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except SelfWorkAccessRevocationNotAllowed:
+            return self._link_error(
+                'SELF_REVOCATION_NOT_ALLOWED',
+                'No puede revocar su propio acceso laboral.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except InvalidWorkAccessRevocationReason:
+            return self._link_error(
+                'INVALID_REASON',
+                'El motivo de revocación laboral es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except InvalidPersonalLinkTarget:
+            return self._link_error(
+                'PERSONAL_NOT_FOUND',
+                'El Personal solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+        except PersonalHasNoUser:
+            return self._link_error(
+                'PERSONAL_HAS_NO_USER',
+                'El Personal no tiene un Usuario vinculado.',
+                status.HTTP_409_CONFLICT,
+            )
+        except ClientProfileRequired:
+            return self._link_error(
+                'CLIENT_PROFILE_REQUIRED',
+                'El Usuario debe tener un perfil Cliente existente.',
+                status.HTTP_409_CONFLICT,
+            )
+        except InactiveUserForWorkAccessRevocation:
+            return self._link_error(
+                'USER_INACTIVE',
+                'El Usuario está inactivo y no puede conservar acceso Cliente.',
+                status.HTTP_409_CONFLICT,
+            )
+        except InconsistentBusinessRoleState:
+            return self._link_error(
+                'INCONSISTENT_BUSINESS_ROLES',
+                'El Usuario tiene múltiples roles de negocio.',
+                status.HTTP_409_CONFLICT,
+            )
+        except InvalidWorkAccessState:
+            return self._link_error(
+                'INVALID_WORK_ACCESS_STATE',
+                'La cuenta no tiene un rol laboral revocable.',
+                status.HTTP_409_CONFLICT,
+            )
+        except (WorkAccessRevocationConflict, PersonalStatusConflict):
+            return self._link_error(
+                'WORK_ACCESS_REVOCATION_CONFLICT',
+                'La revocación entra en conflicto con otra operación.',
+                status.HTTP_409_CONFLICT,
+            )
+
+        return Response({
+            'changed': result.changed,
+            'personal_id': result.personal_id,
+            'usuario_id': result.user_id,
+            'rol_anterior': result.previous_role,
+            'rol_actual': result.current_role,
+            'personal_activo_anterior': result.previous_personal_active,
+            'personal_activo_actual': result.current_personal_active,
+            'usuario_activo': result.user_active,
+            'cliente_id': result.client_id,
+            'warnings': list(result.warnings),
+        }, status=status.HTTP_200_OK)
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='revocar-acceso-total',
+        permission_classes=[IsAuthenticated],
+    )
+    def revocar_acceso_total(self, request, pk=None):
+        try:
+            personal = self.get_object()
+        except Http404:
+            return self._link_error(
+                'PERSONAL_NOT_FOUND',
+                'El Personal solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        command = PersonalStatusChangeCommandSerializer(data=request.data)
+        if not command.is_valid():
+            error_code = (
+                'INVALID_REASON'
+                if set(command.errors) == {'motivo'}
+                else 'INVALID_PAYLOAD'
+            )
+            return self._link_error(
+                error_code,
+                'El payload de baja total es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+                fields=command.errors,
+            )
+
+        try:
+            result = revoke_work_access_and_disable_account(
+                actor=request.user,
+                personal=personal,
+                reason=command.validated_data['motivo'],
+            )
+        except PermissionDeniedForFullWorkAccessRevocation:
+            return self._link_error(
+                'PERMISSION_DENIED',
+                'No tiene permisos para realizar la baja total.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except ProtectedSuperuser:
+            return self._link_error(
+                'PROTECTED_SUPERUSER',
+                'El Usuario protegido no puede gestionarse mediante esta acción.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except SelfDeactivationNotAllowed:
+            return self._link_error(
+                'SELF_DEACTIVATION_NOT_ALLOWED',
+                'No puede desactivar su propia cuenta mediante esta acción.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except LastActiveAdministrator:
+            return self._link_error(
+                'LAST_ACTIVE_ADMIN',
+                'No puede desactivarse el último administrador activo.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except InvalidFullWorkAccessRevocationReason:
+            return self._link_error(
+                'INVALID_REASON',
+                'El motivo de baja total es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except InvalidPersonalLinkTarget:
+            return self._link_error(
+                'PERSONAL_NOT_FOUND',
+                'El Personal solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+        except PersonalHasNoUser:
+            return self._link_error(
+                'PERSONAL_HAS_NO_USER',
+                'El Personal no tiene un Usuario vinculado.',
+                status.HTTP_409_CONFLICT,
+            )
+        except FullWorkAccessRevocationConflict:
+            return self._link_error(
+                'WORK_ACCESS_REVOCATION_CONFLICT',
+                'La baja total entra en conflicto con otra operación.',
+                status.HTTP_409_CONFLICT,
+            )
+
+        return Response({
+            'changed': result.changed,
+            'personal_id': result.personal_id,
+            'usuario_id': result.user_id,
+            'personal_activo_anterior': result.previous_personal_active,
+            'personal_activo_actual': result.current_personal_active,
+            'usuario_activo_anterior': result.previous_user_active,
+            'usuario_activo_actual': result.current_user_active,
+            'rol_actual': result.current_role,
+            'refresh_tokens_revoked': result.refresh_tokens_revoked,
+            'warnings': list(result.warnings),
+        }, status=status.HTTP_200_OK)
+
+    @staticmethod
+    def _link_error(code, detail, status_code, fields=None):
+        error = {'code': code, 'detail': detail}
+        if fields is not None:
+            error['fields'] = fields
+        return Response({'error': error}, status=status_code)
+    
 class DisponibilidadTurnosView(APIView):
     """
-    Endpoint público (o protegido) para consultar la agenda.
+    Alias público legacy para consultar slots mediante la lógica canónica.
     Uso: GET /api/gestion/disponibilidad/?fecha=2023-11-01&servicio_id=1
     """
-    # Sugerencia: AllowAny para que el cliente pueda ver horarios antes de registrarse/loguearse.
-    # Si prefieres privacidad total, cámbialo a [IsAuthenticated]
-    permission_classes = [AllowAny] 
+    permission_classes = [AllowAny]
 
     def get(self, request):
-        import logging
-        logger = logging.getLogger(__name__)
-        
-        # 1. Recibir parámetros del Frontend
-        fecha_str = request.query_params.get('fecha') # Esperamos 'YYYY-MM-DD'
+        fecha_str = request.query_params.get('fecha')
         servicio_id = request.query_params.get('servicio_id')
-        
-        logger.info(f"DisponibilidadTurnosView: Recibida solicitud - fecha={fecha_str}, servicio_id={servicio_id}")
 
-        # 2. Validaciones de Entrada
         if not fecha_str or not servicio_id:
-            logger.error(f"Parámetros incompletos: fecha_str={fecha_str}, servicio_id={servicio_id}")
             return Response(
-                {"error": "Faltan parámetros obligatorios: 'fecha' y 'servicio_id'."}, 
-                status=status.HTTP_400_BAD_REQUEST
+                {"error": "Faltan parámetros obligatorios: 'fecha' y 'servicio_id'."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         try:
             fecha_consulta = datetime.strptime(fecha_str, '%Y-%m-%d').date()
-            logger.info(f"Fecha parseada correctamente: {fecha_consulta}")
-            
-            # Validación básica de negocio: No viajar al pasado
-            if fecha_consulta < date.today():
-                 logger.warning(f"Intento de consultar fecha pasada: {fecha_consulta}")
-                 return Response(
-                     {"error": "No se pueden agendar turnos en el pasado."}, 
-                     status=status.HTTP_400_BAD_REQUEST
-                 )
-                 
-            servicio = Servicio.objects.get(id=servicio_id)
-            logger.info(f"Servicio encontrado: {servicio.nombre}, duración: {servicio.duracion_estimada}")
-            
-        except ValueError as ve:
-            logger.error(f"Error de formato de fecha: {ve}")
-            return Response({"error": "Formato de fecha inválido. Use AAAA-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
-        except Servicio.DoesNotExist:
-            logger.error(f"Servicio no encontrado con ID: {servicio_id}")
-            return Response({"error": "El servicio especificado no existe."}, status=status.HTTP_404_NOT_FOUND)
-
-        # 3. Invocar al "Cerebro" (Tu Service)
-        try:
-            # Si el servicio no tiene duración, asumimos 60 min por defecto para evitar crash
-            duracion = servicio.duracion_estimada or 60
-            logger.info(f"Calculando bloques disponibles para {fecha_consulta} con duración {duracion} min")
-            
-            bloques_libres = DisponibilidadService.obtener_bloques_disponibles(
-                fecha_consulta=fecha_consulta,
-                servicio=servicio
+        except ValueError:
+            return Response(
+                {"error": "Formato de fecha inválido. Use AAAA-MM-DD."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
-            
-            logger.info(f"Bloques libres encontrados: {len(bloques_libres)}")
-            
-        except Exception as e:
-            # Capturamos errores inesperados del algoritmo
-            logger.error(f"Error al calcular disponibilidad: {str(e)}", exc_info=True)
-            return Response({"error": f"Error interno de agenda: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        # 4. Responder JSON al Frontend
-        logger.info(f"Respuesta exitosa: {len(bloques_libres)} horarios disponibles")
+        try:
+            servicio = Servicio.objects.prefetch_related(
+                'requisitos_habilidad__habilidad'
+            ).get(id=servicio_id, activo=True)
+        except Servicio.DoesNotExist:
+            return Response(
+                {"error": "El servicio especificado no existe."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        config = Configuracion.objects.first()
+        max_dias = config.max_dias_anticipacion if config else 60
+        intervalo_minutos = config.intervalo_turnos if config else 30
+        hoy = timezone.localdate()
+        if fecha_consulta < hoy:
+            return Response(
+                {"error": "No se pueden agendar turnos en el pasado."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if fecha_consulta > hoy + timedelta(days=max_dias):
+            return Response(
+                {"error": "La fecha supera el horizonte habilitado para reservas."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        horarios = set()
+        for schedule in TurnoAvailabilityService.matching_schedules(
+            fecha=fecha_consulta,
+            servicio=servicio,
+        ):
+            slots = TurnoAvailabilityService.available_slots_for_schedule(
+                fecha=fecha_consulta,
+                schedule=schedule,
+                servicio=servicio,
+                intervalo_minutos=intervalo_minutos,
+            )
+            horarios.update(slot['hora'] for slot in slots)
+
         return Response({
             "fecha": fecha_str,
             "servicio_solicitado": servicio.nombre,
-            "duracion_minutos": duracion,
-            # Convertimos los objetos time a string "HH:MM" para JSON
-            "horarios_disponibles": [t.strftime('%H:%M') for t in bloques_libres]
+            "duracion_minutos": servicio.duracion_estimada or 60,
+            "horarios_disponibles": sorted(horarios),
         }, status=status.HTTP_200_OK)
 
 
@@ -212,25 +1873,31 @@ class ServicioViewSet(viewsets.ModelViewSet):
     """
     ViewSet para gestionar servicios con CRUD completo.
     - Lectura: AllowAny (clientes pueden ver servicios disponibles)
-    - Creación/Actualización/Eliminación: Solo IsAdminUser
+    - Creación/Actualización/Eliminación: manage_prices efectivo
     """
     serializer_class = ServicioSerializer
     pagination_class = None
 
     def get_queryset(self):
-        # Admins ven todos los servicios (activos e inactivos)
-        # Clientes ven solo activos
-        if self.request.user.is_staff:
+        # La gestión de precios usa permiso efectivo; la lectura pública ve activos.
+        user = self.request.user
+        can_manage_formulas = user_can_manage_service_formula(user)
+        if user.is_authenticated and (
+            user.has_perm(BusinessPermission.MANAGE_PRICES)
+            or can_manage_formulas
+        ):
             return Servicio.objects.all().order_by('nombre')
         else:
             return Servicio.objects.filter(activo=True).order_by('nombre')
     
     def get_permissions(self):
-        """Permisos dinámicos: lista/retrieve abierto, CRUD solo para admins"""
+        """Lectura pública; toda escritura requiere manage_prices efectivo."""
         if self.action in ['list', 'retrieve']:
             permission_classes = [AllowAny]
+        elif self.action in ['update', 'partial_update']:
+            permission_classes = [IsAuthenticated, CanManagePricesOrFormulas]
         else:
-            permission_classes = [IsAdminUser]
+            permission_classes = [IsAuthenticated, CanManagePrices]
         return [permission() for permission in permission_classes]
     
     def perform_destroy(self, instance):
@@ -245,98 +1912,449 @@ class TurnoViewSet(viewsets.ModelViewSet):
     serializer_class = TurnoSerializer
     pagination_class = None 
     permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = TurnoFilter
+    search_fields = ['cliente__usuario__first_name', 'cliente__usuario__last_name']
+    ordering_fields = ['fecha', 'hora_inicio', 'estado']
 
-    def _auto_cancel_expired_turnos(self):
-        """
-        Detecta y cancela automáticamente turnos que pasaron su fecha
-        sin confirmación (estados SOLICITADO o ESPERANDO_SENA).
-        """
-        now = timezone.now()
-        
-        # Buscar turnos expirados comparando fecha + hora contra ahora
-        expired_turnos = Turno.objects.filter(
-            estado__in=[Turno.Estado.SOLICITADO, Turno.Estado.ESPERANDO_SENA]
-        )
+    SAFE_DETAIL_ACTIONS = {
+        'retrieve',
+        'verificar_expiracion',
+    }
 
-        for turno in expired_turnos:
-            try:
-                # Combinar fecha e hora para comparar
-                turno_dt = timezone.make_aware(datetime.combine(turno.fecha, turno.hora_inicio)) \
-                    if timezone.is_naive(datetime.combine(turno.fecha, turno.hora_inicio)) \
-                    else datetime.combine(turno.fecha, turno.hora_inicio)
-                
-                # Si ya pasó
-                if turno_dt < now:
-                    estado_anterior = turno.estado
-                    
-                    # Cancelar automáticamente
-                    turno.estado = Turno.Estado.CANCELADO
-                    turno.motivo_cancelacion = "Cancelado automáticamente: Turno expirado sin confirmación"
-                    turno.save()
+    def get_permissions(self):
+        if self.action == 'list':
+            permission_classes = [IsAuthenticated, CanViewGlobalAgenda]
+        elif self.action in [
+            'crear_para_cliente',
+            'selector_clientes',
+            'selector_personal',
+        ]:
+            permission_classes = [IsAuthenticated, CanCreateTurnoForClient]
+        elif self.action == 'registrar_llegada':
+            permission_classes = [IsAuthenticated, CanRegisterTurnoArrival]
+        elif self.action == 'reprogramar':
+            permission_classes = [IsAuthenticated, CanReprogramAnyTurno]
+        elif self.action == 'cancelar':
+            permission_classes = [IsAuthenticated, CanCancelAnyTurno]
+        elif self.action == 'finalizar_turno':
+            permission_classes = [
+                IsAuthenticated,
+                IsActiveUser,
+                CanFinalizeService,
+            ]
+        else:
+            permission_classes = [IsAuthenticated]
+        return [permission() for permission in permission_classes]
 
-                    # Notificar al cliente
-                    Notificacion.objects.get_or_create(
-                        usuario=turno.cliente.usuario,
-                        tipo='TURNO',
-                        titulo='Turno Cancelado - Expiración de plazo',
-                        defaults={
-                            'canal': 'in-app',
-                            'mensaje': f'Tu turno del {turno_dt.strftime("%d/%m/%Y %H:%M")} ha sido cancelado automáticamente porque pasó la fecha sin confirmación.',
-                            'estado': 'pendiente'
-                        }
-                    )
-            except Exception as e:
-                logging.error(f"Error auto-cancelando turno {turno.id}: {str(e)}")
+    def get_serializer_class(self):
+        if self.action in ['list', 'mi_agenda_laboral']:
+            return TurnoAgendaReadSerializer
+        if self.action in ['mis_turnos', 'subir_comprobante']:
+            return TurnoClienteReadSerializer
+        return TurnoSerializer
+
+    def _readable_turnos(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+
+        if user.has_perm(BusinessPermission.VIEW_GLOBAL_AGENDA):
+            return queryset
+
+        scopes = Q(cliente__usuario=user)
+        if user.is_active:
+            scopes |= Q(
+                profesional__usuario=user,
+                profesional__activo=True,
+            )
+        return queryset.filter(scopes)
+
+    def _legacy_action_queryset(self):
+        """Preserva el alcance previo de acciones aún no migradas."""
+        queryset = super().get_queryset()
+        if self.request.user.is_staff:
+            return queryset
+        if hasattr(self.request.user, 'cliente'):
+            return queryset.filter(cliente=self.request.user.cliente)
+        return queryset.none()
 
     def get_queryset(self):
-        # ✅ NUEVO: Auto-limpiar turnos expirados cada vez que se consulta
-        self._auto_cancel_expired_turnos()
-        
         queryset = super().get_queryset()
-        ahora = timezone.now()
 
-        # Si es el profesional/admin, ocultamos por defecto los pendientes que ya pasaron
-        if self.request.user.is_staff:
-            # Solo mostramos SOLICITADOS o ESPERANDO_SENA si son de HOY en adelante
-            queryset = queryset.exclude(
-                Q(fecha__lt=ahora.date()) | Q(fecha=ahora.date(), hora_inicio__lt=ahora.time()),
-                estado__in=['solicitado', 'esperando_sena']
+        if self.action == 'list':
+            queryset = queryset
+        elif self.action == 'mis_turnos':
+            cliente = getattr(self.request.user, 'cliente', None)
+            queryset = (
+                queryset.filter(cliente=cliente)
+                if cliente is not None
+                else queryset.none()
             )
-        elif hasattr(self.request.user, 'cliente'):
-            # Cliente solo ve sus propios turnos
-            queryset = queryset.filter(cliente=self.request.user.cliente)
+        elif self.action == 'mi_agenda_laboral':
+            personal = getattr(self.request.user, 'perfil_profesional', None)
+            if (
+                personal is None
+                or not personal.activo
+                or not self.request.user.is_active
+            ):
+                queryset = queryset.none()
+            else:
+                queryset = queryset.filter(profesional=personal)
+        elif self.action in self.SAFE_DETAIL_ACTIONS:
+            queryset = self._readable_turnos()
+        elif self.action == 'finalizar_turno':
+            queryset = queryset
         else:
-            # Usuario sin cliente, no ve nada
-            queryset = queryset.none()
+            queryset = self._legacy_action_queryset()
              
-        # Filtro opcional por estado
+        #Filtro opcional por estado
         estado = self.request.query_params.get('estado')
         if estado:
             queryset = queryset.filter(estado=estado)
         
-        # ✅ Ordenar por fecha y hora
+        #Ordenar por fecha y hora
         queryset = queryset.order_by('-fecha', '-hora_inicio')
         
         return queryset
 
-    def perform_create(self, serializer):
-        """Crear turno y calcular fecha_limite_pago si es necesario"""
-        turno = serializer.save()
-        
-        # Si el turno se crea directamente en ESPERANDO_SENA, calcular plazo de pago
-        if turno.estado == Turno.Estado.ESPERANDO_SENA:
-            config = Configuracion.objects.first()
-            if config:
-                turno.fecha_limite_pago = timezone.now() + timedelta(hours=config.tiempo_limite_pago_sena)
-                turno.save()
-    
+    def retrieve(self, request, *args, **kwargs):
+        turno = self.get_object()
+        serializer_class = (
+            TurnoClienteReadSerializer
+            if turno.cliente.usuario_id == request.user.pk
+            else TurnoAgendaReadSerializer
+        )
+        serializer = serializer_class(
+            turno,
+            context=self.get_serializer_context(),
+        )
+        return Response(serializer.data)
+
+    def update(self, request, *args, **kwargs):
+        raise MethodNotAllowed(request.method)
+
+    def partial_update(self, request, *args, **kwargs):
+        raise MethodNotAllowed(request.method)
+
+    def destroy(self, request, *args, **kwargs):
+        raise MethodNotAllowed(request.method)
+
+    def create(self, request, *args, **kwargs):
+        raise MethodNotAllowed(request.method)
+
+    @staticmethod
+    def _creation_validation_error(exc):
+        return ValidationError({
+            exc.field: [exc.detail],
+            'code': exc.code,
+        })
+
+    @action(detail=False, methods=['post'], url_path='reservar')
+    def reservar(self, request):
+        cliente = getattr(request.user, 'cliente', None)
+        if cliente is None or not cliente.activo or not request.user.is_active:
+            raise PermissionDenied('Se requiere un perfil de Cliente activo.')
+
+        command = TurnoReservaCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        try:
+            turno = TurnoCreationService.create(
+                cliente_id=cliente.pk,
+                servicio_id=command.validated_data['servicio'],
+                profesional_id=command.validated_data['profesional'],
+                fecha=command.validated_data['fecha'],
+                hora_inicio=command.validated_data['hora_inicio'],
+                source=Turno.CanalOrigen.WEB,
+            )
+        except TurnoCreationError as exc:
+            raise self._creation_validation_error(exc)
+
+        return Response({
+            'mensaje': 'Turno solicitado correctamente.',
+            'turno': TurnoClienteReadSerializer(
+                turno,
+                context=self.get_serializer_context(),
+            ).data,
+            'alerta_daño_capilar': turno.alerta_daño_capilar,
+            'advertencia': (
+                'El Turno requiere evaluación profesional por posible riesgo capilar.'
+                if turno.alerta_daño_capilar
+                else None
+            ),
+        }, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['post'], url_path='crear-para-cliente')
+    def crear_para_cliente(self, request):
+        command = TurnoParaClienteCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        try:
+            turno = TurnoCreationService.create(
+                cliente_id=command.validated_data['cliente_id'],
+                servicio_id=command.validated_data['servicio'],
+                profesional_id=command.validated_data['profesional'],
+                fecha=command.validated_data['fecha'],
+                hora_inicio=command.validated_data['hora_inicio'],
+                source=Turno.CanalOrigen.PRESENCIAL,
+            )
+        except TurnoCreationError as exc:
+            raise self._creation_validation_error(exc)
+
+        return Response({
+            'mensaje': 'Turno solicitado para el Cliente correctamente.',
+            'turno': TurnoAgendaReadSerializer(
+                turno,
+                context=self.get_serializer_context(),
+            ).data,
+        }, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='registrar-llegada')
+    def registrar_llegada(self, request, pk=None):
+        command = TurnoArrivalCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+
+        try:
+            result = register_turno_arrival(
+                actor=request.user,
+                turno_id=pk,
+            )
+        except PermissionDeniedForTurnoArrival:
+            raise PermissionDenied('No tiene permisos para registrar la llegada.')
+        except TurnoArrivalTargetNotFound:
+            raise Http404
+        except InvalidTurnoArrivalTransition as exc:
+            return Response(
+                {
+                    'code': 'INVALID_ARRIVAL_TRANSITION',
+                    'detail': 'El Turno no admite registrar llegada en su estado actual.',
+                    'estado_actual': exc.current_state,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        return Response({
+            'turno_id': result.turno.pk,
+            'changed': result.changed,
+            'estado_anterior': result.previous_state,
+            'estado_actual': result.current_state,
+        }, status=status.HTTP_200_OK)
+
+    @staticmethod
+    def _management_conflict(exc, code):
+        return Response(
+            {
+                'code': code,
+                'detail': 'El Turno no admite esta operación en su estado actual.',
+                'estado_actual': exc.current_state,
+            },
+            status=status.HTTP_409_CONFLICT,
+        )
+
+    @staticmethod
+    def _management_validation_error(exc):
+        return Response(
+            {
+                exc.field: [exc.detail],
+                'code': exc.code,
+            },
+            status=status.HTTP_409_CONFLICT,
+        )
+
+    @action(detail=True, methods=['post'], url_path='reprogramar')
+    def reprogramar(self, request, pk=None):
+        command = TurnoRescheduleCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        try:
+            result = reprogram_turno(
+                actor=request.user,
+                turno_id=pk,
+                fecha=command.validated_data['fecha'],
+                hora_inicio=command.validated_data['hora'],
+                profesional_id=command.validated_data.get('profesional_id'),
+                reason=command.validated_data['motivo'],
+            )
+        except PermissionDeniedForTurnoManagement:
+            raise PermissionDenied('No tiene permisos para reprogramar Turnos.')
+        except TurnoManagementTargetNotFound:
+            raise Http404
+        except InvalidTurnoManagementTransition as exc:
+            return self._management_conflict(exc, 'INVALID_RESCHEDULE_TRANSITION')
+        except (TurnoManagementError, TurnoCreationError) as exc:
+            return self._management_validation_error(exc)
+
+        return Response({
+            'turno_id': result.turno.pk,
+            'fecha_anterior': result.previous_date,
+            'fecha_actual': result.current_date,
+            'hora_anterior': result.previous_time,
+            'hora_actual': result.current_time,
+            'profesional_anterior_id': result.previous_professional_id,
+            'profesional_actual_id': result.current_professional_id,
+            'estado_anterior': result.previous_state,
+            'estado_actual': result.current_state,
+        })
+
+    @action(detail=True, methods=['post'], url_path='cancelar')
+    def cancelar(self, request, pk=None):
+        command = TurnoCancellationCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        try:
+            result = cancel_turno(
+                actor=request.user,
+                turno_id=pk,
+                reason=command.validated_data['motivo'],
+            )
+        except PermissionDeniedForTurnoManagement:
+            raise PermissionDenied('No tiene permisos para cancelar Turnos.')
+        except TurnoManagementTargetNotFound:
+            raise Http404
+        except InvalidTurnoManagementTransition as exc:
+            return self._management_conflict(exc, 'INVALID_CANCELLATION_TRANSITION')
+
+        return Response({
+            'turno_id': result.turno.pk,
+            'changed': result.changed,
+            'estado_anterior': result.previous_state,
+            'estado_actual': result.current_state,
+            'financial_resolution_required': result.financial_request is not None,
+            'financial_request_public_id': (
+                str(result.financial_request.public_id)
+                if result.financial_request is not None
+                else None
+            ),
+            'financial_case_public_id': (
+                str(result.financial_request.case.public_id)
+                if result.financial_request is not None
+                else None
+            ),
+        })
+
+    @action(detail=False, methods=['get'], url_path='selector-clientes')
+    def selector_clientes(self, request):
+        clientes = (
+            Cliente.objects.filter(activo=True, usuario__is_active=True)
+            .select_related('usuario')
+            .order_by('usuario__first_name', 'usuario__last_name', 'usuario__email')
+        )
+        return Response([
+            {
+                'id': cliente.pk,
+                'nombre': cliente.usuario.first_name,
+                'apellido': cliente.usuario.last_name,
+                'email': cliente.usuario.email,
+            }
+            for cliente in clientes
+        ])
+
+    @action(detail=False, methods=['get'], url_path='selector-personal')
+    def selector_personal(self, request):
+        personal = Personal.objects.filter(activo=True).order_by('nombre', 'apellido')
+        raw_service_ids = request.query_params.getlist('servicio_ids')
+        if raw_service_ids:
+            service_ids = []
+            try:
+                for raw_value in raw_service_ids:
+                    service_ids.extend(
+                        int(value)
+                        for value in raw_value.split(',')
+                        if value.strip()
+                    )
+            except ValueError:
+                raise ValidationError({
+                    'servicio_ids': 'Los IDs de Servicio deben ser enteros.'
+                })
+
+            services = list(
+                Servicio.objects.filter(pk__in=service_ids, activo=True)
+                .prefetch_related('requisitos_habilidad__habilidad')
+            )
+            if len({service.pk for service in services}) != len(set(service_ids)):
+                raise ValidationError({
+                    'servicio_ids': 'Uno o más Servicios no existen o están inactivos.'
+                })
+            personal = service_skill_policy(services).filter_personal(personal)
+        return Response([
+            {
+                'id': persona.pk,
+                'nombre': persona.nombre,
+                'apellido': persona.apellido,
+                'funcion': persona.get_rol_display(),
+            }
+            for persona in personal
+        ])
+
+    @action(detail=False, methods=['get'], url_path='mis-turnos')
+    def mis_turnos(self, request):
+        if getattr(request.user, 'cliente', None) is None:
+            raise PermissionDenied('El usuario no tiene un perfil de Cliente.')
+
+        queryset = self.filter_queryset(self.get_queryset())
+        serializer = TurnoClienteReadSerializer(
+            queryset,
+            many=True,
+            context=self.get_serializer_context(),
+        )
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], url_path='mi-agenda-laboral')
+    def mi_agenda_laboral(self, request):
+        personal = getattr(request.user, 'perfil_profesional', None)
+        if personal is None or not personal.activo or not request.user.is_active:
+            raise PermissionDenied('No existe un perfil de Personal activo.')
+
+        queryset = self.filter_queryset(self.get_queryset())
+        serializer = TurnoAgendaReadSerializer(
+            queryset,
+            many=True,
+            context=self.get_serializer_context(),
+        )
+        return Response(serializer.data)
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='subir-comprobante',
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def subir_comprobante(self, request, pk=None):
+        try:
+            turno = Turno.objects.get(
+                pk=pk,
+                cliente__usuario=request.user,
+            )
+        except Turno.DoesNotExist:
+            raise Http404
+
+        if turno.estado != Turno.Estado.ESPERANDO_SENA:
+            raise ValidationError({
+                'estado': 'El Turno no admite comprobantes en su estado actual.',
+            })
+
+        command = TurnoComprobanteUploadSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        turno.comprobante_pago = command.validated_data['comprobante_pago']
+        turno.save(update_fields=['comprobante_pago'])
+
+        return Response(
+            TurnoClienteReadSerializer(
+                turno,
+                context=self.get_serializer_context(),
+            ).data,
+            status=status.HTTP_200_OK,
+        )
+
     def perform_update(self, serializer):
-        """Solo admins pueden actualizar turnos"""
+        """
+        Admins pueden actualizar cualquier turno.
+        Clientes pueden actualizar solo sus propios turnos (principalmente para subir comprobante).
+        """
+        turno = serializer.instance
+        
+        # Validar que el cliente solo actualiza sus propios turnos
         if not self.request.user.is_staff:
-            raise PermissionDenied("Solo administradores pueden actualizar turnos.")
+            if turno.cliente.usuario != self.request.user:
+                raise PermissionDenied("No puedes actualizar turnos de otros clientes.")
         
         # Si el turno transiciona a ESPERANDO_SENA, calcular fecha_limite_pago
-        turno = serializer.instance
         nuevo_estado = serializer.validated_data.get('estado', turno.estado)
         
         if nuevo_estado == Turno.Estado.ESPERANDO_SENA and turno.estado != Turno.Estado.ESPERANDO_SENA:
@@ -346,6 +2364,24 @@ class TurnoViewSet(viewsets.ModelViewSet):
                 turno.fecha_limite_pago = timezone.now() + timedelta(hours=config.tiempo_limite_pago_sena)
         
         serializer.save()
+
+    @action(detail=True, methods=['post'])
+    def registrar_pago(self, request, pk=None):
+        """
+        POST /api/gestion/turnos/{id}/registrar_pago/
+
+        Permite al profesional registrar un pago asociado a un turno.
+        """
+        return Response(
+            {
+                'code': 'LEGACY_TURNO_PAYMENT_DISABLED',
+                'detail': (
+                    'Los nuevos Pagos de booking deben registrarse sobre un '
+                    'PaymentIntent.'
+                ),
+            },
+            status=status.HTTP_409_CONFLICT,
+        )
     
     @action(detail=True, methods=['post'])
     def reprogramar_cliente(self, request, pk=None):
@@ -354,95 +2390,100 @@ class TurnoViewSet(viewsets.ModelViewSet):
         POST /api/gestion/turnos/{id}/reprogramar_cliente/
         Body: {"fecha": "2026-01-20", "hora_inicio": "14:00"}
         """
-        turno = self.get_object()
-        
-        # 1. Validar que el cliente es el dueño del turno
-        if turno.cliente.usuario != request.user:
-            raise PermissionDenied("No puedes reprogramar turnos de otros clientes.")
-        
-        # 2. Validar que el turno pueda ser reprogramado (solo en ciertos estados)
-        if turno.estado not in ['solicitado', 'esperando_sena']:
-            return Response({
-                "error": f"No puedes reprogramar un turno en estado '{turno.estado}'. "
-                         "Solo puedes reprogramar turnos solicitados o pendientes de seña."
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # 3. Obtener nueva fecha y hora
-        nueva_fecha_str = request.data.get('fecha')
-        nueva_hora_str = request.data.get('hora_inicio')
-        
-        if not nueva_fecha_str or not nueva_hora_str:
-            return Response({
-                "error": "Debes proporcionar 'fecha' y 'hora_inicio'."
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
+        command = TurnoClientRescheduleCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
         try:
-            nueva_fecha = datetime.strptime(nueva_fecha_str, '%Y-%m-%d').date()
-            nueva_hora = datetime.strptime(nueva_hora_str, '%H:%M').time()
-        except ValueError:
-            return Response({
-                "error": "Formato inválido. Usa: fecha='YYYY-MM-DD', hora_inicio='HH:MM'"
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # 4. Validar política de tiempo para reprogramación (48hs antes para confirmados)
-        config = Configuracion.objects.first()
-        if turno.estado == 'confirmado':
-            horas_limite = config.horas_limite_cancelacion if config else 48
-            fecha_hora_actual = datetime.combine(turno.fecha, turno.hora_inicio)
-            fecha_hora_utc = timezone.make_aware(fecha_hora_actual) if timezone.is_naive(fecha_hora_actual) else fecha_hora_actual
-            ahora = timezone.now()
-            
-            horas_restantes = (fecha_hora_utc - ahora).total_seconds() / 3600
-            if horas_restantes < horas_limite:
-                return Response({
-                    "error": f"Ya no puedes reprogramar este turno de forma autónoma. "
-                             f"Quedan menos de {horas_limite}hs. Por favor, contacta al salón."
-                }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # 5. Validar que no hay turno duplicado en la nueva fecha/hora
-        turno_duplicado = Turno.objects.filter(
-            cliente=turno.cliente,
-            fecha=nueva_fecha,
-            hora_inicio=nueva_hora,
-            estado__in=['solicitado', 'esperando_sena', 'confirmado']
-        ).exclude(id=turno.id).exists()
-        
-        if turno_duplicado:
-            return Response({
-                "error": "Ya tienes un turno en esa fecha y hora."
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # 6. Validar que el nuevo slot está disponible (sin conflictos)
-        # Extraer IDs de servicios del turno
-        servicios_ids = [d.servicio.id for d in turno.detalles.all()]
-        
-        es_valido = self._validar_slot_libre(
-            fecha=nueva_fecha,
-            hora=nueva_hora,
-            profesional=turno.profesional,
-            duracion_minutos=sum(d.duracion_minutos for d in turno.detalles.all()) or 60,
-            servicios_ids=servicios_ids,
-            excluir_turno_id=turno.id  # Excluir el turno actual de la validación
-        )
-        
-        if not es_valido:
-            return Response({
-                "error": "El horario seleccionado ya no está disponible."
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # 7. Guardar cambios
-        turno.fecha = nueva_fecha
-        turno.hora_inicio = nueva_hora
-        turno.cambios_realizados += 1
-        turno.save()
-        
-        # Refrescar desde BD para asegurar que los cambios se persistieron
-        turno.refresh_from_db()
-        
+            result = reprogram_owned_turno(
+                actor=request.user,
+                turno_id=pk,
+                fecha=command.validated_data['fecha'],
+                hora_inicio=command.validated_data['hora_inicio'],
+                profesional_id=command.validated_data.get('profesional_id'),
+            )
+        except TurnoManagementTargetNotFound:
+            raise Http404
+        except InvalidTurnoManagementTransition as exc:
+            return self._management_conflict(exc, 'INVALID_CLIENT_RESCHEDULE_TRANSITION')
+        except (TurnoManagementError, TurnoCreationError) as exc:
+            return self._management_validation_error(exc)
+
         return Response({
-            "mensaje": "Turno reprogramado con éxito.",
-            "turno": TurnoSerializer(turno, context={'request': request}).data
-        }, status=status.HTTP_200_OK)
+            'mensaje': 'Turno reprogramado con éxito.',
+            'turno_id': result.turno.pk,
+            'fecha': result.current_date,
+            'hora_inicio': result.current_time,
+            'profesional_id': result.current_professional_id,
+            'estado': result.current_state,
+        })
+
+    @action(detail=True, methods=['get'], url_path='opciones-cliente')
+    def opciones_cliente(self, request, pk=None):
+        try:
+            turno = Turno.objects.get(pk=pk, cliente__usuario=request.user)
+        except Turno.DoesNotExist:
+            raise Http404
+
+        config = Configuracion.objects.first() or Configuracion()
+        appointment_at = timezone.make_aware(
+            datetime.combine(turno.fecha, turno.hora_inicio),
+            timezone.get_current_timezone(),
+        )
+        remaining_hours = (appointment_at - timezone.now()).total_seconds() / 3600
+        within_window = remaining_hours >= config.horas_limite_cancelacion
+        can_reprogram = turno.estado in CLIENT_REPROGRAMMABLE_STATES
+        if turno.estado == Turno.Estado.CONFIRMADO:
+            can_reprogram = (
+                can_reprogram
+                and within_window
+                and turno.cambios_realizados < config.max_reprogramaciones
+            )
+
+        return Response({
+            'puede_reprogramar': can_reprogram,
+            'puede_cancelar': (
+                turno.estado in CLIENT_CANCELLABLE_STATES and within_window
+            ),
+            'mensaje': 'Seleccioná una operación disponible para tu Turno.',
+            'tipo_alerta': 'info',
+            'cambios_realizados': turno.cambios_realizados,
+            'limite_cambios': config.max_reprogramaciones,
+            'horas_restantes': round(remaining_hours, 2),
+        })
+
+    @action(detail=True, methods=['post'], url_path='cancelar-cliente')
+    def cancelar_cliente(self, request, pk=None):
+        command = TurnoCancellationCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        try:
+            result = cancel_owned_turno(
+                actor=request.user,
+                turno_id=pk,
+                reason=command.validated_data['motivo'],
+            )
+        except TurnoManagementTargetNotFound:
+            raise Http404
+        except InvalidTurnoManagementTransition as exc:
+            return self._management_conflict(exc, 'INVALID_CLIENT_CANCELLATION_TRANSITION')
+        except TurnoManagementError as exc:
+            return self._management_validation_error(exc)
+
+        return Response({
+            'mensaje': 'Turno cancelado correctamente.',
+            'turno_id': result.turno.pk,
+            'changed': result.changed,
+            'estado_actual': result.current_state,
+            'financial_resolution_required': result.financial_request is not None,
+            'financial_request_public_id': (
+                str(result.financial_request.public_id)
+                if result.financial_request is not None
+                else None
+            ),
+            'financial_case_public_id': (
+                str(result.financial_request.case.public_id)
+                if result.financial_request is not None
+                else None
+            ),
+        })
     
     def _validar_slot_libre(self, fecha, hora, profesional, duracion_minutos, servicios_ids=None, excluir_turno_id=None):
         """
@@ -466,7 +2507,7 @@ class TurnoViewSet(viewsets.ModelViewSet):
         turnos_conflicto = Turno.objects.filter(
             fecha=fecha,
             profesional=profesional,
-            estado__in=['confirmado', 'esperando_sena', 'solicitado']
+            estado__in=['confirmado', 'esperando_sena', 'solicitado', 'sugerido']
         ).prefetch_related('detalles')
         
         # Excluir el turno actual si se proporciona un ID
@@ -521,6 +2562,8 @@ class TurnoViewSet(viewsets.ModelViewSet):
         """
         servicio_id = request.query_params.get('servicio_id')
         fecha_inicio_str = request.query_params.get('fecha')
+        excluir_turno_id = request.query_params.get('turno_id')
+        slot_services = None
         
         if not servicio_id:
             return Response(
@@ -529,19 +2572,51 @@ class TurnoViewSet(viewsets.ModelViewSet):
             )
         
         try:
-            servicio = Servicio.objects.get(id=servicio_id, activo=True)
+            servicio = Servicio.objects.prefetch_related(
+                'requisitos_habilidad__habilidad'
+            ).get(id=servicio_id, activo=True)
         except Servicio.DoesNotExist:
             return Response(
                 {"error": "El servicio no existe"},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        if excluir_turno_id:
+            try:
+                turno_excluido = Turno.objects.get(pk=excluir_turno_id)
+            except (Turno.DoesNotExist, ValueError):
+                raise Http404
+            is_owner = turno_excluido.cliente.usuario_id == request.user.pk
+            if not (
+                is_owner
+                or request.user.has_perm(BusinessPermission.REPROGRAM_ANY_TURNO)
+            ):
+                raise Http404
+            if not turno_excluido.detalles.filter(servicio=servicio).exists():
+                return Response(
+                    {'error': 'El Servicio no corresponde al Turno indicado.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            detalles_turno = list(
+                turno_excluido.detalles.select_related('servicio').prefetch_related(
+                    'servicio__requisitos_habilidad__habilidad'
+                ).all()
+            )
+            slot_services = [detalle.servicio for detalle in detalles_turno]
+            duracion_minutos = (
+                sum(detalle.duracion_minutos for detalle in detalles_turno) or 60
+            )
+            excluir_turno_id = turno_excluido.pk
         
-        # Determinar fecha de inicio
+        # Determinar fecha de inicio según la zona horaria comercial configurada.
+        business_today = timezone.localdate(
+            timezone=timezone.get_default_timezone(),
+        )
         try:
             if fecha_inicio_str:
-                fecha_inicio = datetime.datetime.strptime(fecha_inicio_str, '%Y-%m-%d').date()
+                fecha_inicio = datetime.strptime(fecha_inicio_str, '%Y-%m-%d').date()
             else:
-                fecha_inicio = timezone.now().date()
+                fecha_inicio = business_today
         except ValueError:
             return Response(
                 {"error": "Formato de fecha inválido. Use YYYY-MM-DD"},
@@ -552,21 +2627,23 @@ class TurnoViewSet(viewsets.ModelViewSet):
         config = Configuracion.objects.first()
         max_dias = config.max_dias_anticipacion if config else 60
         intervalo_minutos = config.intervalo_turnos if config else 30
-        fecha_limite = fecha_inicio + timedelta(days=max_dias)
+        fecha_limite = business_today + timedelta(days=max_dias)
         
         # 2. Validar que no sea fecha pasada
-        if fecha_inicio < timezone.now().date():
+        if fecha_inicio < business_today:
             return Response(
                 {"error": "No se pueden agendar turnos en el pasado"},
                 status=status.HTTP_400_BAD_REQUEST
             )
+        if fecha_inicio > fecha_limite:
+            return Response(
+                {"error": "La fecha supera el horizonte habilitado para reservas"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         
-        # 3. Determinar tipo de servicio (para filtrar reglas)
-        categoria_nombre = servicio.categoria.nombre if servicio.categoria else ""
-        requiere_diseno = "Diseño" in categoria_nombre
-        requiere_complemento = "Complemento" in categoria_nombre or "Turno de Complemento" in categoria_nombre
-        
-        duracion_minutos = servicio.duracion_estimada or 60
+        if slot_services is None:
+            slot_services = [servicio]
+            duracion_minutos = servicio.duracion_estimada or 60
         
         # 4. Iterar próximos días (hasta 7 para mostrar lo más cercano)
         disponibilidad_total = []
@@ -579,38 +2656,16 @@ class TurnoViewSet(viewsets.ModelViewSet):
                 break
             
             # No agendar en fechas pasadas
-            if fecha_consulta < timezone.now().date():
+            if fecha_consulta < business_today:
                 continue
             
             dia_semana = fecha_consulta.weekday()
             
-            # 5. Obtener reglas de horarios para este día
-            reglas = HorarioLaboral.objects.filter(
-                dia_semana=dia_semana,
-                activo=True,
-                personal__activo=True,  # Solo profesionales activos
+            reglas = TurnoAvailabilityService.matching_schedules(
+                fecha=fecha_consulta,
+                servicio=servicio,
+                servicios=slot_services,
             )
-            
-            # Filtrar solo reglas que aplican en esta fecha (null = aplica siempre)
-            reglas = reglas.filter(
-                Q(fecha_desde__isnull=True) | Q(fecha_desde__lte=fecha_consulta),
-                Q(fecha_hasta__isnull=True) | Q(fecha_hasta__gte=fecha_consulta)
-            )
-            
-            # --- FILTRO DE COMPETENCIA TÉCNICA (Refinado) ---
-            # Identificamos qué habilidad se requiere según la categoría
-            habilidad_requerida = None
-            if requiere_diseno:
-                habilidad_requerida = 'realiza_color'
-                reglas = reglas.filter(permite_diseno_color=True)
-            elif requiere_complemento:
-                habilidad_requerida = 'realiza_lavado'
-                reglas = reglas.filter(permite_complemento=True)
-            
-            # Aplicamos el filtro dinámico de habilidad a las reglas
-            if habilidad_requerida:
-                filtro_habilidad = {f'personal__{habilidad_requerida}': True}
-                reglas = reglas.filter(**filtro_habilidad)
             
             if not reglas.exists():
                 continue
@@ -628,7 +2683,10 @@ class TurnoViewSet(viewsets.ModelViewSet):
                     regla, 
                     duracion_minutos,
                     intervalo_minutos,
-                    servicios_ids=[servicio.id]
+                    servicios_ids=[servicio.id],
+                    excluir_turno_id=excluir_turno_id,
+                    servicios=slot_services,
+                    cliente=getattr(request.user, 'cliente', None),
                 )
                 
                 if slots:
@@ -655,80 +2713,38 @@ class TurnoViewSet(viewsets.ModelViewSet):
             "horizonte_dias": max_dias
         }, status=status.HTTP_200_OK)
     
-    def _generar_slots_disponibles(self, fecha, regla, duracion_minutos, intervalo_minutos, servicios_ids=None):
-        slots_disponibles = []
-        
-        # 1. Traemos TODOS los turnos y bloqueos del día UNA SOLA VEZ (Optimización)
-        turnos_del_dia = Turno.objects.filter(
-            fecha=fecha,
-            profesional=regla.personal,
-            estado__in=['confirmado', 'esperando_sena', 'solicitado']
-        ).prefetch_related('detalles')
-
-        bloqueos_del_dia = BloqueoAgenda.objects.filter(
-            Q(personal=regla.personal) | Q(personal__isnull=True),
-            fecha_inicio__date__lte=fecha,
-            fecha_fin__date__gte=fecha
+    def _generar_slots_disponibles(
+        self,
+        fecha,
+        regla,
+        duracion_minutos,
+        intervalo_minutos,
+        servicios_ids=None,
+        excluir_turno_id=None,
+        servicios=None,
+        cliente=None,
+    ):
+        servicio = (
+            servicios[0]
+            if servicios
+            else (
+                Servicio.objects.filter(pk=servicios_ids[0], activo=True).first()
+                if servicios_ids
+                else None
+            )
         )
-
-        # Convertimos los horarios de la regla a minutos
-        actual_min = regla.hora_inicio.hour * 60 + regla.hora_inicio.minute
-        fin_min = regla.hora_fin.hour * 60 + regla.hora_fin.minute
-
-        while actual_min + duracion_minutos <= fin_min:
-            hora_inicio_slot = time(actual_min // 60, actual_min % 60)
-            hora_fin_slot = time((actual_min + duracion_minutos) // 60, (actual_min + duracion_minutos) % 60)
-            
-            # Combinamos con fecha para comparar datetimes completos (más seguro)
-            inicio_dt = datetime.combine(fecha, hora_inicio_slot)
-            fin_dt = datetime.combine(fecha, hora_fin_slot)
-
-            # --- VALIDACIÓN DE CONFLICTOS ---
-            hay_choque = False
-
-            # A. Choque con Turnos (Validación de Rango)
-            for turno in turnos_del_dia:
-                # Fórmula: (StartA < EndB) y (EndA > StartB)
-                t_ini = datetime.combine(fecha, turno.hora_inicio)
-                # Calculamos la hora fin basándose en duración total de servicios del turno
-                duracion_turno = sum(d.duracion_minutos for d in turno.detalles.all()) or 60
-                t_fin_minutos = turno.hora_inicio.hour * 60 + turno.hora_inicio.minute + duracion_turno
-                t_fin_hours = t_fin_minutos // 60
-                t_fin_mins = t_fin_minutos % 60
-                t_fin = datetime.combine(fecha, time(t_fin_hours, t_fin_mins))
-                
-                if (inicio_dt < t_fin) and (fin_dt > t_ini):
-                    hay_choque = True
-                    break
-            
-            # B. Choque con Bloqueos
-            if not hay_choque:
-                for bloqueo in bloqueos_del_dia:
-                    # Quitamos zona horaria si es necesario para comparar
-                    b_ini = bloqueo.fecha_inicio.replace(tzinfo=None) if bloqueo.fecha_inicio.tzinfo else bloqueo.fecha_inicio
-                    b_fin = bloqueo.fecha_fin.replace(tzinfo=None) if bloqueo.fecha_fin.tzinfo else bloqueo.fecha_fin
-                    
-                    if (inicio_dt < b_fin) and (fin_dt > b_ini):
-                        hay_choque = True
-                        break
-            
-            # C. Choque con Equipamiento (Recursos físicos)
-            if not hay_choque and servicios_ids:
-                if not self._verificar_disponibilidad_equipamiento(fecha, inicio_dt, fin_dt, servicios_ids):
-                    hay_choque = True
-            
-            if not hay_choque:
-                # Validación extra: si es HOY, no mostrar horas que ya pasaron
-                ahora_naive = timezone.now().replace(tzinfo=None)
-                if inicio_dt > ahora_naive:
-                    slots_disponibles.append({
-                        "hora": hora_inicio_slot.strftime("%H:%M"),
-                        "profesional_id": regla.personal.id,
-                    })
-            
-            actual_min += intervalo_minutos
-        
-        return slots_disponibles
+        if servicio is None:
+            return []
+        return TurnoAvailabilityService.available_slots_for_schedule(
+            fecha=fecha,
+            schedule=regla,
+            servicio=servicio,
+            intervalo_minutos=intervalo_minutos,
+            excluir_turno_id=excluir_turno_id,
+            duracion_minutos=duracion_minutos,
+            servicios=servicios,
+            cliente=cliente,
+        )
     
     def _buscar_proxima_fecha(self, servicio_id, fecha_desde):
         """
@@ -758,7 +2774,8 @@ class TurnoViewSet(viewsets.ModelViewSet):
                     fecha_proxima, 
                     regla, 
                     servicio.duracion_estimada, 
-                    config.intervalo_turnos
+                    config.intervalo_turnos,
+                    servicios_ids=[servicio.id],
                 )
                 if slots:
                     return fecha_proxima.isoformat()
@@ -801,7 +2818,7 @@ class TurnoViewSet(viewsets.ModelViewSet):
             # Turnos que ya ocupan este recurso en esa fecha
             turnos_competencia = Turno.objects.filter(
                 fecha=fecha,
-                estado__in=['confirmado', 'esperando_sena', 'solicitado'],
+                estado__in=['confirmado', 'esperando_sena', 'solicitado', 'sugerido'],
                 detalles__servicio__requisitos_equipamiento__tipo_equipamiento_id=tipo_id
             ).distinct()
 
@@ -830,7 +2847,7 @@ class TurnoViewSet(viewsets.ModelViewSet):
         return True
 
     # =====================================================================
-    # ✅ NUEVO: VERIFICAR SI TURNO ESTÁ EXPIRADO
+    # NUEVO: VERIFICAR SI TURNO ESTÁ EXPIRADO
     # =====================================================================
     @action(detail=True, methods=['get'], url_path='verificar-expiracion')
     def verificar_expiracion(self, request, pk=None):
@@ -871,299 +2888,56 @@ class TurnoViewSet(viewsets.ModelViewSet):
     # =====================================================================
     @action(detail=True, methods=['post'], url_path='gestionar')
     def gestionar_cancelacion(self, request, pk=None):
-        """
-        Endpoint unificado para gestionar cambios en turnos (CONSULTAR/REPROGRAMAR/CANCELAR).
-        
-        - **CONSULTAR**: Info sobre el estado del turno y disponibilidad de cambios
-        - **REPROGRAMAR**: Cambiar fecha/hora (lógica diferenciada por estado)
-        - **CANCELAR**: Cancelar turno con Motor de Optimización
-        
-        POST /turnos/<id>/gestionar/
-        Body:
-        {
-            "accion": "CONSULTAR" | "REPROGRAMAR" | "CANCELAR",
-            "nueva_fecha": "YYYY-MM-DD" (solo para REPROGRAMAR),
-            "nueva_hora": "HH:MM" (solo para REPROGRAMAR)
-        }
-        
-        Cliente: CONFIRMADO → max 48hs antes. SOLICITADO/ESPERANDO_SEÑA → sin restricción.
-        Admin: Sin restricción.
-        """
-        import datetime
-        
-        turno = self.get_object()
-        usuario = request.user
+        raise MethodNotAllowed(request.method)
 
-        # Permisos
-        es_cliente = usuario.cliente_set.exists()
-        es_profesional = usuario.personal_set.exists()
-        if not (usuario == turno.cliente.usuario or es_profesional or usuario.is_staff):
-            raise PermissionDenied("No tienes permiso sobre este turno.")
-
-        # Valores de configuración
-        config = Configuracion.objects.first() or Configuracion()
-        limite_cambios = config.max_reprogramaciones
-        horas_limite = config.horas_limite_cancelacion
-
-        # =====================================================================
-        # BLOQUE 1: REGLA DE SEGURIDAD - Restricción 48hs (solo clientes, solo CONFIRMADO)
-        # =====================================================================
-        now = timezone.now()
-        fecha_hora_turno = timezone.make_aware(
-            datetime.datetime.combine(turno.fecha, turno.hora_inicio)
-        )
-        horas_restantes = (fecha_hora_turno - now).total_seconds() / 3600
-
-        accion = request.data.get('accion', '').upper()
-
-        # Solo bloquear si: 
-        # - El usuario es CLIENTE (no profesional)
-        # - El usuario NO es staff/admin
-        # - El turno está en estado CONFIRMADO
-        # - Intenta REPROGRAMAR o CANCELAR dentro de la ventana de seguridad
-        es_cliente_only = es_cliente and not es_profesional and not usuario.is_staff
-        
-        if es_cliente_only and turno.estado == Turno.Estado.CONFIRMADO:
-            if horas_restantes < horas_limite and accion in ['REPROGRAMAR', 'CANCELAR']:
-                return Response({
-                    "error": f"No puedes {accion.lower()} un turno menos de {horas_limite}hs antes.",
-                    "horas_restantes": round(horas_restantes, 2),
-                    "horas_limite": horas_limite,
-                    "fecha_hora_turno": fecha_hora_turno.isoformat()
-                }, status=400)
-        
-        
-        # Si es staff/admin, NO hay restricción de tiempo - el código continúa normalmente
-
-        # =====================================================================
-        # 2. ACCIÓN: CONSULTAR (Información según Estado)
-        # =====================================================================
-        if accion == 'CONSULTAR':
-            # --- ESTADO A: SOLICITADO ---
-            if turno.estado == Turno.Estado.SOLICITADO:
-                return Response({
-                    "puede_reprogramar": True,
-                    "mensaje": "Aún no confirmamos tu turno. Puedes modificar la fecha libremente.",
-                    "tipo_alerta": "info"
-                })
-            
-            # --- ESTADO B: ESPERANDO SEÑA ---
-            elif turno.estado == Turno.Estado.ESPERANDO_SENA:
-                return Response({
-                    "puede_reprogramar": True,
-                    "mensaje": "Si cambias la fecha ahora, deberemos volver a validar la disponibilidad (vuelve a estado Solicitado).",
-                    "tipo_alerta": "warning"
-                })
-
-            # --- ESTADO C: CONFIRMADO ---
-            elif turno.estado == Turno.Estado.CONFIRMADO:
-                cambios_restantes = limite_cambios - turno.cambios_realizados
-                puede = cambios_restantes > 0
-                msg = f"Te quedan {cambios_restantes} cambios disponibles." if puede else "Has agotado tus cambios."
-                return Response({
-                    "puede_reprogramar": puede,
-                    "mensaje": msg,
-                    "cambios_realizados": turno.cambios_realizados,
-                    "limite_cambios": limite_cambios,
-                    "horas_restantes": round(horas_restantes, 2),
-                    "puede_cancelar_reprogramar": horas_restantes >= horas_limite,
-                    "tipo_alerta": "info" if puede else "danger"
-                })
-
-        # =====================================================================
-        # 3. ACCIÓN: REPROGRAMAR (Lógica Diferenciada)
-        # =====================================================================
-        elif accion == 'REPROGRAMAR':
-            # Validación de datos de entrada (común a todos)
-            nueva_fecha_str = request.data.get('nueva_fecha')
-            nueva_hora_str = request.data.get('nueva_hora')
-            if not nueva_fecha_str or not nueva_hora_str:
-                return Response({"error": "Faltan datos"}, status=400)
-
-            try:
-                # Conversión segura
-                nueva_fecha = datetime.datetime.strptime(nueva_fecha_str, '%Y-%m-%d').date()
-                nueva_hora = datetime.datetime.strptime(nueva_hora_str, '%H:%M').time()
-            except ValueError:
-                return Response({"error": "Formato inválido"}, status=400)
-
-            # --- LÓGICA ESTADO A (Solicitado) ---
-            if turno.estado == Turno.Estado.SOLICITADO:
-                turno.fecha = nueva_fecha
-                turno.hora_inicio = nueva_hora
-                # No cambia estado, no suma contador
-                turno.save()
-                return Response({"mensaje": "Solicitud modificada correctamente."})
-
-            # --- LÓGICA ESTADO B (Esperando Seña) ---
-            elif turno.estado == Turno.Estado.ESPERANDO_SENA:
-                turno.fecha = nueva_fecha
-                turno.hora_inicio = nueva_hora
-                turno.estado = Turno.Estado.SOLICITADO # REINICIO DEL FLUJO
-                turno.fecha_limite_pago = None  # Limpiar deadline de pago
-                # No suma contador
-                turno.save()
-                return Response({"mensaje": "Fecha cambiada. Tu turno espera nueva aprobación."})
-
-            # --- LÓGICA ESTADO C (Confirmado) ---
-            elif turno.estado == Turno.Estado.CONFIRMADO:
-                if turno.cambios_realizados >= limite_cambios:
-                    return Response({"error": "Límite de cambios excedido."}, status=400)
-                
-                turno.fecha = nueva_fecha
-                turno.hora_inicio = nueva_hora
-                turno.cambios_realizados += 1
-                # Mantiene estado Confirmado (Seña se traslada)
-                turno.save()
-                
-                return Response({"mensaje": "Turno reprogramado. Seña transferida."})
-
-        # =====================================================================
-        # BLOQUE 2: ACCIÓN CANCELAR - MOTOR DE OPTIMIZACIÓN
-        # =====================================================================
-        elif accion == 'CANCELAR':
-            # 1. Guardar datos del hueco (Snapshot)
-            fecha_hueco = turno.fecha
-            hora_hueco = turno.hora_inicio
-            
-            # Obtener servicios asociados desde detalles
-            detalles_turno = turno.detalles.all()
-            servicios_hueco = [d.servicio for d in detalles_turno]
-            cliente_que_cancela = turno.cliente
-            
-            # 2. Cambiar estado a CANCELADO
-            turno.estado = Turno.Estado.CANCELADO
-            turno.save()
-            
-            candidatos_adelanto = []
-
-            # === MOTOR DE OPTIMIZACIÓN: Buscar candidatos para adelanto ===
-            
-            # Buscar turnos CONFIRMADOS con servicios coincidentes en fechas futuras
-            turnos_futuros = Turno.objects.filter(
-                estado=Turno.Estado.CONFIRMADO,
-                detalles__servicio__in=servicios_hueco,
-                fecha__gt=fecha_hueco
-            ).exclude(cliente=cliente_que_cancela).distinct().order_by('fecha')[:5]
-            
-            # Crear notificaciones para adelanto (máximo 5)
-            for turno_futuro in turnos_futuros:
-                servicios_str = ', '.join([s.nombre for s in servicios_hueco])
-                
-                Notificacion.objects.create(
-                    usuario=turno_futuro.cliente.usuario,
-                    tipo='ADELANTO',
-                    canal='app',
-                    titulo="¡Oportunidad de Adelantar Turno!",
-                    mensaje=f"Se liberó un espacio para {servicios_str} el {fecha_hueco} a las {hora_hueco.strftime('%H:%M')}. ¿Te gustaría adelantar tu turno del {turno_futuro.fecha}?",
-                    origen_entidad='Turno',
-                    origen_id=turno_futuro.id,
-                    datos_extra={
-                        "fecha_oferta": str(fecha_hueco),
-                        "hora_oferta": hora_hueco.strftime('%H:%M'),
-                        "turno_actual_id": turno_futuro.id,
-                        "turno_cancelado_id": turno.id,
-                        "servicio_ids": [s.id for s in servicios_hueco]
-                    }
-                )
-                
-                candidatos_adelanto.append({
-                    "cliente": turno_futuro.cliente.usuario.get_full_name(),
-                    "turno_actual": turno_futuro.fecha.isoformat()
-                })
-
-            return Response({
-                "mensaje": "Turno cancelado correctamente.",
-                "estado": "CANCELADO",
-                "automatizacion": {
-                    "hueco_liberado": {
-                        "fecha": fecha_hueco.isoformat(),
-                        "hora": hora_hueco.strftime('%H:%M'),
-                        "servicios": [s.nombre for s in servicios_hueco]
-                    },
-                    "notificaciones_enviadas": len(candidatos_adelanto),
-                    "candidatos": candidatos_adelanto
-                }
-            }, status=200)
-
-        return Response({"error": "Acción inválida"}, status=400)
+    @action(detail=True, methods=['post'], url_path='gestionar-profesional')
+    def gestionar_profesional(self, request, pk=None):
+        raise MethodNotAllowed(request.method)
 
     @action(detail=True, methods=['post'])
     def finalizar_turno(self, request, pk=None):
-        """
-        Acción para marcar el turno como realizado y disparar 
-        las Reglas de Cuidado automáticas + crear diagnóstico post-servicio.
-        
-        POST /api/gestion/turnos/{id}/finalizar_turno/
-        """
-        turno = self.get_object()
-        
-        if turno.estado == Turno.Estado.REALIZADO:
-            return Response({"error": "Este turno ya fue finalizado anteriormente."}, status=400)
-
-        # 1. Cambiamos el estado del turno
-        turno.estado = Turno.Estado.REALIZADO
-        turno.save()
-
-        # 2. CREAR DIAGNÓSTICO POST-SERVICIO AUTOMÁTICAMENTE
-        # Se crea un nuevo diagnóstico después de cada servicio para reevaluar el estado del cabello
-        cliente = turno.cliente
-        
-        # Solo crear diagnóstico si el cliente tiene datos capilares registrados
-        if cliente.tipo_cabello or cliente.grosor_cabello or cliente.porosidad_cabello or cliente.cuero_cabelludo or cliente.estado_general:
-            diag = DiagnosticoCapilar.objects.create(
-                cliente=cliente,
-                tipo_cabello=cliente.tipo_cabello,
-                grosor_cabello=cliente.grosor_cabello,
-                porosidad_cabello=cliente.porosidad_cabello,
-                cuero_cabelludo=cliente.cuero_cabelludo,
-                estado_general=cliente.estado_general
+        """Finaliza un Turno con lock, atomicidad e identidad persistente."""
+        try:
+            result = finalize_turno(
+                actor=request.user,
+                turno_id=pk,
+                idempotency_key=request.headers.get('Idempotency-Key', ''),
             )
-            
-            # Ejecutar el motor diagnóstico automáticamente
-            self._ejecutar_motor_diagnostico(diag)
+        except TurnoFinalizationPermissionDenied as exc:
+            return Response(
+                {'code': exc.code, 'detail': exc.detail},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        except TurnoFinalizationNotFound as exc:
+            return Response(
+                {'code': exc.code, 'detail': exc.detail},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except TurnoFinalizationConflict as exc:
+            return Response(
+                {'code': exc.code, 'detail': exc.detail},
+                status=status.HTTP_409_CONFLICT,
+            )
+        except TurnoFinalizationInvalid as exc:
+            return Response(
+                {
+                    'code': exc.code,
+                    'detail': exc.detail,
+                    'field': exc.field,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        # 3. PROCESO AUTOMATIZADO: Aplicar Reglas de Cuidado
-        # Buscamos todos los servicios que se hicieron en este turno
-        detalles = turno.detalles.all()
-        servicios_realizados = [d.servicio for d in detalles]
-
-        for servicio in servicios_realizados:
-            # Buscamos las reglas configuradas para este servicio
-            reglas = servicio.reglas_post_servicio.all()
-            
-            for regla in reglas:
-                # A. Notificar a la clienta (Instrucciones de cuidado)
-                Notificacion.objects.create(
-                    usuario=turno.cliente.usuario,
-                    tipo='recordatorio',
-                    titulo=f"Cuidados post {servicio.nombre}",
-                    mensaje=f"{regla.descripcion}. (Válido por {regla.dias_duracion} días)",
-                    origen_entidad='Turno',
-                    origen_id=turno.id
-                )
-
-                # B. Si la regla tiene una RUTINA asociada, se la asignamos automáticamente
-                if regla.rutina:
-                    # Verificamos si ya la tiene activa para no duplicar
-                    if not RutinaCliente.objects.filter(
-                        cliente=turno.cliente, 
-                        rutina_original=regla.rutina, 
-                        estado='activa'
-                    ).exists():
-                        RutinaCliente.objects.create(
-                            cliente=turno.cliente,
-                            rutina_original=regla.rutina,
-                            nombre=regla.rutina.nombre,
-                            objetivo=regla.rutina.objetivo,
-                            archivo=regla.rutina.archivo,
-                            version_asignada=regla.rutina.version,
-                            estado='activa'
-                        )
-
+        finalization = result.finalization
         return Response({
-            "mensaje": "Turno finalizado. Se han enviado las recomendaciones de cuidado a la clienta y se ha creado un nuevo diagnóstico.",
-            "estado": turno.estado
+            'mensaje': 'Turno finalizado correctamente.',
+            'estado': finalization.estado_final,
+            'changed': result.changed,
+            'finalization_id': str(finalization.public_id),
+            'idempotency_key': finalization.idempotency_key,
+            'estado_anterior': finalization.estado_anterior,
+            'estado_actual': finalization.estado_final,
+            'effects': finalization.efectos,
         })
 
 class MiAgendaCuidadosView(generics.ListAPIView):
@@ -1175,7 +2949,7 @@ class MiAgendaCuidadosView(generics.ListAPIView):
 
     def get_queryset(self):
         # Filtramos por el cliente logueado y ordenamos por fecha
-        # Opcional: Mostrar solo tareas desde hoy en adelante (fecha__gte=date.today())
+        # Opcional: mostrar sólo tareas desde la fecha comercial en adelante.
         return AgendaCuidados.objects.filter(
             cliente=self.request.user.cliente
         ).order_by('fecha')
@@ -1221,6 +2995,22 @@ class NotificacionViewSet(viewsets.ReadOnlyModelViewSet):
                 {'error': 'Datos incompletos en la notificación'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        expira_en = notificacion.datos_extra.get('expira_en')
+        if expira_en:
+            try:
+                expira_dt = datetime.datetime.fromisoformat(expira_en)
+                if timezone.is_naive(expira_dt):
+                    expira_dt = timezone.make_aware(expira_dt)
+                if timezone.now() > expira_dt:
+                    notificacion.estado = 'leido'
+                    notificacion.save()
+                    return Response(
+                        {'error': 'La oferta de adelanto expiró.'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            except Exception:
+                pass
         
         try:
             # Extraer datos de la notificación
@@ -1232,6 +3022,26 @@ class NotificacionViewSet(viewsets.ReadOnlyModelViewSet):
                 return Response(
                     {'error': 'Datos incompletos en la oferta'},
                     status=status.HTTP_400_BAD_REQUEST
+                )
+
+            oferta_ya_tomada = Notificacion.objects.filter(
+                tipo='ADELANTO',
+                datos_extra__turno_actual_id=turno_actual_id,
+                datos_extra__fecha_oferta=fecha_oferta,
+                datos_extra__hora_oferta=hora_oferta,
+                datos_extra__aceptada=True
+            ).exclude(id=notificacion.id).exists()
+
+            if oferta_ya_tomada:
+                notificacion.estado = 'leido'
+                notificacion.datos_extra = {
+                    **(notificacion.datos_extra or {}),
+                    'oferta_cerrada': True
+                }
+                notificacion.save()
+                return Response(
+                    {'error': 'Esta oferta ya fue aceptada por otro cliente.'},
+                    status=status.HTTP_409_CONFLICT
                 )
             
             # Obtener el turno
@@ -1249,7 +3059,30 @@ class NotificacionViewSet(viewsets.ReadOnlyModelViewSet):
             
             # Marcar la notificación como leída
             notificacion.estado = 'leido'
+            notificacion.datos_extra = {
+                **(notificacion.datos_extra or {}),
+                'aceptada': True
+            }
             notificacion.save()
+
+            # Cerrar ofertas equivalentes para otros clientes
+            otras_notifs = Notificacion.objects.filter(
+                tipo='ADELANTO',
+                estado='pendiente',
+                datos_extra__turno_actual_id=turno_actual_id,
+                datos_extra__fecha_oferta=fecha_oferta,
+                datos_extra__hora_oferta=hora_oferta
+            ).exclude(id=notificacion.id)
+
+            for otra in otras_notifs:
+                otra.estado = 'leido'
+                otra.titulo = 'Oferta tomada'
+                otra.mensaje = 'Otro cliente ya acepto el adelantamiento. La oferta fue cerrada.'
+                otra.datos_extra = {
+                    **(otra.datos_extra or {}),
+                    'oferta_cerrada': True
+                }
+                otra.save()
             
             return Response({
                 'mensaje': 'Turno adelantado correctamente',
@@ -1274,10 +3107,12 @@ class AdminDashboardStatsView(APIView):
     """
     Devuelve estadísticas rápidas para la Pantalla Home del Administrador.
     """
-    permission_classes = [IsAdminUser] # Solo para Staff/Yani
+    permission_classes = [IsAuthenticated, CanViewReports]
 
     def get(self, request):
-        today = timezone.now().date()
+        today = timezone.localdate(
+            timezone=timezone.get_default_timezone(),
+        )
         
         # 1. Contadores Rápidos
         turnos_hoy = Turno.objects.filter(fecha=today, estado='confirmado').count()
@@ -1320,6 +3155,50 @@ class AdminDashboardStatsView(APIView):
 # VIEWSETS PARA RUTINAS
 # ============================================
 
+
+def _select_owned_routine(request):
+    cliente = getattr(request.user, 'cliente', None)
+    if (
+        not getattr(request.user, 'is_active', False)
+        or cliente is None
+        or not cliente.activo
+    ):
+        raise PermissionDenied(
+            'Se requiere un perfil de Cliente activo para seleccionar Rutinas.'
+        )
+
+    command = RutinaClienteCreateSerializer(data=request.data)
+    command.is_valid(raise_exception=True)
+    try:
+        assignment, _ = assign_routine_copy(
+            cliente_id=cliente.pk,
+            rutina_id=command.validated_data['rutina_id'],
+        )
+    except RoutineAssignmentInvalid as exc:
+        status_code = (
+            status.HTTP_404_NOT_FOUND
+            if exc.code == 'ROUTINE_NOT_FOUND'
+            else status.HTTP_400_BAD_REQUEST
+        )
+        return Response(
+            {'error': {'code': exc.code, 'detail': exc.detail}},
+            status=status_code,
+        )
+    except RoutineAssignmentConflict as exc:
+        return Response(
+            {'error': {'code': exc.code, 'detail': exc.detail}},
+            status=status.HTTP_409_CONFLICT,
+        )
+
+    return Response(
+        {
+            'mensaje': f"Rutina '{assignment.nombre}' agregada exitosamente",
+            'rutina_cliente_id': assignment.pk,
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+
 class RutinaViewSet(viewsets.ModelViewSet):
     """
     ViewSet para gestionar Rutinas (catálogo de rutinas disponibles).
@@ -1328,28 +3207,41 @@ class RutinaViewSet(viewsets.ModelViewSet):
     """
     serializer_class = RutinaSerializer
     permission_classes = [IsAuthenticated]
-
     pagination_class = None
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = RutinaFilter
+    search_fields = ['nombre', 'descripcion']
+    ordering_fields = ['nombre']
     
+    ADMIN_ACTIONS = {
+        'create',
+        'update',
+        'partial_update',
+        'destroy',
+        'publicar',
+        'obsoletar',
+        'notificar_actualizacion',
+        'usuarios_usando',
+    }
+
     def get_queryset(self):
-        """
-        - Admins ven todas las rutinas
-        - Clientes solo ven las publicadas
-        """
-        if self.request.user.is_staff:
+        if self.request.user.has_perm(BusinessPermission.ASSIGN_ROUTINES):
             return Rutina.objects.all()
-        else:
-            return Rutina.objects.filter(estado='publicada')
+        return Rutina.objects.filter(estado='publicada')
     
     def get_permissions(self):
         """
         - list, retrieve, seleccionar: Clientes autenticados
         - create, update, destroy: Solo staff
         """
-        if self.action in ['list', 'retrieve', 'seleccionar']:
-            permission_classes = [IsAuthenticated]
+        if self.action in self.ADMIN_ACTIONS:
+            permission_classes = [
+                IsAuthenticated,
+                IsActiveUser,
+                CanAssignRoutines,
+            ]
         else:
-            permission_classes = [IsAdminUser]
+            permission_classes = [IsAuthenticated, IsActiveUser]
         return [permission() for permission in permission_classes]
     
     def destroy(self, request, *args, **kwargs):
@@ -1366,7 +3258,7 @@ class RutinaViewSet(viewsets.ModelViewSet):
 
         if tiene_clientes:
             # --- CAMINO ALTERNATIVO: MARCAR OBSOLETA ---
-            rutina.estado = 'OBSOLETA' 
+            rutina.estado = 'obsoleta'
             rutina.save()
             
             # --- NOTIFICACIÓN MASIVA ---
@@ -1405,7 +3297,7 @@ class RutinaViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_204_NO_CONTENT
             )
     
-    @action(detail=True, methods=['post'], permission_classes=[IsAdminUser])
+    @action(detail=True, methods=['post'])
     def publicar(self, request, pk=None):
         """
         Endpoint para PUBLICAR una rutina (cambiar estado a 'publicada').
@@ -1417,7 +3309,7 @@ class RutinaViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(rutina)
         return Response(serializer.data, status=status.HTTP_200_OK)
     
-    @action(detail=True, methods=['post'], permission_classes=[IsAdminUser])
+    @action(detail=True, methods=['post'])
     def obsoletar(self, request, pk=None):
         """
         Endpoint para MARCAR COMO OBSOLETA una rutina.
@@ -1431,7 +3323,7 @@ class RutinaViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(rutina)
         return Response(serializer.data, status=status.HTTP_200_OK)
     
-    @action(detail=True, methods=['post'], permission_classes=[IsAdminUser])
+    @action(detail=True, methods=['post'])
     def notificar_actualizacion(self, request, pk=None):
         """
         Endpoint para NOTIFICAR a los clientes sobre actualización.
@@ -1447,7 +3339,7 @@ class RutinaViewSet(viewsets.ModelViewSet):
             status=status.HTTP_200_OK
         )
     
-    @action(detail=True, methods=['get'], permission_classes=[IsAdminUser])
+    @action(detail=True, methods=['get'])
     def usuarios_usando(self, request, pk=None):
         """
         Endpoint para obtener detalles de usuarios usando una rutina.
@@ -1486,72 +3378,10 @@ class RutinaViewSet(viewsets.ModelViewSet):
         POST /api/gestion/rutinas/seleccionar/
         Body: {"rutina_id": 1}
         """
-        rutina_id = request.data.get('rutina_id')
-        
-        if not rutina_id:
-            return Response(
-                {"error": "ID de rutina requerido"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        try:
-            # Obtener la rutina
-            rutina = Rutina.objects.get(id=rutina_id)
-            
-            # Validar que el usuario tenga perfil de cliente
-            if not hasattr(request.user, 'cliente'):
-                return Response(
-                    {"error": "El usuario no es un cliente"},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-            
-            cliente = request.user.cliente
-            
-            # Crear la copia de la rutina para el cliente con todos los datos necesarios
-            rutina_cliente = RutinaCliente.objects.create(
-                cliente=cliente,
-                rutina_original=rutina,
-                nombre=rutina.nombre,
-                objetivo=rutina.objetivo,
-                descripcion=rutina.descripcion,
-                archivo=rutina.archivo,  # ✅ AGREGADO: Copiar el archivo
-                version_asignada=rutina.version
-            )
-            
-            # Copiar los pasos de la rutina original
-            """
-            for paso_original in rutina.pasos.all():
-                PasoRutinaCliente.objects.create(
-                    rutina_cliente=rutina_cliente,
-                    orden=paso_original.orden,
-                    descripcion=paso_original.descripcion,
-                    frecuencia=paso_original.frecuencia
-                
-            """
-
-            
-            return Response(
-                {
-                    "mensaje": f"Rutina '{rutina.nombre}' agregada exitosamente a Mis Rutinas",
-                    "rutina_cliente_id": rutina_cliente.id
-                },
-                status=status.HTTP_201_CREATED
-            )
-            
-        except Rutina.DoesNotExist:
-            return Response(
-                {"error": "La rutina no existe"},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        except Exception as e:
-            print(f"ERROR en seleccionar rutina: {str(e)}")
-            return Response(
-                {"error": f"Error al agregar la rutina: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+        return _select_owned_routine(request)
 
 
-class RutinaClienteViewSet(viewsets.ReadOnlyModelViewSet):
+class RutinaClienteViewSet(viewsets.ModelViewSet):
     """
     ViewSet para gestionar las COPIAS de rutinas asignadas a clientes.
     - Clientes: Ven solo sus propias rutinas
@@ -1565,13 +3395,17 @@ class RutinaClienteViewSet(viewsets.ReadOnlyModelViewSet):
         - Clientes ven solo sus rutinas
         - Admins ven todas
         """
-        if self.request.user.is_staff:
+        if self.request.user.has_perm(BusinessPermission.ASSIGN_ROUTINES):
             return RutinaCliente.objects.all()
-        else:
-            try:
-                return RutinaCliente.objects.filter(cliente=self.request.user.cliente)
-            except:
-                return RutinaCliente.objects.none()
+        cliente = getattr(self.request.user, 'cliente', None)
+        if cliente is not None and cliente.activo:
+            return RutinaCliente.objects.filter(cliente=cliente)
+        return RutinaCliente.objects.none()
+
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return RutinaClienteAssignCommandSerializer
+        return RutinaClienteSerializer
     
     def get_permissions(self):
         """
@@ -1579,18 +3413,46 @@ class RutinaClienteViewSet(viewsets.ReadOnlyModelViewSet):
         - update, destroy: Usuarios autenticados (solo sus propias rutinas)
         - create: No permitido (se crean automáticamente)
         """
-        if self.action in ['list', 'retrieve', 'destroy']:
-            permission_classes = [IsAuthenticated]
+        if self.action == 'create':
+            permission_classes = [
+                IsAuthenticated,
+                IsActiveUser,
+                CanAssignRoutines,
+            ]
         else:
-            permission_classes = [IsAdminUser]
+            permission_classes = [IsAuthenticated, IsActiveUser]
         return [permission() for permission in permission_classes]
     
     def create(self, request, *args, **kwargs):
-        """Desabilita creación manual."""
+        command = self.get_serializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        try:
+            assignment, _ = assign_routine_copy(
+                **command.validated_data,
+            )
+        except RoutineAssignmentInvalid as exc:
+            return Response(
+                {'error': {'code': exc.code, 'detail': exc.detail}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except RoutineAssignmentConflict as exc:
+            return Response(
+                {'error': {'code': exc.code, 'detail': exc.detail}},
+                status=status.HTTP_409_CONFLICT,
+            )
         return Response(
-            {'error': 'Use POST /rutinas/seleccionar/ para asignar rutinas'},
-            status=status.HTTP_405_METHOD_NOT_ALLOWED
+            RutinaClienteSerializer(
+                assignment,
+                context=self.get_serializer_context(),
+            ).data,
+            status=status.HTTP_201_CREATED,
         )
+
+    def update(self, request, *args, **kwargs):
+        raise MethodNotAllowed(request.method)
+
+    def partial_update(self, request, *args, **kwargs):
+        raise MethodNotAllowed(request.method)
     
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def actualizar_desde_original(self, request, pk=None):
@@ -1601,13 +3463,6 @@ class RutinaClienteViewSet(viewsets.ReadOnlyModelViewSet):
         El cliente usa esto cuando recibe notificación de actualización.
         """
         rutina_cliente = self.get_object()
-        
-        # Verificar que el cliente es el dueño
-        if rutina_cliente.cliente.usuario != request.user and not request.user.is_staff:
-            return Response(
-                {'error': 'No tienes permiso'},
-                status=status.HTTP_403_FORBIDDEN
-            )
         
         if not rutina_cliente.rutina_original:
             return Response(
@@ -1626,13 +3481,6 @@ class RutinaClienteViewSet(viewsets.ReadOnlyModelViewSet):
         DELETE /api/gestion/rutinas-cliente/{id}/
         """
         rutina_cliente = self.get_object()
-        
-        # Verificar que el usuario es el dueño de la rutina o es admin
-        if rutina_cliente.cliente.usuario != request.user and not request.user.is_staff:
-            return Response(
-                {'error': 'No tienes permiso para eliminar esta rutina'},
-                status=status.HTTP_403_FORBIDDEN
-            )
         
         rutina_cliente.delete()
         return Response(
@@ -1749,112 +3597,535 @@ class ReglaDiagnosticoViewSet(viewsets.ModelViewSet):
     
     serializer_class = ReglaDiagnosticoSerializer
     
-    # Restricción de seguridad: Solo usuarios Administradores (Yani) pueden tocar esto.
-    # Si quieres que cualquier usuario logueado acceda (para pruebas), usa IsAuthenticated.
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsAuthenticated, CanManageConfiguration]
 
 class SeleccionarRutinaView(APIView):
     # 2. FORZAR AUTENTICACIÓN JWT (Esto arregla el conflicto con cookies/CSRF)
     authentication_classes = [JWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsActiveUser]
 
     def post(self, request):
-        # Debug para ver en la consola negra quién está entrando
-        print(f"DEBUG AUTH: Usuario detectado -> {request.user}")
-        print(f"DEBUG AUTH: Autenticación usada -> {request.auth}")
-
-        usuario = request.user
-        
-        # Validación de seguridad: ¿Tiene perfil de cliente?
-        if not hasattr(usuario, 'cliente'):
-             return Response(
-                 {"error": "El usuario no es un cliente."}, 
-                 status=status.HTTP_403_FORBIDDEN
-             )
-
-        rutina_id = request.data.get('rutina_id')
-        if not rutina_id:
-            return Response({"error": "Falta el ID de la rutina"}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            # 3. LÓGICA DE GUARDADO
-            rutina = Rutina.objects.get(id=rutina_id)
-            cliente = usuario.cliente
-            
-            # --- ADVERTENCIA DE MODELO ---
-            # En tus archivos models.py NO vi un campo 'rutinas' en Cliente.
-            # Solo vi 'historial_servicios'. 
-            # Si creaste un campo nuevo ManyToMany para rutinas, úsalo aquí:
-            if hasattr(cliente, 'rutinas'):
-                cliente.rutinas.add(rutina)
-            elif hasattr(cliente, 'rutinas_guardadas'):
-                 cliente.rutinas_guardadas.add(rutina)
-            else:
-                # Si no tienes el campo, esto fallará. 
-                # Para la demo de hoy, puedes simular el éxito o imprimirlo:
-                print(f"DEBUG: Simulando guardado de Rutina {rutina.nombre} para {usuario.email}")
-            
-            return Response(
-                {"mensaje": f"Rutina '{rutina.nombre}' agregada a tus favoritos"}, 
-                status=status.HTTP_200_OK
-            )
-
-        except Rutina.DoesNotExist:
-            return Response({"error": "La rutina no existe"}, status=status.HTTP_404_NOT_FOUND)
-        except Exception as e:
-            print(f"ERROR: {str(e)}")
-            return Response({"error": "Error interno del servidor"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return _select_owned_routine(request)
         
 
 # ----------------------------------------------------
 # A. CRUD USUARIOS (ADMIN)
 # ----------------------------------------------------
 class AdminUsuarioViewSet(viewsets.ModelViewSet):
-    queryset = Usuario.objects.all()
-    serializer_class = UsuarioAdminSerializer
-    permission_classes = [IsAdminUser] # Solo admins pueden entrar aquí
+    queryset = Usuario.objects.all()  # Cambiar a todos, luego filtramos en get_queryset
+    serializer_class = UsuarioAdminReadSerializer
+    permission_classes = [IsAuthenticated, CanManageUsers]
+    
+    # Configurar filtros
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = UsuarioFilter
+    search_fields = ['first_name', 'last_name', 'email']
+    ordering_fields = ['date_joined', 'email', 'first_name', 'last_name']
+    ordering = ['-date_joined']  # Por defecto, mostrar primero los más nuevos
 
-    def perform_destroy(self, instance):
-        """
-        No elimina el registro (Soft Delete). Lo desactiva.
-        Validación: No desactivar si tiene turnos futuros.
-        """
-        # 1. Verificar turnos activos/futuros
-        # Asumiendo que Turno tiene FK 'profesional' o lo buscas por otro medio. 
-        # Si Yani es la única, esta validación es vital si agregas más staff.
-        
-        # Ejemplo: Turno.objects.filter(profesional=instance, fecha__gte=timezone.now(), estado='confirmado')
-        # Como tu modelo Turno actual no tiene 'profesional' explícito (es Yani), 
-        # esta validación aplica si el usuario a borrar fuera un cliente con deuda o un futuro empleado.
-        
-        # Para cumplir el requisito del enunciado A:
-        # "No se puede eliminar una cuenta de profesional si tiene turnos activos"
-        if instance.is_staff:
-             # Simulamos chequeo
-             turnos_pendientes = Turno.objects.filter(fecha__gte=timezone.now().date(), estado='confirmado').exists()
-             if turnos_pendientes:
-                 # En un sistema multi-profesional filtraríamos por profesional=instance
-                 # Como es tesis y Yani es única, protegemos su cuenta.
-                 raise serializers.ValidationError("No se puede desactivar: Hay turnos futuros confirmados en el sistema.")
+    def get_serializer_class(self):
+        if self.action in ['list', 'retrieve']:
+            return UsuarioAdminReadSerializer
+        if self.action == 'update':
+            return UsuarioAdminIdentityUpdateSerializer
+        if self.action == 'partial_update':
+            return UsuarioAdminIdentityUpdateSerializer
+        return UsuarioAdminReadSerializer
 
-        # 2. Desactivación (Soft Delete)
-        instance.is_active = False
-        instance.save()
+    def get_permissions(self):
+        if self.action == 'create':
+            permission_classes = [AllowAny]
+        elif self.action in [
+            'cambiar_rol_negocio',
+            'desactivar_cuenta',
+            'reactivar_cuenta',
+        ]:
+            permission_classes = [IsAuthenticated]
+        else:
+            permission_classes = [IsAuthenticated, CanManageUsers]
+        return [permission() for permission in permission_classes]
+
+    def create(self, request, *args, **kwargs):
+        raise MethodNotAllowed(
+            request.method,
+            detail=(
+                'La creación genérica de Usuario está deshabilitada. '
+                'Utilice una operación de alta semántica.'
+            ),
+        )
+
+    def destroy(self, request, *args, **kwargs):
+        raise MethodNotAllowed(
+            request.method,
+            detail=(
+                'La baja genérica de Usuario está deshabilitada. '
+                'Utilice la operación semántica de desactivación de cuenta.'
+            ),
+        )
+
+    def get_queryset(self):
+        """
+        Retornar todos los usuarios y dejar que django-filter haga el filtrado.
+        """
+        return Usuario.objects.prefetch_related('groups')
+
+    @action(detail=True, methods=['get'], url_path='resumen-acceso')
+    def resumen_acceso(self, request, pk=None):
+        target = self.get_object()
+        return Response(build_administrative_access_summary(target))
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='cambiar-rol-negocio',
+    )
+    def cambiar_rol_negocio(self, request, pk=None):
+        role_change_permission = CanManageUsersAndAssignRoles()
+        if not role_change_permission.has_permission(request, self):
+            return self._command_error(
+                'PERMISSION_DENIED',
+                role_change_permission.message,
+                status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            target_user = self.get_object()
+        except Http404:
+            return self._command_error(
+                'USER_NOT_FOUND',
+                'El Usuario solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        command = UsuarioBusinessRoleChangeCommandSerializer(
+            data=request.data
+        )
+        if not command.is_valid():
+            error_fields = set(command.errors)
+            error_code = (
+                'INVALID_ROLE'
+                if error_fields == {'role'}
+                else 'INVALID_REASON'
+                if error_fields == {'motivo'}
+                else 'INVALID_PAYLOAD'
+            )
+            return self._command_error(
+                error_code,
+                'El payload de cambio de BusinessRole es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+                fields=command.errors,
+            )
+
+        try:
+            result = change_administrative_business_role(
+                actor=request.user,
+                target_user=target_user,
+                target_role=command.validated_data['role'],
+                reason=command.validated_data['motivo'],
+            )
+        except PermissionDeniedForRoleAssignment:
+            return self._command_error(
+                'PERMISSION_DENIED',
+                'No tiene permisos para cambiar roles de negocio.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except SelfRoleAssignmentNotAllowed:
+            return self._command_error(
+                'SELF_ROLE_CHANGE_NOT_ALLOWED',
+                'No puede cambiar su propio BusinessRole.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except ProtectedSuperuser:
+            return self._command_error(
+                'PROTECTED_SUPERUSER',
+                'El Usuario protegido no puede gestionarse mediante esta acción.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except InvalidBusinessRole:
+            return self._command_error(
+                'INVALID_ROLE',
+                'El BusinessRole solicitado no es válido.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except InvalidRoleChangeReason:
+            return self._command_error(
+                'INVALID_REASON',
+                'El motivo del cambio de BusinessRole es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except InconsistentBusinessRoleState:
+            return self._command_error(
+                'INCONSISTENT_BUSINESS_ROLES',
+                'El Usuario tiene múltiples roles de negocio.',
+                status.HTTP_409_CONFLICT,
+            )
+        except MissingClientProfile:
+            return self._command_error(
+                'CLIENT_PROFILE_REQUIRED',
+                'El rol CLIENTE requiere un perfil Cliente.',
+                status.HTTP_409_CONFLICT,
+            )
+        except MissingPersonalProfile:
+            return self._command_error(
+                'PERSONAL_PROFILE_REQUIRED',
+                'El rol laboral requiere un Personal vinculado.',
+                status.HTTP_409_CONFLICT,
+            )
+        except InactivePersonal:
+            return self._command_error(
+                'PERSONAL_INACTIVE',
+                'El rol laboral requiere un Personal activo.',
+                status.HTTP_409_CONFLICT,
+            )
+        except LastActiveAdministratorRoleChange:
+            return self._command_error(
+                'LAST_ACTIVE_ADMIN',
+                'No puede degradarse el último administrador activo.',
+                status.HTTP_409_CONFLICT,
+            )
+        except ResidualAdministrativeCapabilities as exc:
+            return self._command_error(
+                'RESIDUAL_ADMIN_CAPABILITIES',
+                'La cuenta conservaría capacidades administrativas residuales.',
+                status.HTTP_409_CONFLICT,
+                capabilities=list(exc.capabilities),
+            )
+        except InvalidRoleAssignmentTarget:
+            return self._command_error(
+                'USER_NOT_FOUND',
+                'El Usuario solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        refreshed_target = Usuario.objects.get(pk=target_user.pk)
+        return Response({
+            'changed': result.changed,
+            'usuario_id': target_user.pk,
+            'previous_role': result.previous_role,
+            'business_role': result.new_role,
+            'audit_id': result.audit_id,
+            'access_summary': build_administrative_access_summary(
+                refreshed_target
+            ),
+        }, status=status.HTTP_200_OK)
+
+    def update(self, request, *args, **kwargs):
+        if (
+            not request.user.is_active
+            or not request.user.has_perm(BusinessPermission.MANAGE_USERS)
+        ):
+            return self._command_error(
+                'PERMISSION_DENIED',
+                'No tiene permisos para actualizar la identidad de usuarios.',
+                status.HTTP_403_FORBIDDEN,
+            )
+
+        instance = self.get_object()
+        if instance.is_superuser:
+            return self._command_error(
+                'PROTECTED_SUPERUSER',
+                'El Usuario protegido no puede gestionarse mediante esta acción.',
+                status.HTTP_403_FORBIDDEN,
+            )
+
+        partial = kwargs.pop('partial', False)
+        serializer = self.get_serializer(
+            instance,
+            data=request.data,
+            partial=partial,
+        )
+        if not serializer.is_valid():
+            return self._command_error(
+                'INVALID_PAYLOAD',
+                'El payload de actualización de Usuario es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+                fields=serializer.errors,
+            )
+
+        self.perform_update(serializer)
+        read_serializer = UsuarioAdminReadSerializer(
+            instance,
+            context=self.get_serializer_context(),
+        )
+        return Response(read_serializer.data, status=status.HTTP_200_OK)
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='desactivar-cuenta',
+        permission_classes=[IsAuthenticated],
+    )
+    def desactivar_cuenta(self, request, pk=None):
+        try:
+            target_user = self.get_object()
+        except Http404:
+            return self._command_error(
+                'USER_NOT_FOUND',
+                'El Usuario solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        command = UsuarioAccountStatusCommandSerializer(data=request.data)
+        if not command.is_valid():
+            error_code = (
+                'INVALID_REASON'
+                if set(command.errors) == {'motivo'}
+                else 'INVALID_PAYLOAD'
+            )
+            return self._command_error(
+                error_code,
+                'El payload de desactivación de cuenta es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+                fields=command.errors,
+            )
+
+        try:
+            result = deactivate_account(
+                actor=request.user,
+                target_user=target_user,
+                reason=command.validated_data['motivo'],
+            )
+        except PermissionDeniedForAccountDeactivation:
+            return self._command_error(
+                'PERMISSION_DENIED',
+                'No tiene permisos para desactivar cuentas.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except ProtectedSuperuser:
+            return self._command_error(
+                'PROTECTED_SUPERUSER',
+                'El Usuario protegido no puede gestionarse mediante esta acción.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except SelfDeactivationNotAllowed:
+            return self._command_error(
+                'SELF_DEACTIVATION_NOT_ALLOWED',
+                'No puede desactivar su propia cuenta mediante esta acción.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except LastActiveAdministrator:
+            return self._command_error(
+                'LAST_ACTIVE_ADMIN',
+                'No puede desactivarse el último administrador activo.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except InvalidAccountDeactivationReason:
+            return self._command_error(
+                'INVALID_REASON',
+                'El motivo de desactivación es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except InvalidAccountDeactivationTarget:
+            return self._command_error(
+                'USER_NOT_FOUND',
+                'El Usuario solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+        except AccountDeactivationConflict:
+            return self._command_error(
+                'ACCOUNT_DEACTIVATION_CONFLICT',
+                'La desactivación entra en conflicto con otra operación.',
+                status.HTTP_409_CONFLICT,
+            )
+
+        return Response({
+            'changed': result.changed,
+            'usuario_id': result.user_id,
+            'usuario_activo_anterior': result.previous_active,
+            'usuario_activo_actual': result.current_active,
+            'rol_actual': result.current_role,
+            'refresh_tokens_revoked': result.refresh_tokens_revoked,
+            'warnings': list(result.warnings),
+        }, status=status.HTTP_200_OK)
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='reactivar-cuenta',
+        permission_classes=[IsAuthenticated],
+    )
+    def reactivar_cuenta(self, request, pk=None):
+        try:
+            target_user = self.get_object()
+        except Http404:
+            return self._command_error(
+                'USER_NOT_FOUND',
+                'El Usuario solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        command = UsuarioAccountStatusCommandSerializer(data=request.data)
+        if not command.is_valid():
+            error_code = (
+                'INVALID_REASON'
+                if set(command.errors) == {'motivo'}
+                else 'INVALID_PAYLOAD'
+            )
+            return self._command_error(
+                error_code,
+                'El payload de reactivación de cuenta es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+                fields=command.errors,
+            )
+
+        try:
+            result = reactivate_account(
+                actor=request.user,
+                target_user=target_user,
+                reason=command.validated_data['motivo'],
+            )
+        except PermissionDeniedForAccountReactivation:
+            return self._command_error(
+                'PERMISSION_DENIED',
+                'No tiene permisos para reactivar cuentas.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except ProtectedSuperuser:
+            return self._command_error(
+                'PROTECTED_SUPERUSER',
+                'El Usuario protegido no puede gestionarse mediante esta acción.',
+                status.HTTP_403_FORBIDDEN,
+            )
+        except InvalidAccountReactivationReason:
+            return self._command_error(
+                'INVALID_REASON',
+                'El motivo de reactivación es inválido.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+        except InvalidAccountReactivationTarget:
+            return self._command_error(
+                'USER_NOT_FOUND',
+                'El Usuario solicitado no existe.',
+                status.HTTP_404_NOT_FOUND,
+            )
+        except UserHasNoBusinessRole:
+            return self._command_error(
+                'USER_HAS_NO_BUSINESS_ROLE',
+                'El Usuario no tiene un rol de negocio.',
+                status.HTTP_409_CONFLICT,
+            )
+        except InconsistentBusinessRoleState:
+            return self._command_error(
+                'INCONSISTENT_BUSINESS_ROLES',
+                'El Usuario tiene múltiples roles de negocio.',
+                status.HTTP_409_CONFLICT,
+            )
+        except MissingClientProfile:
+            return self._command_error(
+                'CLIENT_PROFILE_REQUIRED',
+                'El rol CLIENTE requiere un perfil Cliente.',
+                status.HTTP_409_CONFLICT,
+            )
+        except MissingPersonalProfile:
+            return self._command_error(
+                'PERSONAL_PROFILE_REQUIRED',
+                'El rol laboral requiere un Personal vinculado.',
+                status.HTTP_409_CONFLICT,
+            )
+        except InactivePersonal:
+            return self._command_error(
+                'PERSONAL_INACTIVE',
+                'Debe reactivar el Personal antes de reactivar la cuenta.',
+                status.HTTP_409_CONFLICT,
+            )
+        except AccountReactivationConflict:
+            return self._command_error(
+                'ACCOUNT_REACTIVATION_CONFLICT',
+                'La reactivación entra en conflicto con otra operación.',
+                status.HTTP_409_CONFLICT,
+            )
+
+        return Response({
+            'changed': result.changed,
+            'usuario_id': result.user_id,
+            'usuario_activo_anterior': result.previous_active,
+            'usuario_activo_actual': result.current_active,
+            'rol_actual': result.current_role,
+            'refresh_tokens_revoked': result.refresh_tokens_revoked,
+            'warnings': list(result.warnings),
+        }, status=status.HTTP_200_OK)
+
+    @staticmethod
+    def _command_error(
+        code,
+        detail,
+        status_code,
+        fields=None,
+        **details,
+    ):
+        error = {'code': code, 'detail': detail}
+        if fields is not None:
+            error['fields'] = fields
+        error.update(details)
+        return Response({'error': error}, status=status_code)
 
 # ----------------------------------------------------
 # B. CRUD PRODUCTOS
 # ----------------------------------------------------
 class ProductoViewSet(viewsets.ModelViewSet):
-    queryset = Producto.objects.filter(activo=True) # Por defecto mostramos solo activos
+    """
+    ViewSet para gestionar productos del catálogo.
+    Incluye validaciones de stock, acciones personalizadas para alertas de stock bajo,
+    y recomendaciones inteligentes basadas en diagnósticos de clientes.
+    """
     serializer_class = ProductoSerializer
-    permission_classes = [IsAdminUser] # Solo staff gestiona productos
     pagination_class = None
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = ProductoFilter
+    search_fields = ['nombre']
+    ordering_fields = ['nombre', 'precio']
+
+    def get_queryset(self):
+        """Optimiza queries con prefetch_related para imágenes"""
+        queryset = Producto.objects.all()
+        user = self.request.user
+        internal_permissions = (
+            BusinessPermission.VIEW_STOCK,
+            BusinessPermission.MANAGE_STOCK,
+            BusinessPermission.MANAGE_PRODUCTS,
+            BusinessPermission.MANAGE_PRICES,
+        )
+        if not (
+            user.is_authenticated
+            and any(user.has_perm(permission) for permission in internal_permissions)
+        ):
+            queryset = queryset.filter(activo=True)
+        return queryset.prefetch_related('imagenes')
+
+    def get_permissions(self):
+        """
+        Permisos dinámicos:
+        - list/retrieve: AllowAny (sin cantidades internas salvo view_stock)
+        - metadata: manage_products
+        - precio: manage_prices
+        - stock_bajo/movimientos: view_stock
+        - receive/adjust: manage_stock
+        """
+        if self.action in ['list', 'retrieve', 'sugeridos_por_cliente']:
+            permission_classes = [AllowAny]
+        elif self.action in ['stock_bajo', 'stock_movements']:
+            permission_classes = [IsAuthenticated, CanViewStock]
+        elif self.action in ['receive_stock', 'adjust_stock']:
+            permission_classes = [IsAuthenticated, CanManageStock]
+        elif self.action == 'create':
+            permission_classes = [IsAuthenticated, CanManageProductsAndPrices]
+        elif self.action in ['update', 'partial_update']:
+            permission_classes = [IsAuthenticated, CanManageProductsOrPrices]
+        elif self.action in ['destroy', 'desactivar']:
+            permission_classes = [IsAuthenticated, CanManageProducts]
+        else:
+            permission_classes = [IsAuthenticated, CanManageProducts]
+        return [permission() for permission in permission_classes]
+
+    def perform_update(self, serializer):
+        """Asegura que los cambios se guarden correctamente"""
+        serializer.save()
 
     def destroy(self, request, *args, **kwargs):
         producto = self.get_object()
         
         # Validación 1: Stock en inventario
-        if producto.stock > 0:
+        if producto.stock_real > 0:
             return Response(
                 {"error": "No se puede eliminar: El producto tiene stock físico."}, 
                 status=status.HTTP_400_BAD_REQUEST
@@ -1864,26 +4135,334 @@ class ProductoViewSet(viewsets.ModelViewSet):
         # Asumiendo relación ManyToMany en Rutina -> productos
         # if producto.rutina_set.exists(): ...
         
-        # Si pasa validaciones, Soft Delete o Hard Delete según prefieras.
-        # El requisito dice "Retira producto descontinuado".
+        # Si pasa validaciones, eliminar definitivamente.
+        producto.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=['post'], url_path='desactivar')
+    def desactivar(self, request, pk=None):
+        producto = self.get_object()
+        if not producto.activo:
+            return Response(
+                {"error": "El producto ya está desactivado."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         producto.activo = False
         producto.save()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return Response({"mensaje": "Producto desactivado."}, status=status.HTTP_200_OK)
+
+    # --- 1. ENDPOINT: ALERTA DE STOCK BAJO ---
+    @action(detail=False, methods=['get'])
+    def stock_bajo(self, request):
+        """
+        Devuelve productos cuyo stock disponible es menor o igual al mínimo.
+        Útil para el panel de Yanina para saber qué reabastecer.
+        GET /api/gestion/productos/stock_bajo/
+        """
+        productos = Producto.objects.annotate(
+            _stock_disponible=F('stock_real') - F('stock_comprometido')
+        ).filter(
+            _stock_disponible__lte=F('stock_minimo'),
+            activo=True,
+        )
+        serializer = self.get_serializer(productos, many=True)
+        return Response({
+            "total_productos_bajo_stock": productos.count(),
+            "productos": serializer.data
+        })
+
+    @action(detail=True, methods=['post'], url_path='stock/receive')
+    def receive_stock(self, request, pk=None):
+        serializer = StockReceiveCommandSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            movement = receive_stock(
+                product_id=self.get_object().pk,
+                actor=request.user,
+                **serializer.validated_data,
+            )
+        except StockError as exc:
+            return _stock_error_response(exc)
+        return Response(
+            StockMovementSerializer(movement).data,
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=True, methods=['post'], url_path='stock/adjust')
+    def adjust_stock(self, request, pk=None):
+        serializer = StockAdjustCommandSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            movement = adjust_stock(
+                product_id=self.get_object().pk,
+                actor=request.user,
+                **serializer.validated_data,
+            )
+        except StockError as exc:
+            return _stock_error_response(exc)
+        return Response(
+            StockMovementSerializer(movement).data,
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=True, methods=['get'], url_path='stock-movements')
+    def stock_movements(self, request, pk=None):
+        product = self.get_object()
+        queryset = MovimientoStock.objects.filter(
+            producto=product
+        ).select_related('actor', 'reverses_movement')
+        movement_type = request.query_params.get('tipo')
+        if movement_type:
+            queryset = queryset.filter(tipo=movement_type)
+        paginator = PageNumberPagination()
+        paginator.page_size = 20
+        page = paginator.paginate_queryset(queryset, request, view=self)
+        serializer = StockMovementSerializer(page, many=True)
+        return paginator.get_paginated_response(serializer.data)
+
+    # --- 2. ENDPOINT: RECOMENDACIONES INTELIGENTES (SMART SELLING) ---
+    @action(detail=False, methods=['get'], url_path='sugeridos-cliente')
+    def sugeridos_por_cliente(self, request):
+        """
+        Sugiere productos basados en el último diagnóstico del cliente autenticado.
+        Solo funciona si el cliente está autenticado.
+        GET /api/gestion/productos/sugeridos-cliente/
+        """
+        if not request.user.is_authenticated:
+            return Response(
+                {"error": "Debes estar autenticado para recibir sugerencias personalizadas."},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        try:
+            cliente = request.user.cliente
+        except:
+            return Response(
+                {"error": "Tu usuario no tiene perfil de cliente."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Buscamos el último diagnóstico del cliente
+            ultimo_diagnostico = DiagnosticoCapilar.objects.filter(
+                cliente=cliente
+            ).latest('fecha_diagnostico')
+            
+            # Mapeo de lógica: Diagnóstico -> Compatibilidad de Producto
+            # Si el pelo está dañado, prioridad productos DANADO
+            if ultimo_diagnostico.estado_general and "Dañado" in ultimo_diagnostico.estado_general.nombre:
+                tag_busqueda = 'DANADO'
+            elif ultimo_diagnostico.cuero_cabelludo and "Graso" in ultimo_diagnostico.cuero_cabelludo.nombre:
+                tag_busqueda = 'GRASO'
+            elif ultimo_diagnostico.cuero_cabelludo and "Seco" in ultimo_diagnostico.cuero_cabelludo.nombre:
+                tag_busqueda = 'SECO'
+            elif ultimo_diagnostico.tipo_cabello and ultimo_diagnostico.tipo_cabello.nombre in ["Rizado", "Afro"]:
+                tag_busqueda = 'RIZADO'
+            elif ultimo_diagnostico.tipo_cabello and "Lacio" in ultimo_diagnostico.tipo_cabello.nombre:
+                tag_busqueda = 'LACIO'
+            else:
+                tag_busqueda = 'TODO'
+
+            # Buscamos productos que coincidan y tengan stock
+            sugeridos = Producto.objects.filter(
+                Q(compatibilidad=tag_busqueda) | Q(compatibilidad='TODO'),
+                stock_real__gt=F('stock_comprometido'),
+                activo=True
+            ).order_by('nombre')[:5]  # Limitamos a los mejores 5
+
+            serializer = self.get_serializer(sugeridos, many=True)
+            return Response({
+                "motivo_sugerencia": f"Basado en tu diagnóstico: {tag_busqueda}",
+                "diagnostico_id": ultimo_diagnostico.id,
+                "fecha_diagnostico": ultimo_diagnostico.fecha_diagnostico,
+                "productos_sugeridos": serializer.data
+            }, status=status.HTTP_200_OK)
+
+        except DiagnosticoCapilar.DoesNotExist:
+            return Response({
+                "error": "No tienes diagnósticos previos. Realiza un diagnóstico para recibir recomendaciones personalizadas.",
+                "productos": []
+            }, status=status.HTTP_404_NOT_FOUND)
+
+
+def _stock_error_response(exc):
+    if isinstance(exc, StockPermissionDenied):
+        response_status = status.HTTP_403_FORBIDDEN
+    elif isinstance(exc, StockNotFound):
+        response_status = status.HTTP_404_NOT_FOUND
+    elif isinstance(exc, StockConflict):
+        response_status = status.HTTP_409_CONFLICT
+    elif isinstance(exc, StockInvalid):
+        response_status = status.HTTP_400_BAD_REQUEST
+    else:
+        response_status = status.HTTP_400_BAD_REQUEST
+    return Response(
+        {'error': {'code': exc.code, 'detail': exc.detail}},
+        status=response_status,
+    )
+
+
+class StockMovementCommandViewSet(
+    mixins.ListModelMixin,
+    viewsets.GenericViewSet,
+):
+    """Superficie semántica: no expone CRUD genérico del ledger."""
+
+    queryset = MovimientoStock.objects.select_related(
+        'producto',
+        'actor',
+        'reverses_movement',
+    ).all()
+    serializer_class = StockMovementSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_permissions(self):
+        permission_classes = (
+            [IsAuthenticated, CanViewStock]
+            if self.action == 'list'
+            else [IsAuthenticated, CanManageStock]
+        )
+        return [permission() for permission in permission_classes]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        params = self.request.query_params
+
+        for parameter, field in (
+            ('producto', 'producto_id'),
+            ('actor', 'actor_id'),
+        ):
+            value = params.get(parameter)
+            if value in (None, ''):
+                continue
+            try:
+                value = int(value)
+            except (TypeError, ValueError):
+                raise ValidationError({parameter: 'Debe ser un ID entero.'})
+            queryset = queryset.filter(**{field: value})
+
+        movement_type = params.get('tipo')
+        if movement_type:
+            if movement_type not in MovimientoStock.Type.values:
+                raise ValidationError({'tipo': 'Tipo de movimiento inválido.'})
+            queryset = queryset.filter(tipo=movement_type)
+
+        for parameter, field in (
+            ('reference_type', 'reference_type'),
+            ('reference_id', 'reference_id'),
+        ):
+            value = params.get(parameter)
+            if value not in (None, ''):
+                queryset = queryset.filter(**{field: value})
+
+        for parameter, lookup in (
+            ('fecha_desde', 'created_at__gte'),
+            ('fecha_hasta', 'created_at__lte'),
+        ):
+            value = params.get(parameter)
+            if not value:
+                continue
+            parsed = parse_datetime(value)
+            if parsed is None:
+                raise ValidationError({
+                    parameter: 'Debe ser una fecha-hora ISO 8601 válida.',
+                })
+            if timezone.is_naive(parsed):
+                parsed = timezone.make_aware(parsed)
+            queryset = queryset.filter(**{lookup: parsed})
+
+        return queryset
+
+    @action(detail=True, methods=['post'], url_path='correct')
+    def correct(self, request, pk=None):
+        serializer = StockCorrectionCommandSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            movement = correct_stock_movement(
+                movement_id=pk,
+                actor=request.user,
+                **serializer.validated_data,
+            )
+        except StockError as exc:
+            return _stock_error_response(exc)
+        return Response(
+            StockMovementSerializer(movement).data,
+            status=status.HTTP_200_OK,
+        )
 
 # ----------------------------------------------------
 # D. CRUD TIPO EQUIPAMIENTO
 # ----------------------------------------------------
-class TipoEquipamientoViewSet(viewsets.ModelViewSet):
-    queryset = TipoEquipamiento.objects.all()
+class TipoEquipamientoViewSet(
+    AuthenticatedReadManageConfigurationMixin,
+    viewsets.ModelViewSet,
+):
+    """
+    ViewSet para tipos de equipamiento.
+    
+    Lógica de filtrado:
+    - ADMINS: Ven TODOS los tipos (para poder crear nuevos y gestionar)
+    - CLIENTES: Solo ven tipos con equipamiento activo (para seleccionar en servicios)
+    """
     serializer_class = TipoEquipamientoSerializer
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = TipoEquipamientoFilter
+    search_fields = ['nombre']
+    ordering_fields = ['nombre']
+
+    def get_queryset(self):
+        """
+        Lógica inteligente de filtrado según el rol del usuario.
+        """
+        # Gestores efectivos ven todos los tipos, incluso los aún no utilizados.
+        if self.request.user.has_perm(BusinessPermission.MANAGE_CONFIGURATION):
+            return TipoEquipamiento.objects.all().order_by('nombre')
+        
+        # CLIENTES NORMALES: Solo tipos con equipamiento activo
+        # (para no mostrar tipos de equipamiento sin instancias reales)
+        tipos_con_equipos = Equipamiento.objects.filter(
+            is_active=True
+        ).values_list('tipo_id', flat=True).distinct()
+        
+        queryset = TipoEquipamiento.objects.filter(id__in=tipos_con_equipos).order_by('nombre')
+        
+        logger.info(f"TiposEquipamiento disponibles para servicios: {queryset.count()}")
+        
+        return queryset
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if instance.recursos.exists() or instance.servicios_requeridos.exists():
+            return Response(
+                {
+                    'error': {
+                        'code': 'EQUIPMENT_TYPE_IN_USE',
+                        'detail': (
+                            'No se puede eliminar un tipo de equipamiento '
+                            'referenciado por equipos o servicios.'
+                        ),
+                    }
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+        return super().destroy(request, *args, **kwargs)
 
 
 # ----------------------------------------------------
 # E. CRUD EQUIPAMIENTO
 # ----------------------------------------------------
-class EquipamientoViewSet(viewsets.ModelViewSet):
+class EquipamientoViewSet(
+    AuthenticatedReadManageConfigurationMixin,
+    viewsets.ModelViewSet,
+):
+    authenticated_read_actions = {'list', 'retrieve', 'opciones'}
     queryset = Equipamiento.objects.filter(is_active=True) # Solo mostramos los activos
     serializer_class = EquipamientoSerializer
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = EquipamientoFilter
+    search_fields = ['nombre']
+    ordering_fields = ['nombre', 'tipo']
 
     def destroy(self, request, *args, **kwargs):
         """Sobrescribimos el borrado para que sea una Baja Lógica"""
@@ -1900,7 +4479,10 @@ class EquipamientoViewSet(viewsets.ModelViewSet):
     def opciones(self, request):
         """Endpoint para que el Front arme los desplegables dinámicamente"""
         return Response({
-            "tipos": [{"id": key, "label": value} for key, value in Equipamiento.TipoRecurso.choices],
+            "tipos": [
+                {"id": item.pk, "label": item.nombre}
+                for item in TipoEquipamiento.objects.order_by('nombre')
+            ],
             "estados": [{"id": key, "label": value} for key, value in Equipamiento.EstadoRecurso.choices],
         })
 
@@ -1910,8 +4492,18 @@ class HorarioLaboralViewSet(viewsets.ModelViewSet):
     """
     queryset = HorarioLaboral.objects.all().order_by('dia_semana', 'hora_inicio')
     serializer_class = HorarioLaboralSerializer
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsAuthenticated, CanManageConfiguration]
     pagination_class = None
+
+    def get_permissions(self):
+        if self.action in {'list', 'retrieve'}:
+            permission_classes = [
+                IsAuthenticated,
+                CanViewGlobalAgendaOrManageConfiguration,
+            ]
+        else:
+            permission_classes = [IsAuthenticated, CanManageConfiguration]
+        return [permission() for permission in permission_classes]
 
     @action(detail=False, methods=['post'])
     def configurar_rango(self, request):
@@ -1921,14 +4513,45 @@ class HorarioLaboralViewSet(viewsets.ModelViewSet):
         # Nuevo: recibir si es para todos o un ID específico
         seleccionar_todos = request.data.get('todos_profesionales', False) 
 
+        if not isinstance(patron, list) or not patron:
+            return Response(
+                {'error': 'Se requiere un patrón de horarios no vacío.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         try:
             # VALIDACIÓN ESTRICTA: Si no es "todos", verificar que NO haya personal_id nulo
             if not seleccionar_todos:
-                has_null_personal = any(item.get('personal_id') is None for item in patron)
+                has_invalid_item = any(not isinstance(item, dict) for item in patron)
+                has_null_personal = has_invalid_item or any(
+                    item.get('personal_id') is None
+                    for item in patron
+                    if isinstance(item, dict)
+                )
                 if has_null_personal:
                     return Response(
                         {"error": "No se pueden crear horarios sin asignar personal. Selecciona profesionales específicos o usa 'Todos'."},
                         status=400
+                    )
+
+                personal_ids = {item['personal_id'] for item in patron}
+                active_personal_ids = set(
+                    Personal.objects.filter(
+                        id__in=personal_ids,
+                        activo=True,
+                    ).values_list('id', flat=True)
+                )
+                missing_personal_ids = personal_ids - active_personal_ids
+                if missing_personal_ids:
+                    invalid_id = sorted(missing_personal_ids, key=str)[0]
+                    return Response(
+                        {
+                            'error': (
+                                f'El profesional con ID {invalid_id} no existe '
+                                'o está inactivo.'
+                            )
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
                     )
             
             with transaction.atomic():
@@ -1941,13 +4564,6 @@ class HorarioLaboralViewSet(viewsets.ModelViewSet):
                         # Solo al ID que viene en el item
                         personal_id = item.get('personal_id')
                         profesionales = Personal.objects.filter(id=personal_id, activo=True)
-                        
-                        # Validar que el personal existe y está activo
-                        if not profesionales.exists():
-                            return Response(
-                                {"error": f"El profesional con ID {personal_id} no existe o está inactivo."},
-                                status=400
-                            )
 
                     # 2. Creamos la regla para cada profesional identificado
                     for prof in profesionales:
@@ -1987,25 +4603,78 @@ class HorarioLaboralViewSet(viewsets.ModelViewSet):
             return Response({"error": str(e)}, status=500)
 
 
+def _owned_active_personal(user):
+    personal = getattr(user, 'perfil_profesional', None)
+    if (
+        not getattr(user, 'is_active', False)
+        or personal is None
+        or not personal.activo
+    ):
+        return None
+    return personal
+
+
+def _resolve_legacy_agenda_scope(request, *, allow_global_scope):
+    user = request.user
+    owned_personal = _owned_active_personal(user)
+    can_view_global = bool(
+        getattr(user, 'is_active', False)
+        and user.has_perm(BusinessPermission.VIEW_GLOBAL_AGENDA)
+    )
+    raw_personal_id = request.query_params.get('personal_id')
+
+    if raw_personal_id not in (None, ''):
+        try:
+            personal_id = int(raw_personal_id)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError({
+                'personal_id': 'Debe ser un identificador entero válido.'
+            }) from exc
+        if personal_id < 1:
+            raise ValidationError({
+                'personal_id': 'Debe ser un identificador positivo.'
+            })
+
+        if not can_view_global:
+            if owned_personal is None or owned_personal.pk != personal_id:
+                raise PermissionDenied(
+                    'No tiene permisos para consultar la agenda solicitada.'
+                )
+            return owned_personal
+
+        personal = (
+            Personal.objects.select_related('usuario')
+            .filter(pk=personal_id, activo=True)
+            .filter(Q(usuario__isnull=True) | Q(usuario__is_active=True))
+            .first()
+        )
+        if personal is None:
+            raise Http404('No se encontró Personal activo.')
+        return personal
+
+    if owned_personal is not None:
+        return owned_personal
+    if can_view_global and allow_global_scope:
+        return None
+    if can_view_global:
+        raise ValidationError({
+            'personal_id': 'Este parámetro es obligatorio para la agenda general.'
+        })
+    raise PermissionDenied('No tiene permisos para consultar esta agenda.')
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def obtener_agenda_general(request):
     """
     Devuelve la configuración base, horarios y bloqueos para un profesional específico.
-    Query params: ?personal_id=1 (opcional, si no viene usa el primer profesional activo)
+    Query params: ?personal_id=1. Un Personal activo puede omitirlo para
+    consultar únicamente su propia agenda.
     """
-    # 1. Obtenemos el personal (ahora pasamos el ID por parámetro para que sea flexible)
-    # Si no viene ID, buscamos al primer profesional activo
-    personal_id = request.query_params.get('personal_id')
-    
-    if personal_id:
-        personal = Personal.objects.filter(id=personal_id).first()
-    else:
-        # Fallback: buscamos el primer profesional
-        personal = Personal.objects.filter(activo=True).first()
-
-    if not personal:
-        return Response({"error": "No se encontró personal disponible"}, status=404)
+    personal = _resolve_legacy_agenda_scope(
+        request,
+        allow_global_scope=False,
+    )
 
     # 2. Obtenemos la Regla (Horarios Base)
     horarios = HorarioLaboral.objects.filter(personal=personal, activo=True)
@@ -2035,89 +4704,47 @@ def obtener_agenda_general(request):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAuthenticated, CanManageConfiguration])
 def crear_bloqueo(request):
+    command = AgendaBlockCreateCommandSerializer(data=request.data)
+    command.is_valid(raise_exception=True)
+    data = command.validated_data
+
     try:
-        # 1. Identificamos a Yanina (Colorista)
-        personal = Personal.objects.filter(rol='colorista', activo=True).first()
-        if not personal:
-            return Response({"error": "No existe personal colorista activo"}, status=400)
-
-        data = request.data
-        
-        # Convertimos los strings ISO que vienen del React a objetos Datetime
-        # Formato esperado: "2025-12-07T09:00:00"
-        bloqueo_inicio = parse_datetime(data.get('fecha_inicio'))
-        bloqueo_fin = parse_datetime(data.get('fecha_fin'))
-
-        if not bloqueo_inicio or not bloqueo_fin:
-            return Response({"error": "Fechas inválidas"}, status=400)
-
-        # ------------------------------------------------------------------
-        # VALIDACIÓN DE CONFLICTOS (Excepción C.U. Paso 5)
-        # ------------------------------------------------------------------
-        
-        # A. Filtramos primero por FECHA para no traer toda la base de datos
-        # Traemos turnos que ocurran en los días involucrados en el bloqueo
-        turnos_candidatos = Turno.objects.filter(
-            fecha__range=[bloqueo_inicio.date(), bloqueo_fin.date()],
-            estado__in=[Turno.Estado.SOLICITADO, Turno.Estado.ESPERANDO_SENA, Turno.Estado.CONFIRMADO]
+        block = create_agenda_block(
+            actor=request.user,
+            personal_id=data['personal_id'],
+            starts_at=data['fecha_inicio'],
+            ends_at=data['fecha_fin'],
+            reason=data['motivo'],
+            blocks_all_day=data['bloquea_todo_el_dia'],
+        )
+    except AgendaBlockPermissionDenied as exc:
+        raise PermissionDenied(exc.detail) from exc
+    except AgendaBlockInvalid as exc:
+        return Response(
+            {'error': {'code': exc.code, 'detail': exc.detail, 'field': exc.field}},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    except AgendaBlockConflict as exc:
+        return Response(
+            {
+                'error': exc.code,
+                'mensaje': exc.detail,
+                'instruccion': 'Resuelva el conflicto antes de crear el bloqueo.',
+                'turnos_afectados': list(exc.conflicts),
+            },
+            status=status.HTTP_409_CONFLICT,
         )
 
-        conflictos = []
-
-        # B. Validación fina de HORARIOS (Memoria)
-        # Como Turno tiene fecha y hora separadas, las combinamos para comparar
-        for turno in turnos_candidatos:
-            # Crear datetime del inicio del turno
-            turno_inicio_dt = datetime.combine(turno.fecha, turno.hora_inicio)
-            # Crear datetime del fin del turno
-            turno_fin_dt = datetime.combine(turno.fecha, turno.hora_fin_calculada)
-            
-            # Hacemos los datetimes "aware" (con zona horaria) si Django lo usa
-            if timezone.is_aware(bloqueo_inicio):
-                turno_inicio_dt = timezone.make_aware(turno_inicio_dt)
-                turno_fin_dt = timezone.make_aware(turno_fin_dt)
-
-            # C. Fórmula de Solapamiento de Rangos:
-            # (StartA < EndB) and (EndA > StartB)
-            if (turno_inicio_dt < bloqueo_fin) and (turno_fin_dt > bloqueo_inicio):
-                # Obtener servicios desde detalles
-                servicios = [d.servicio.nombre for d in turno.detalles.all()]
-                servicios_str = ', '.join(servicios) if servicios else 'Sin servicios'
-                
-                conflictos.append({
-                    "cliente": f"{turno.cliente.nombre} {turno.cliente.apellido}",
-                    "fecha": turno.fecha.strftime('%d/%m'),
-                    "hora": f"{turno.hora_inicio.strftime('%H:%M')} - {turno.hora_fin_calculada.strftime('%H:%M')}",
-                    "servicios": servicios_str
-                })
-
-        # D. Si encontramos conflictos, BLOQUEAMOS el guardado
-        if conflictos:
-            return Response({
-                "error": "CONFLICTO_AGENDA",
-                "mensaje": "No se puede bloquear porque existen turnos activos en ese horario.",
-                "instruccion": "Debes reprogramar o cancelar los siguientes turnos manualmente:",
-                "turnos_afectados": conflictos
-            }, status=409) # 409 Conflict
-
-        # ------------------------------------------------------------------
-        # Si pasa la validación, GUARDAMOS
-        # ------------------------------------------------------------------
-        serializer = BloqueoAgendaSerializer(data=data)
-        if serializer.is_valid():
-            serializer.save(personal=personal)
-            return Response(serializer.data, status=201)
-        
-        return Response(serializer.errors, status=400)
-
-    except Exception as e:
-        return Response({"error": str(e)}, status=500)
+    return Response(
+        BloqueoAgendaSerializer(block).data,
+        status=status.HTTP_201_CREATED,
+    )
 
 
 @api_view(['GET'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def obtener_disponibilidad_calendario(request):
     """
     Cruza Reglas (HorarioLaboral) + Excepciones (BloqueoAgenda) para mostrar disponibilidad en calendario.
@@ -2135,34 +4762,41 @@ def obtener_disponibilidad_calendario(request):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # 1. Traer todas las reglas activas (HorarioLaboral)
-        # Filtramos por profesional si se proporciona
+        personal = _resolve_legacy_agenda_scope(
+            request,
+            allow_global_scope=True,
+        )
+
+        # 1. Traer las reglas activas dentro del alcance autorizado.
         reglas = HorarioLaboral.objects.filter(activo=True)
+        if personal is not None:
+            reglas = reglas.filter(personal=personal)
         
-        personal_id = request.query_params.get('personal_id')
-        if personal_id:
-            reglas = reglas.filter(personal_id=personal_id)
-        
-        # 2. Traer bloqueos del mes especificado
-        # Buscamos bloqueos que se sobrepongan con cualquier día del mes
-        from datetime import date, timedelta
-        
-        primer_dia = date(anio, mes, 1)
+        # 2. Traer bloqueos que se superponen con el mes solicitado.
+        primer_dia = timezone.make_aware(
+            datetime(anio, mes, 1),
+            timezone.get_current_timezone(),
+        )
         if mes == 12:
-            ultimo_dia = date(anio + 1, 1, 1) - timedelta(days=1)
+            siguiente_mes = timezone.make_aware(
+                datetime(anio + 1, 1, 1),
+                timezone.get_current_timezone(),
+            )
         else:
-            ultimo_dia = date(anio, mes + 1, 1) - timedelta(days=1)
+            siguiente_mes = timezone.make_aware(
+                datetime(anio, mes + 1, 1),
+                timezone.get_current_timezone(),
+            )
         
         bloqueos = BloqueoAgenda.objects.filter(
-            fecha_inicio__lte=ultimo_dia,
-            fecha_fin__gte=primer_dia
+            fecha_inicio__lt=siguiente_mes,
+            fecha_fin__gt=primer_dia,
         )
         
-        # Filtrar por personal si se proporciona
-        if personal_id:
-            from django.db.models import Q
+        # Limitar a bloqueos propios/globales cuando no hay scope global.
+        if personal is not None:
             bloqueos = bloqueos.filter(
-                Q(personal_id=personal_id) | Q(personal__isnull=True)
+                Q(personal=personal) | Q(personal__isnull=True)
             )
         
         # 3. Serializar y retornar
@@ -2173,6 +4807,8 @@ def obtener_disponibilidad_calendario(request):
             "bloqueos": BloqueoAgendaSerializer(bloqueos, many=True).data
         }, status=status.HTTP_200_OK)
     
+    except (PermissionDenied, ValidationError, Http404):
+        raise
     except ValueError:
         return Response(
             {"error": "Los parámetros mes y anio deben ser números enteros"},
@@ -2192,11 +4828,42 @@ def obtener_disponibilidad_calendario(request):
 class FichaTecnicaViewSet(viewsets.ModelViewSet):
     """
     ViewSet para gestionar fichas técnicas de servicios realizados.
-    Solo el personal técnico (is_staff) puede crear/editar fichas.
+    Clientes leen únicamente las propias. El Personal asignado requiere
+    permiso efectivo de ficha técnica y habilidad DIAGNOSTICO activa.
     """
-    queryset = FichaTecnica.objects.all()
+    queryset = FichaTecnica.objects.select_related(
+        'detalle_turno__turno__cliente__usuario',
+        'detalle_turno__turno__profesional__usuario',
+        'detalle_turno__servicio',
+        'profesional_autor',
+        'rutina_recomendada',
+    )
     serializer_class = FichaTecnicaSerializer
-    permission_classes = [IsAuthenticated, IsAdminUser]
+    permission_classes = [IsAuthenticated]
+
+    READ_ACTIONS = {
+        'list',
+        'retrieve',
+        'por_turno',
+        'por_cliente',
+        'mis_fichas',
+    }
+    WRITE_ACTIONS = {'create', 'update', 'partial_update'}
+
+    def get_permissions(self):
+        if self.action in self.READ_ACTIONS:
+            permission_classes = [
+                IsAuthenticated,
+                CanReadOwnedOrManageTechnicalRecord,
+            ]
+        elif self.action in self.WRITE_ACTIONS:
+            permission_classes = [
+                IsAuthenticated,
+                CanManageTechnicalRecordWithSkill,
+            ]
+        else:
+            permission_classes = [IsAuthenticated]
+        return [permission() for permission in permission_classes]
     
     def get_queryset(self):
         """
@@ -2204,16 +4871,24 @@ class FichaTecnicaViewSet(viewsets.ModelViewSet):
         - Admins ven todas las fichas
         - Staff solo ve sus propias fichas redactadas
         """
+        queryset = super().get_queryset()
         user = self.request.user
-        if user.is_superuser:
-            return FichaTecnica.objects.all()
-        elif user.is_staff:
-            return FichaTecnica.objects.filter(profesional_autor=user)
-        else:
-            # No staff no puede ver fichas (la permission_classes lo bloquea igual)
-            return FichaTecnica.objects.none()
+        cliente = getattr(user, 'cliente', None)
+        if cliente is not None and cliente.activo:
+            return queryset.filter(detalle_turno__turno__cliente=cliente)
+
+        personal = getattr(user, 'perfil_profesional', None)
+        if personal is None or not personal.activo:
+            return queryset.none()
+        return queryset.filter(
+            Q(profesional_autor=user)
+            | Q(detalle_turno__turno__profesional=personal)
+        ).distinct()
+
+    def destroy(self, request, *args, **kwargs):
+        raise MethodNotAllowed(request.method)
     
-    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated, IsAdminUser])
+    @action(detail=False, methods=['get'])
     def por_turno(self, request):
         """
         GET /fichas-tecnicas/por-turno/?turno_id=123
@@ -2228,7 +4903,23 @@ class FichaTecnicaViewSet(viewsets.ModelViewSet):
         
         try:
             turno = Turno.objects.get(id=turno_id)
-            fichas = FichaTecnica.objects.filter(detalle_turno__turno=turno)
+            cliente = getattr(request.user, 'cliente', None)
+            personal = getattr(request.user, 'perfil_profesional', None)
+            if cliente is not None and turno.cliente_id != cliente.pk:
+                raise PermissionDenied(
+                    'No puede consultar fichas de Turnos de otro Cliente.'
+                )
+            if (
+                cliente is None
+                and (
+                    personal is None
+                    or turno.profesional_id != personal.pk
+                )
+            ):
+                raise PermissionDenied(
+                    'No puede consultar fichas de Turnos ajenos.'
+                )
+            fichas = self.get_queryset().filter(detalle_turno__turno=turno)
             serializer = self.get_serializer(fichas, many=True)
             return Response(serializer.data)
         except Turno.DoesNotExist:
@@ -2236,14 +4927,38 @@ class FichaTecnicaViewSet(viewsets.ModelViewSet):
                 {"error": "Turno no encontrado"},
                 status=status.HTTP_404_NOT_FOUND
             )
+
+    @action(detail=False, methods=['get'])
+    def por_cliente(self, request):
+        """
+        GET /fichas-tecnicas/por_cliente/?cliente_id=123
+        Obtiene fichas técnicas asociadas a un cliente.
+        """
+        cliente_id = request.query_params.get('cliente_id')
+        if not cliente_id:
+            return Response(
+                {"error": "Se requiere el parámetro cliente_id"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        own_client = getattr(request.user, 'cliente', None)
+        if own_client is not None and str(own_client.pk) != str(cliente_id):
+            raise PermissionDenied(
+                'No puede consultar fichas de otro Cliente.'
+            )
+        fichas = self.get_queryset().filter(
+            detalle_turno__turno__cliente_id=cliente_id
+        ).order_by('-fecha_registro')
+        serializer = self.get_serializer(fichas, many=True)
+        return Response(serializer.data)
     
-    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated, IsAdminUser])
+    @action(detail=False, methods=['get'])
     def mis_fichas(self, request):
         """
         GET /fichas-tecnicas/mis_fichas/
         Obtiene todas las fichas técnicas creadas por el usuario autenticado (profesional).
         """
-        fichas = FichaTecnica.objects.filter(profesional_autor=request.user)
+        fichas = self.get_queryset()
         serializer = self.get_serializer(fichas, many=True)
         return Response(serializer.data)
 
@@ -2251,11 +4966,16 @@ class FichaTecnicaViewSet(viewsets.ModelViewSet):
 class RequisitoServicioViewSet(viewsets.ModelViewSet):
     """
     ViewSet para gestionar los requisitos de equipamiento por servicio.
-    Solo administradores pueden ver/crear/editar/eliminar.
+    Requiere el permiso efectivo manage_configuration para todo el CRUD.
+    
+    Validaciones:
+    - El tipo_equipamiento debe existir en la BD antes de asignarlo
+    - El tipo_equipamiento DEBE tener al menos una instancia activa
+    - Se valida automáticamente en el serializer y en el modelo
     """
     queryset = RequisitoServicio.objects.all()
     serializer_class = RequisitoServicioSerializer
-    permission_classes = [IsAuthenticated, IsAdminUser]
+    permission_classes = [IsAuthenticated, CanManageConfiguration]
     
     def get_queryset(self):
         """
@@ -2267,55 +4987,208 @@ class RequisitoServicioViewSet(viewsets.ModelViewSet):
         if servicio_id:
             queryset = queryset.filter(servicio_id=servicio_id)
         return queryset
+    
+    def perform_create(self, serializer):
+        """
+        Crear un requisito de servicio con validaciones.
+        
+        VALIDACIÓN IMPORTANTE:
+        El tipo_equipamiento DEBE tener al menos una instancia activa.
+        No permite asignar tipos sin equipamiento real.
+        """
+        tipo_equipamiento = serializer.validated_data.get('tipo_equipamiento')
+        
+        # Validar que el tipo tenga al menos una instancia activa
+        tiene_instancias = Equipamiento.objects.filter(
+            tipo=tipo_equipamiento,
+            is_active=True
+        ).exists()
+        
+        if not tiene_instancias:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError(
+                f"El tipo de equipamiento '{tipo_equipamiento.nombre}' no tiene instancias activas. "
+                f"Crea un equipamiento en la sección 'Gestión de Equipamiento' antes de asignarlo a un servicio."
+            )
+        
+        try:
+            # Ejecutar validaciones del modelo
+            if hasattr(serializer.validated_data['tipo_equipamiento'], 'clean'):
+                serializer.validated_data['tipo_equipamiento'].clean()
+            serializer.save()
+            logger.info(
+                f"Requisito de equipamiento creado: "
+                f"Servicio {serializer.validated_data['servicio'].nombre} "
+                f"requiere {serializer.validated_data['tipo_equipamiento'].nombre}"
+            )
+        except Exception as e:
+            logger.error(f"Error al crear requisito de equipamiento: {str(e)}")
+            raise
+    
+    def perform_update(self, serializer):
+        """
+        Actualizar un requisito de servicio con validaciones.
+        """
+        try:
+            tipo_equipamiento = serializer.validated_data.get(
+                'tipo_equipamiento',
+                serializer.instance.tipo_equipamiento,
+            )
+            if not Equipamiento.objects.filter(
+                tipo=tipo_equipamiento,
+                is_active=True,
+            ).exists():
+                raise ValidationError(
+                    f"El tipo de equipamiento '{tipo_equipamiento.nombre}' "
+                    'no tiene instancias activas.'
+                )
+
+            # Ejecutar validaciones del modelo
+            if hasattr(tipo_equipamiento, 'clean'):
+                tipo_equipamiento.clean()
+            instance = serializer.save()
+            logger.info(
+                f"Requisito de equipamiento actualizado: "
+                f"Servicio {instance.servicio.nombre} "
+                f"requiere {instance.tipo_equipamiento.nombre}"
+            )
+        except Exception as e:
+            logger.error(f"Error al actualizar requisito de equipamiento: {str(e)}")
+            raise
 
 
 class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
     """
     ViewSet para gestionar diagnósticos capilares.
-    - Lectura: Cualquier usuario autenticado puede ver diagnósticos (especialmente clientes sus propios)
-    - Creación/Edición: Solo staff (profesionales) pueden crear y editar
+    - Clientes: lectura limitada a sus propios diagnósticos.
+    - Lectura técnica global: manage_technical_record + DIAGNOSTICO activa.
+    - Creación/edición: create_diagnosis + DIAGNOSTICO activa.
+    - Eliminación física: no permitida.
     """
     queryset = DiagnosticoCapilar.objects.all()
     serializer_class = DiagnosticoCapilarSerializer
     permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = DiagnosticoCapilarFilter
+    search_fields = ['cliente__usuario__first_name', 'cliente__usuario__last_name']
+    ordering_fields = ['fecha_diagnostico']
+
+    WRITE_ACTIONS = {'create', 'update', 'partial_update', 'corregir'}
+
+    def get_permissions(self):
+        if self.action in self.WRITE_ACTIONS:
+            permission_classes = [IsAuthenticated, CanCreateDiagnosisWithSkill]
+        elif self.action in {
+            'list',
+            'retrieve',
+            'por_cliente',
+            'mis_diagnosticos',
+        }:
+            permission_classes = [IsAuthenticated, CanReadOwnedOrManageDiagnosis]
+        else:
+            permission_classes = [IsAuthenticated]
+        return [permission() for permission in permission_classes]
     
     def get_queryset(self):
         """
-        Clientes ven solo sus diagnósticos.
-        Staff ve todos.
+        Clientes ven sólo sus diagnósticos. La lectura global requiere
+        manage_technical_record y DIAGNOSTICO activa.
         """
-        if self.request.user.is_staff:
-            return DiagnosticoCapilar.objects.all()
-        
-        # Cliente solo ve sus propios diagnósticos
-        try:
-            cliente = Cliente.objects.get(usuario=self.request.user)
-            return DiagnosticoCapilar.objects.filter(cliente=cliente)
-        except Cliente.DoesNotExist:
-            return DiagnosticoCapilar.objects.none()
+        queryset = super().get_queryset()
+        user = self.request.user
+
+        if self.action in self.WRITE_ACTIONS:
+            if user.has_perm(BusinessPermission.MANAGE_TECHNICAL_RECORD):
+                return queryset
+            return queryset.filter(profesional=user)
+
+        if user_can_read_global_technical_record(user):
+            return queryset
+
+        cliente = getattr(user, 'cliente', None)
+        if cliente is not None:
+            return queryset.filter(cliente=cliente)
+        return queryset.none()
     
+    @transaction.atomic
     def create(self, request, *args, **kwargs):
-        """Solo staff puede crear diagnósticos"""
-        if not request.user.is_staff:
-            raise PermissionDenied("Solo profesionales pueden crear diagnósticos.")
-        return super().create(request, *args, **kwargs)
-    
-    def perform_create(self, serializer):
-        """
-        Sobrescribimos perform_create para ejecutar el motor de diagnóstico
-        automáticamente después de guardar el diagnóstico.
-        """
-        # 1. Guarda el diagnóstico en la base de datos
-        diagnostico = serializer.save()
-        
-        # 2. Dispara el motor de análisis (dos niveles)
-        self._ejecutar_motor_diagnostico(diagnostico)
-    
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        cliente = serializer.validated_data['cliente']
+        try:
+            diagnostico = create_professional_evaluation(
+                actor=request.user,
+                cliente_id=cliente.pk,
+                data=serializer.validated_data,
+                run_engine=self._ejecutar_motor_diagnostico,
+            )
+        except HairProfilePermissionDenied as exc:
+            raise PermissionDenied(exc.detail) from exc
+        except HairProfileNotFound as exc:
+            return Response(
+                {'code': exc.code, 'detail': exc.detail},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except HairProfileInvalid as exc:
+            return Response(
+                {'code': exc.code, 'detail': exc.detail, 'field': exc.field},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        output = self.get_serializer(diagnostico)
+        headers = self.get_success_headers(output.data)
+        return Response(
+            output.data,
+            status=status.HTTP_201_CREATED,
+            headers=headers,
+        )
+
     def update(self, request, *args, **kwargs):
-        """Solo staff puede actualizar diagnósticos"""
-        if not request.user.is_staff:
-            raise PermissionDenied("Solo profesionales pueden actualizar diagnósticos.")
-        return super().update(request, *args, **kwargs)
+        raise MethodNotAllowed(request.method)
+
+    def partial_update(self, request, *args, **kwargs):
+        raise MethodNotAllowed(request.method)
+
+    @action(detail=True, methods=['post'])
+    def corregir(self, request, pk=None):
+        command = CorreccionDiagnosticoCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        reason = command.validated_data['motivo']
+        corrections = {
+            field: value
+            for field, value in command.validated_data.items()
+            if field != 'motivo'
+        }
+        try:
+            result = correct_diagnosis(
+                actor=request.user,
+                diagnosis_id=pk,
+                corrections=corrections,
+                reason=reason,
+            )
+        except HairProfilePermissionDenied as exc:
+            return Response(
+                {'code': exc.code, 'detail': exc.detail},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        except HairProfileNotFound as exc:
+            return Response(
+                {'code': exc.code, 'detail': exc.detail},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except HairProfileInvalid as exc:
+            return Response(
+                {'code': exc.code, 'detail': exc.detail, 'field': exc.field},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response({
+            'diagnostico': self.get_serializer(result.diagnosis).data,
+            'correccion': CorreccionDiagnosticoCapilarSerializer(
+                result.correction
+            ).data,
+        })
+    
+    def destroy(self, request, *args, **kwargs):
+        raise MethodNotAllowed(request.method)
     
     @action(detail=False, methods=['get'])
     def por_cliente(self, request):
@@ -2330,7 +5203,18 @@ class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        diagnosticos = DiagnosticoCapilar.objects.filter(cliente_id=cliente_id).order_by('-fecha_diagnostico')
+        own_client = getattr(request.user, 'cliente', None)
+        can_read_globally = user_can_read_global_technical_record(request.user)
+        if not can_read_globally and (
+            own_client is None or str(own_client.pk) != str(cliente_id)
+        ):
+            raise PermissionDenied(
+                'No tiene permisos para consultar diagnósticos de otro Cliente.'
+            )
+
+        diagnosticos = DiagnosticoCapilar.objects.filter(
+            cliente_id=cliente_id
+        ).order_by('-fecha_diagnostico')
         serializer = self.get_serializer(diagnosticos, many=True)
         return Response(serializer.data)
     
@@ -2377,60 +5261,50 @@ class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
         servicio_urgente = None
 
         if regla_matcheada:
-            # Si hay regla experta (ej. Desequilibrio de pH), manda la regla
+            # 1. Asignamos la rutina (con seguridad si es None)
             rutina_final = regla_matcheada.rutina_sugerida
-            # Si la regla tiene una acción que indique necesidad de turno
-            if "TURNO" in regla_matcheada.accion_resultado.upper():
-                servicio_urgente = Servicio.objects.filter(
-                    Q(nombre__icontains="Tratamiento") & Q(nombre__icontains="intensivo")).first()
+            
+            # 2. Asignamos el servicio configurado en la regla
+            if regla_matcheada.servicio_sugerido:
+                servicio_urgente = regla_matcheada.servicio_sugerido
+                # Forzamos que el sistema busque turno aunque Yanina no haya escrito "TURNO" en la acción
+                # ya que al elegir un servicio se sobreentiende la intención.
         else:
             # --- NIVEL 2: MATRIZ DE PUNTUACIÓN (SCORING) ---
-            # Mapeo exacto según tus requerimientos técnicos
+            # Suma usando los puntajes configurados en los catalogos
             puntos = 0
-            
-            # 1. Tipo
-            map_tipo = {"Lacio": 2, "Ondulado": 1, "Rizado": 0, "Afro": 0}
-            # 2. Grosor
-            map_grosor = {"Fino": 2, "Medio": 1, "Grueso": 0}
-            # 3. Porosidad
-            map_porosidad = {"Baja": 4, "Media": 2, "Alta": 0}
-            # 4. Cuero Cabelludo
-            map_cuero = {"Seco": 3, "Normal": 2, "Mixto": 1, "Graso": 0}
-            # 5. Estado General
-            map_estado = {"Dañado": 0, "Normal": 1, "Sano": 2}
+            if diagnostico.tipo_cabello:
+                puntos += diagnostico.tipo_cabello.puntaje_base
+            if diagnostico.grosor_cabello:
+                puntos += diagnostico.grosor_cabello.puntaje_base
+            if diagnostico.porosidad_cabello:
+                puntos += diagnostico.porosidad_cabello.puntaje_base
+            if diagnostico.cuero_cabelludo:
+                puntos += diagnostico.cuero_cabelludo.puntaje_base
+            if diagnostico.estado_general:
+                puntos += diagnostico.estado_general.puntaje_base
 
-            # Sumatoria del Score
-            puntos += map_tipo.get(diagnostico.tipo_cabello.nombre if diagnostico.tipo_cabello else "", 0)
-            puntos += map_grosor.get(diagnostico.grosor_cabello.nombre if diagnostico.grosor_cabello else "", 0)
-            puntos += map_porosidad.get(diagnostico.porosidad_cabello.nombre if diagnostico.porosidad_cabello else "", 0)
-            puntos += map_cuero.get(diagnostico.cuero_cabelludo.nombre if diagnostico.cuero_cabelludo else "", 0)
-            puntos += map_estado.get(diagnostico.estado_general.nombre if diagnostico.estado_general else "", 0)
+            config_diag = ConfiguracionDiagnostico.get_singleton()
+            umbral_critico = config_diag.umbral_critico
+            umbral_alerta = config_diag.umbral_alerta
 
-            # --- UMBRALES DE DECISIÓN (Escala 0-13) ---
-            if puntos <= 5:
-                # ESTADO CRÍTICO: Cabello dañado o muy procesado
-                rutina_final = Rutina.objects.filter(nombre__icontains="Recuperación").first()
-                servicio_urgente = Servicio.objects.filter(
-                    Q(nombre__icontains="Tratamiento") & Q(nombre__icontains="intensivo")).first()
-            elif puntos <= 9:
-                # ESTADO DE ALERTA: Requiere cuidado preventivo
-                rutina_final = Rutina.objects.filter(nombre__icontains="Nutrición").first()
+            if puntos <= umbral_critico:
+                rutina_final = config_diag.rutina_critico
+                servicio_urgente = config_diag.servicio_critico
+            elif puntos <= umbral_alerta:
+                rutina_final = config_diag.rutina_alerta
+                servicio_urgente = config_diag.servicio_alerta
             else:
-                # ESTADO SALUDABLE: Mantenimiento básico
-                rutina_final = Rutina.objects.filter(nombre__icontains="Mantenimiento").first()
+                rutina_final = config_diag.rutina_saludable
+                servicio_urgente = config_diag.servicio_saludable
 
         # --- EJECUCIÓN DE ACCIONES ---
         # 1. Asignar Rutina
         rutina_cliente = None
         if rutina_final:
-            rutina_cliente = RutinaCliente.objects.create(
+            rutina_cliente, _ = ensure_internal_routine_assignment(
                 cliente=diagnostico.cliente,
-                rutina_original=rutina_final,
-                nombre=rutina_final.nombre,
-                objetivo=rutina_final.objetivo,
-                archivo=rutina_final.archivo,
-                version_asignada=rutina_final.version,
-                estado='activa'
+                rutina=rutina_final,
             )
             print(f"\n✅ DEBUG: RutinaCliente creada (ID: {rutina_cliente.id})")
 
@@ -2440,17 +5314,37 @@ class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
             servicio_urgente, regla_matcheada
         )
         
-        # 3. Guardar resultados en el Diagnóstico
+        # 3. Guardar el resultado derivado sin sobrescribir el texto original.
         diagnostico.servicio_urgente = servicio_urgente
         diagnostico.rutina_asignada = rutina_final
         diagnostico.rutina_sugerida = rutina_final
-        diagnostico.observaciones = mensaje_profesional
-        diagnostico.save()
+        diagnostico.regla_diagnostico = regla_matcheada
+        diagnostico.resultado_calculado = mensaje_profesional
+        diagnostico.estado_resultado = (
+            DiagnosticoCapilar.EstadoResultado.CALCULADO
+        )
+        diagnostico.resultado_calculado_en = timezone.now()
+        diagnostico.resultado_invalidado_en = None
+        diagnostico.resultado_invalidacion_motivo = None
+        diagnostico.save(update_fields=[
+            'servicio_urgente',
+            'rutina_asignada',
+            'rutina_sugerida',
+            'regla_diagnostico',
+            'resultado_calculado',
+            'estado_resultado',
+            'resultado_calculado_en',
+            'resultado_invalidado_en',
+            'resultado_invalidacion_motivo',
+        ])
 
         # 4. Recomendar Turno (Si el score es bajo o la regla lo pide)
         if servicio_urgente:
             try:
-                self._recomendar_primer_hueco_disponible(diagnostico, servicio_urgente)
+                turno_sugerido = self._recomendar_primer_hueco_disponible(diagnostico, servicio_urgente)
+                if turno_sugerido:
+                    diagnostico.turno_sugerido = turno_sugerido
+                    diagnostico.save(update_fields=['turno_sugerido'])
             except Exception as e:
                 import logging
                 logger = logging.getLogger(__name__)
@@ -2459,63 +5353,60 @@ class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
 
     def _generar_mensaje_diagnostico(self, diagnostico, puntos, servicio_urgente, regla_matcheada):
         """
-        Genera un mensaje profesional y personalizado basado en el diagnóstico.
-        Incluye: descripción del problema, puntos, servicio recomendado.
+        Genera un mensaje profesional unificado.
+        Prioriza Reglas Expertas (Nivel 1) sobre la Matriz de Puntuación (Nivel 2).
         """
-        # Obtener nombres de atributos
-        tipo = diagnostico.tipo_cabello.nombre if diagnostico.tipo_cabello else "desconocido"
-        grosor = diagnostico.grosor_cabello.nombre if diagnostico.grosor_cabello else "desconocido"
+        # 1. Obtención de datos básicos
+        servicio_nombre = servicio_urgente.nombre if servicio_urgente else "Tratamiento Especializado"
         porosidad = diagnostico.porosidad_cabello.nombre if diagnostico.porosidad_cabello else "desconocida"
+        grosor = diagnostico.grosor_cabello.nombre if diagnostico.grosor_cabello else "desconocido"
         cuero = diagnostico.cuero_cabelludo.nombre if diagnostico.cuero_cabelludo else "desconocido"
         estado = diagnostico.estado_general.nombre if diagnostico.estado_general else "desconocido"
-        servicio_nombre = servicio_urgente.nombre if servicio_urgente else "Tratamiento Especializado"
-        
-        # Describir el problema según los atributos
+
+        # 2. Construcción descriptiva del problema
         descripciones = []
-        
         if estado == "Dañado":
             descripciones.append("daño estructural severo")
-        
         if porosidad == "Alta":
-            descripciones.append("alta porosidad con pérdida acelerada de hidratación")
+            descripciones.append("porosidad alta con pérdida de hidratación")
         elif porosidad == "Baja":
-            descripciones.append("baja porosidad que dificulta la penetración de nutrientes")
-        
+            descripciones.append("porosidad baja que dificulta la nutrición")
         if grosor == "Fino":
-            descripciones.append("cabello frágil propenso al quiebre")
-        
+            descripciones.append("fragilidad capilar")
         if cuero == "Seco":
-            descripciones.append("cuero cabelludo deshidratado")
-        elif cuero == "Graso":
-            descripciones.append("cuero cabelludo con exceso de sebo")
-        
-        # Construir el mensaje
+            descripciones.append("deshidratación en cuero cabelludo")
+
         problema = " debido a " + ", ".join(descripciones) if descripciones else ""
-        
-        # Generar mensaje según nivel crítico
-        if puntos is not None and puntos <= 5:
-            mensaje = (
-                f"🔴 Diagnóstico Profesional: Detectamos que tu cabello presenta un nivel de daño crítico{problema}. "
-                f"Con un score de {puntos}/13 en nuestro análisis profesional, la fibra capilar necesita atención inmediata "
-                f"para evitar mayor deterioro. Te recomendamos nuestro servicio de {servicio_nombre} "
-                f"que está diseñado específicamente para restaurar y proteger tu cabello. "
-                f"Hemos identificado espacios disponibles para brindarte atención prioritaria."
-            )
-        elif puntos is not None and puntos <= 9:
-            mensaje = (
-                f"🟡 Diagnóstico Profesional: Tu cabello requiere cuidado preventivo especializado{problema}. "
-                f"Con un score de {puntos}/13, está en estado de alerta. "
-                f"Recomendamos comenzar con nuestro {servicio_nombre} para estabilizar la salud capilar "
-                f"y prevenir futuros daños."
-            )
-        else:
-            mensaje = (
-                f"🟢 Diagnóstico Profesional: Tu cabello se encuentra en buen estado general. "
-                f"Con un score de {puntos if puntos is not None else '10+'}/13, recomendamos mantener una rutina de cuidado regular "
-                f"con nuestros servicios de mantenimiento."
-            )
-        
-        return mensaje
+
+        # CASO A: REGLA EXPERTA
+        if regla_matcheada:
+            mensaje_regla = (regla_matcheada.mensaje_resultado or "").strip()
+            if not mensaje_regla:
+                mensaje_regla = (regla_matcheada.accion_resultado or "").strip()
+            return mensaje_regla
+
+        config_diag = ConfiguracionDiagnostico.get_singleton()
+        umbral_critico = config_diag.umbral_critico
+        umbral_alerta = config_diag.umbral_alerta
+
+        def render_mensaje(template):
+            if not template:
+                return ""
+            try:
+                return template.format(score=puntos, servicio=servicio_nombre)
+            except Exception:
+                return template
+
+        # CASO B: ESTADO CRÍTICO
+        if puntos is not None and puntos <= umbral_critico:
+            return render_mensaje(config_diag.mensaje_critico)
+
+        # CASO C: ESTADO DE ALERTA
+        if puntos is not None and puntos <= umbral_alerta:
+            return render_mensaje(config_diag.mensaje_alerta)
+
+        # CASO D: ESTADO SALUDABLE
+        return render_mensaje(config_diag.mensaje_saludable)
 
     def _recomendar_primer_hueco_disponible(self, diagnostico, servicio):
         """
@@ -2523,7 +5414,7 @@ class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
         y crea una notificación para el cliente recomendando agendar un turno.
         """
         import logging
-        from datetime import date, timedelta
+        from datetime import timedelta
         logger = logging.getLogger(__name__)
         
         try:
@@ -2544,7 +5435,9 @@ class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
             turno_viewset = TurnoViewSet()
             
             # 3. BUSCAR PRIMER SLOT DISPONIBLE EN PRÓXIMOS 30 DÍAS
-            fecha_busqueda = date.today() + timedelta(days=1)
+            fecha_busqueda = timezone.localdate(
+                timezone=timezone.get_default_timezone(),
+            ) + timedelta(days=1)
             fecha_fin = fecha_busqueda + timedelta(days=30)
             slot_encontrado = None
             
@@ -2552,50 +5445,31 @@ class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
                 # Obtener día de la semana (0=lunes, 6=domingo)
                 dia_semana = fecha_busqueda.weekday()
                 
-                # 4. BUSCAR HORARIOS DEL PERSONAL PARA ESTE DÍA
-                horarios_disponibles = HorarioLaboral.objects.filter(
-                    activo=True,
-                    dia_semana=dia_semana,
-                    personal__isnull=False
+                # 4. Usar la misma disponibilidad/compatibilidad canónica de Turnos.
+                horarios_disponibles = TurnoAvailabilityService.matching_schedules(
+                    fecha=fecha_busqueda,
+                    servicio=servicio,
                 )
-                
-                # Filtrar por tipo de servicio (Diseño vs Complemento)
-                categoria_nombre = servicio.categoria.nombre if servicio.categoria else ""
-                
-                if "Diseño" in categoria_nombre or "Color" in categoria_nombre:
-                    # Servicios de color/diseño: necesitan permite_diseno_color=True
-                    horarios_disponibles = horarios_disponibles.filter(permite_diseno_color=True)
-                    tipo_servicio = "Diseño"
-                else:
-                    # Servicios cortos (corte, nutrición): necesitan permite_complemento=True
-                    horarios_disponibles = horarios_disponibles.filter(permite_complemento=True)
-                    tipo_servicio = "Complemento"
-                
-                logger.info(f"[DIAGNOSTICO] {fecha_busqueda} ({DiasSemana(dia_semana).label}): {horarios_disponibles.count()} horarios disponibles para {tipo_servicio}")
+
+                logger.info(
+                    f"[DIAGNOSTICO] {fecha_busqueda} "
+                    f"({DiasSemana(dia_semana).label}): "
+                    f"{horarios_disponibles.count()} horarios compatibles"
+                )
                 
                 # 5. ITERAR POR CADA HORARIO DISPONIBLE
                 for horario in horarios_disponibles:
                     personal = horario.personal
                     
-                    # Verificar si el personal tiene bloqueo en esta fecha
-                    bloqueo = BloqueoAgenda.objects.filter(
-                        personal=personal,
-                        fecha_inicio__date__lte=fecha_busqueda,
-                        fecha_fin__date__gte=fecha_busqueda
-                    ).exists()
-                    
-                    if bloqueo:
-                        logger.info(f"[DIAGNOSTICO] {personal.nombre} tiene bloqueo en {fecha_busqueda}")
-                        continue
-                    
-                    # 6. GENERAR SLOTS PARA ESTE HORARIO
+                    # 5. GENERAR SLOTS PARA ESTE HORARIO
                     try:
                         slots = turno_viewset._generar_slots_disponibles(
                             fecha_busqueda,
                             horario,
                             duracion_minutos,
                             intervalo_minutos=15,
-                            servicios_ids=[servicio.id]
+                            servicios_ids=[servicio.id],
+                            servicios=(servicio,),
                         )
                         
                         if slots:
@@ -2625,9 +5499,38 @@ class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
                     # Formato correcto: "2025-01-30" y "14:30"
                     fecha_str = slot_encontrado['fecha'].strftime('%Y-%m-%d')
                     hora_str = slot_encontrado['hora']  # Ya viene como string "HH:MM"
+                    hora_inicio = datetime.strptime(hora_str, '%H:%M').time()
+                    hora_fin_dt = datetime.combine(slot_encontrado['fecha'], hora_inicio) + timedelta(minutes=duracion_minutos)
+                    hora_fin = hora_fin_dt.time()
+
+                    turno_sugerido = Turno.objects.filter(
+                        cliente=diagnostico.cliente,
+                        fecha=slot_encontrado['fecha'],
+                        hora_inicio=hora_inicio
+                    ).first()
+
+                    if not turno_sugerido:
+                        turno_sugerido = Turno.objects.create(
+                            cliente=diagnostico.cliente,
+                            profesional=slot_encontrado['profesional'],
+                            fecha=slot_encontrado['fecha'],
+                            hora_inicio=hora_inicio,
+                            hora_fin_calculada=hora_fin,
+                            estado=Turno.Estado.SUGERIDO
+                        )
+                        DetalleTurno.objects.create(
+                            turno=turno_sugerido,
+                            servicio=servicio,
+                            precio_historico=servicio.precio_base or 0,
+                            duracion_minutos=duracion_minutos
+                        )
                     
                     # Usar el mensaje profesional del diagnóstico que ya fue generado
-                    mensaje_notificacion = diagnostico.observaciones or "Te recomendamos agendar tu cita"
+                    mensaje_notificacion = (
+                        diagnostico.resultado_calculado
+                        or diagnostico.observaciones
+                        or "Te recomendamos agendar tu cita"
+                    )
                     
                     notif = Notificacion.objects.create(
                         usuario=diagnostico.cliente.usuario,
@@ -2638,19 +5541,2465 @@ class DiagnosticoCapilarViewSet(viewsets.ModelViewSet):
                             "fecha": fecha_str,
                             "hora": hora_str,
                             "servicio_id": servicio.id,
-                            "profesional_id": slot_encontrado['profesional'].id
+                            "profesional_id": slot_encontrado['profesional'].id,
+                            "turno_id": turno_sugerido.id
                         }
                     )
                     logger.info(f"[DIAGNOSTICO] OK - Notificacion creada (ID: {notif.id})")
+                    return turno_sugerido
                 except Exception as e:
                     logger.error(f"[DIAGNOSTICO] Error creando notificacion: {str(e)}")
                     import traceback
                     traceback.print_exc()
             else:
                 logger.warning(f"[DIAGNOSTICO] AVISO - No se encontro disponibilidad en los proximos 30 dias para {servicio.nombre}")
+                return None
         
         except Exception as e:
             logger.error(f"[DIAGNOSTICO] Error en _recomendar_primer_hueco_disponible: {str(e)}")
             import traceback
             traceback.print_exc()
             logger.error(traceback.format_exc())
+            return None
+
+
+# ============================================
+# VIEWSETS PARA PRODUCTOS
+# ============================================
+
+class CategoriaProductoViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestionar categorías de productos.
+    """
+    queryset = CategoriaProducto.objects.all()
+    serializer_class = CategoriaProductoSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+        if not (
+            user.is_authenticated
+            and user.has_perm(BusinessPermission.MANAGE_PRODUCTS)
+        ):
+            queryset = queryset.filter(activo=True)
+        return queryset
+
+    def get_permissions(self):
+        permission_classes = (
+            [AllowAny]
+            if self.action in ['list', 'retrieve']
+            else [IsAuthenticated, CanManageProducts]
+        )
+        return [permission() for permission in permission_classes]
+
+
+
+
+# ============================================
+# VIEWSET PARA PROMOCIONES
+# ============================================
+
+class PromocionViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestionar promociones del sistema.
+    Soporta tres pilares: COMBO, RETOQUE, LAST_MINUTE.
+    
+    Clientes pueden ver promociones activas (list/retrieve).
+    Solo admins pueden crear/actualizar/eliminar.
+    """
+    queryset = Promocion.objects.all()
+    serializer_class = PromocionSerializer
+    pagination_class = None
+    
+    def get_permissions(self):
+        """
+        Permisos dinámicos: 
+        - list/retrieve: AllowAny (clientes pueden ver promociones activas)
+        - create/update/destroy y acciones: manage_promotions
+        """
+        if self.action in ['list', 'retrieve']:
+            permission_classes = [AllowAny]
+        else:
+            permission_classes = [IsAuthenticated, CanManagePromotions]
+        return [permission() for permission in permission_classes]
+    
+    def get_queryset(self):
+        """
+        Filtra promociones activas por defecto.
+        Query params: ?activas=true|false
+        
+        Para clientes: solo retorna promociones activas hoy
+        Para admins: retorna todas las promociones
+        """
+        queryset = super().get_queryset()
+        
+        can_manage = (
+            self.request.user.is_authenticated
+            and self.request.user.has_perm(BusinessPermission.MANAGE_PROMOTIONS)
+        )
+        if not can_manage:
+            hoy = timezone.localdate(
+                timezone=timezone.get_default_timezone(),
+            )
+            queryset = queryset.filter(
+                is_active=True,
+                fecha_inicio__lte=hoy,
+                fecha_fin__gte=hoy
+            )
+        else:
+            # Para admins, permitir filtrar por ?activas=true|false
+            activas_only = self.request.query_params.get('activas', 'false').lower() == 'true'
+            if activas_only:
+                hoy = timezone.localdate(
+                    timezone=timezone.get_default_timezone(),
+                )
+                queryset = queryset.filter(
+                    is_active=True,
+                    fecha_inicio__lte=hoy,
+                    fecha_fin__gte=hoy
+                )
+        
+        return queryset.order_by('-fecha_inicio')
+
+    def perform_create(self, serializer):
+        promocion = serializer.save()
+        if promocion.es_sugerencia_automatica:
+            promocion.estado_sugerencia = 'PENDIENTE'
+            promocion.is_active = False
+        elif not promocion.estado_sugerencia:
+            promocion.estado_sugerencia = 'ACEPTADA'
+        promocion.save()
+
+    @action(detail=False, methods=['get'], url_path='sugerencias')
+    def sugerencias(self, request):
+        """
+        Lista sugerencias automáticas de combos pendientes.
+        GET /api/gestion/promociones/sugerencias/
+        """
+        queryset = Promocion.objects.filter(
+            tipo='COMBO',
+            es_sugerencia_automatica=True,
+            estado_sugerencia='PENDIENTE'
+        ).order_by('-fecha_creacion')
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='publicar')
+    def publicar(self, request, pk=None):
+        """
+        Publica una sugerencia de combo.
+        POST /api/gestion/promociones/{id}/publicar/
+        """
+        promocion = self.get_object()
+        data = request.data or {}
+
+        if 'nombre' in data:
+            promocion.nombre = data.get('nombre', promocion.nombre)
+        if 'descripcion' in data:
+            promocion.descripcion = data.get('descripcion', promocion.descripcion)
+        if 'descuento_porcentaje' in data:
+            promocion.descuento_porcentaje = data.get('descuento_porcentaje', promocion.descuento_porcentaje)
+
+        promocion.is_active = True
+        promocion.estado_sugerencia = 'ACEPTADA'
+        promocion.save()
+
+        serializer = self.get_serializer(promocion)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='rechazar')
+    def rechazar(self, request, pk=None):
+        """
+        Rechaza una sugerencia de combo.
+        POST /api/gestion/promociones/{id}/rechazar/
+        """
+        promocion = self.get_object()
+        promocion.is_active = False
+        promocion.estado_sugerencia = 'RECHAZADA'
+        promocion.save()
+
+        serializer = self.get_serializer(promocion)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    
+    @action(detail=False, methods=['post'], url_path='escanear-huecos')
+    def escanear_huecos(self, request):
+        """
+        Escanea la agenda de los próximos 3 días buscando huecos > 3 horas
+        y genera promociones automáticas Last Minute.
+        
+        POST /api/gestion/promociones/escanear-huecos/
+        """
+        logger = logging.getLogger(__name__)
+        hoy = timezone.localdate(
+            timezone=timezone.get_default_timezone(),
+        )
+        proximos_dias = [hoy + timedelta(days=i) for i in range(1, 4)]
+        promos_creadas = 0
+        
+        try:
+            # 1. Iteramos por cada profesional activo
+            profesionales = Personal.objects.filter(activo=True)
+            
+            for profe in profesionales:
+                for fecha in proximos_dias:
+                    # 2. Obtenemos su horario laboral para ese día
+                    dia_semana = fecha.weekday()
+                    horario = HorarioLaboral.objects.filter(
+                        personal=profe, 
+                        dia_semana=dia_semana, 
+                        activo=True
+                    ).first()
+                    
+                    if not horario:
+                        continue  # No trabaja ese día
+
+                    # 3. Obtenemos sus turnos ocupados
+                    turnos = Turno.objects.filter(
+                        profesional=profe, 
+                        fecha=fecha, 
+                        estado__in=['confirmado', 'esperando_sena', 'solicitado']
+                    ).order_by('hora_inicio').prefetch_related('detalles')
+
+                    # 4. Calculamos los huecos entre turnos
+                    huecos = self._calcular_huecos(horario, turnos, fecha)
+                    
+                    for h_ini, h_fin, duracion in huecos:
+                        # REGLA: Si el hueco es mayor a 180 minutos (3 horas)
+                        if duracion >= 180:
+                            nombre_promo = f"Flash Sale: {profe.nombre} - {fecha.strftime('%d/%m')}"
+                            # Evitamos duplicados para el mismo hueco
+                            if not Promocion.objects.filter(
+                                nombre=nombre_promo, 
+                                fecha_especifica=fecha
+                            ).exists():
+                                self._crear_promocion_last_minute(profe, fecha, h_ini, h_fin)
+                                promos_creadas += 1
+                                logger.info(f"Promo creada: {nombre_promo}")
+            
+            return Response({
+                "status": "Escaneo completado",
+                "promociones_generadas": promos_creadas,
+                "dias_escaneados": len(proximos_dias)
+            }, status=status.HTTP_201_CREATED)
+        
+        except Exception as e:
+            logger.error(f"Error en escanear_huecos: {str(e)}", exc_info=True)
+            return Response({
+                "error": f"Error al escanear huecos: {str(e)}"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _calcular_huecos(self, horario, turnos, fecha):
+        """
+        Lógica auxiliar para encontrar intervalos de tiempo libre en la jornada.
+        Retorna lista de tuplas: (hora_inicio, hora_fin, duracion_minutos)
+        """
+        huecos = []
+        
+        # El día empieza en horario.hora_inicio
+        ultimo_fin = datetime.combine(fecha, horario.hora_inicio)
+        final_jornada = datetime.combine(fecha, horario.hora_fin)
+
+        for t in turnos:
+            t_inicio = datetime.combine(fecha, t.hora_inicio)
+            
+            # Calculamos el hueco antes del turno
+            if t_inicio > ultimo_fin:
+                dif_minutos = int((t_inicio - ultimo_fin).total_seconds() / 60)
+                huecos.append((ultimo_fin.time(), t_inicio.time(), dif_minutos))
+            
+            # Actualizamos el fin según la duración del turno
+            duracion_t = sum(d.duracion_minutos for d in t.detalles.all()) or 60
+            ultimo_fin = t_inicio + timedelta(minutes=duracion_t)
+
+        # Hueco final (después del último turno hasta cierre de jornada)
+        if final_jornada > ultimo_fin:
+            dif_minutos = int((final_jornada - ultimo_fin).total_seconds() / 60)
+            huecos.append((ultimo_fin.time(), final_jornada.time(), dif_minutos))
+            
+        return huecos
+    
+    def _crear_promocion_last_minute(self, profesional, fecha, hora_inicio, hora_fin):
+        """
+        Crea una promoción Last Minute para un hueco específico en la agenda.
+        """
+        logger = logging.getLogger(__name__)
+        
+        try:
+            nombre_promo = f"¡Oportunidad Last-Minute con {profesional.nombre}!"
+            
+            promo = Promocion.objects.create(
+                nombre=nombre_promo,
+                descripcion=f"Tenemos un espacio libre {fecha.strftime('%d/%m')}. ¡Aprovéchalo con 30% OFF!",
+                tipo='LAST_MINUTE',
+                descuento_porcentaje=30,
+                fecha_inicio=timezone.localdate(
+                    timezone=timezone.get_default_timezone(),
+                ),
+                fecha_fin=fecha,
+                fecha_especifica=fecha,
+                hora_inicio_promo=hora_inicio,
+                hora_fin_promo=hora_fin,
+                is_active=True
+            )
+            
+            # Agregar servicios que queremos incentivar (especialmente servicios de Color)
+            servicios_complejos = Servicio.objects.filter(
+                categoria__nombre__icontains="Color",
+                activo=True
+            )[:2]
+            
+            if servicios_complejos.exists():
+                promo.servicios.set(servicios_complejos)
+            else:
+                # Si no hay servicios de Color, asignamos los primeros 2 disponibles
+                servicios_fallback = Servicio.objects.filter(activo=True).order_by('?')[:2]
+                promo.servicios.set(servicios_fallback)
+            
+            # Registro de notificación masiva
+            logger.info(f"NOTIFICACIÓN: Promoción Last Minute publicada para el {fecha.strftime('%d/%m/%Y')} de {hora_inicio} a {hora_fin}")
+            logger.info(f"Servicios incluidos: {', '.join([s.nombre for s in promo.servicios.all()])}")
+            
+            return promo
+        
+        except Exception as e:
+            logger.error(f"Error al crear promo last minute: {str(e)}", exc_info=True)
+            return None
+
+
+# ============================================================================
+# FUNCIONES AUXILIARES - WHATSAPP
+# ============================================================================
+
+def generar_link_whatsapp(carrito_items, total):
+    """
+    Genera un enlace de WhatsApp con los detalles del pedido.
+    Usa el formato configurado en el modelo Configuracion.
+    
+    Args:
+        carrito_items: QuerySet de CarritoItem
+        total: Total del carrito (float)
+    
+    Returns:
+        str: URL de WhatsApp Web con mensaje pre-redactado
+    """
+    import urllib.parse
+    
+    # Obtener configuración
+    from gestion.models import Configuracion
+    config = Configuracion.objects.first()
+    
+    # Valores por defecto
+    telefono = config.whatsapp_numero if config else "5491122334455"
+    saludo = config.whatsapp_saludo if config else "¡Hola Bohemia Hair! 👋 Quiero realizar el siguiente pedido:"
+    cierre = config.whatsapp_cierre if config else "\n💰 *Total estimado: ${total}*\n\n¿Me confirman la disponibilidad y los detalles del envío?"
+    formato_producto = config.whatsapp_formato_producto if config else "• {nombre}\n  Cantidad: {cantidad} x ${precio:.2f} = ${subtotal:.2f}"
+    
+    # Construir mensaje
+    mensaje = saludo + "\n\n"
+    
+    for item in carrito_items:
+        precio_unitario = float(item.producto.precio)
+        subtotal = precio_unitario * item.cantidad
+        
+        linea_producto = formato_producto.format(
+            nombre=item.producto.nombre,
+            cantidad=item.cantidad,
+            precio=precio_unitario,
+            subtotal=subtotal
+        )
+        mensaje += linea_producto + "\n"
+    
+    # Agregar cierre con total formateado
+    mensaje_cierre = cierre.replace("{total}", f"${total:.2f}")
+    mensaje += mensaje_cierre
+    
+    # Codificar para URL
+    mensaje_encoded = urllib.parse.quote(mensaje)
+    
+    logger.info(f"Link de WhatsApp generado. Número: {telefono} | Total: ${total}")
+    
+    return f"https://wa.me/{telefono}?text={mensaje_encoded}"
+
+
+# ============================================================================
+# SECCIÓN CARRITO DE COMPRAS
+# ============================================================================
+
+class CarritoViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestionar el carrito de compras del cliente.
+    Cada cliente tiene UN ÚNICO carrito (OneToOneField).
+    
+    Endpoints disponibles:
+    - GET /api/carrito/ - Lista el carrito del usuario actual
+    - POST /api/carrito/agregar_producto/ - Agrega/actualiza producto
+    - POST /api/carrito/eliminar_producto/ - Elimina un producto
+    - DELETE /api/carrito/vaciar/ - Vacía todo el carrito
+    - POST /api/carrito/finalizar_compra/ - Procesa la compra
+    - POST /api/carrito/generar_pago_mercadopago/ - Crea orden y link de pago
+    """
+    serializer_class = CarritoSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        """Cada cliente solo ve su propio carrito."""
+        try:
+            cliente = Cliente.objects.get(usuario=self.request.user)
+            return Carrito.objects.filter(cliente=cliente).prefetch_related('items', 'items__producto', 'items__producto__imagenes')
+        except Cliente.DoesNotExist:
+            return Carrito.objects.none()
+
+    def get_carrito_cliente(self):
+        """Helper: obtiene el carrito del cliente autenticado."""
+        try:
+            cliente = Cliente.objects.get(usuario=self.request.user)
+            carrito, created = Carrito.objects.get_or_create(cliente=cliente)
+            return carrito
+        except Cliente.DoesNotExist:
+            logger.warning(f"Usuario {self.request.user.email} no tiene perfil de cliente")
+            raise ValidationError('El usuario no tiene perfil de cliente. Por favor, contacta al administrador.')
+
+    @action(detail=False, methods=['get'], url_path='mi-carrito')
+    def mi_carrito(self, request):
+        """
+        GET /api/gestion/carrito/mi-carrito/
+        Retorna el carrito del usuario autenticado.
+        """
+        try:
+            carrito = self.get_carrito_cliente()
+            # Usar prefetch para optimizar
+            carrito = Carrito.objects.filter(id=carrito.id).prefetch_related(
+                'items', 'items__producto', 'items__producto__imagenes'
+            ).first()
+            serializer = CarritoSerializer(carrito, context={'request': request})
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except ValidationError as e:
+            return Response(
+                {'error': str(e.detail[0]) if hasattr(e, 'detail') else str(e)},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except Exception as e:
+            logger.error(f"Error obteniendo carrito: {str(e)}", exc_info=True)
+            return Response(
+                {'error': f'Error al obtener el carrito: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['post'], url_path='agregar-producto')
+    def agregar_producto(self, request):
+        """
+        POST /api/gestion/carrito/agregar-producto/
+        Body: {
+            "producto_id": 5,
+            "cantidad": 2
+        }
+        Agrega o actualiza un producto en el carrito.
+        """
+        try:
+            producto_id = request.data.get('producto_id')
+            cantidad = int(request.data.get('cantidad', 1))
+            
+            # Validaciones
+            if not producto_id:
+                return Response(
+                    {'error': 'producto_id es requerido'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if cantidad < 1:
+                return Response(
+                    {'error': 'cantidad debe ser mayor a 0'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Obtener producto
+            producto = Producto.objects.get(id=producto_id, activo=True)
+            
+            # Validar stock disponible
+            if producto.stock_disponible < cantidad:
+                return Response(
+                    {'error': f'Stock insuficiente. Disponible: {producto.stock_disponible}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Obtener carrito
+            carrito = self.get_carrito_cliente()
+            
+            # Agregar o actualizar item
+            from gestion.models import CarritoItem
+            item, created = CarritoItem.objects.get_or_create(
+                carrito=carrito,
+                producto=producto
+            )
+            
+            if created:
+                item.cantidad = cantidad
+            else:
+                item.cantidad += cantidad
+            
+            item.save()
+            
+            logger.info(f"Producto {producto.id} agregado al carrito de {self.request.user.email}")
+            
+            serializer = CarritoSerializer(carrito, context={'request': self.request})
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        
+        except Producto.DoesNotExist:
+            return Response(
+                {'error': 'Producto no encontrado o inactivo'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except ValidationError as e:
+            return Response(
+                {'error': str(e.detail[0]) if hasattr(e, 'detail') else str(e)},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except Exception as e:
+            logger.error(f"Error agregando producto: {str(e)}", exc_info=True)
+            return Response(
+                {'error': f'Error al agregar producto: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['post'], url_path='eliminar-producto', url_name='eliminar_producto')
+    def eliminar_producto(self, request):
+        """
+        POST /api/gestion/carrito/eliminar-producto/
+        Body: {"carrito_item_id": 10}
+        Elimina un producto específico del carrito.
+        """
+        try:
+            item_id = request.data.get('carrito_item_id')
+            if not item_id:
+                return Response(
+                    {'error': 'carrito_item_id es requerido'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            carrito = self.get_carrito_cliente()
+            
+            from gestion.models import CarritoItem
+            item = CarritoItem.objects.get(id=item_id, carrito=carrito)
+            item.delete()
+            
+            logger.info(f"Item {item_id} eliminado del carrito de {self.request.user.email}")
+            
+            serializer = CarritoSerializer(carrito)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        
+        except CarritoItem.DoesNotExist:
+            return Response(
+                {'error': 'Item no encontrado en el carrito'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Error eliminando producto: {str(e)}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['delete'], url_path='vaciar')
+    def vaciar(self, request):
+        """
+        DELETE /api/gestion/carrito/vaciar/
+        Vacía todos los items del carrito.
+        """
+        try:
+            carrito = self.get_carrito_cliente()
+            carrito.items.all().delete()
+            
+            logger.info(f"Carrito vaciado para {self.request.user.email}")
+            
+            serializer = CarritoSerializer(carrito)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        
+        except Exception as e:
+            logger.error(f"Error vaciando carrito: {str(e)}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['post'], url_path='finalizar-compra')
+    def finalizar_compra(self, request):
+        """
+        POST /api/gestion/carrito/finalizar-compra/
+        Procesa la compra: valida stock, resta inventario y limpia el carrito.
+        
+        Cumple con REQ-11: Auditoría de Stock
+        """
+        try:
+            carrito = self.get_carrito_cliente()
+            
+            if not carrito.items.exists():
+                return Response(
+                    {'error': 'El carrito está vacío'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # 1. VALIDAR STOCK de todos los productos ANTES de procesar
+            items_carrito = list(carrito.items.select_related('producto'))
+            items_count = len(items_carrito)
+            for item in items_carrito:
+                if item.producto.stock_disponible < item.cantidad:
+                    return Response(
+                        {
+                            'error': f'Stock insuficiente de {item.producto.nombre}',
+                            'disponible': item.producto.stock_disponible,
+                            'solicitado': item.cantidad
+                        },
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            # 2. PROCESAR COMPRA (Lógica de Negocio) - Dentro de transacción atómica
+            with transaction.atomic():
+                total_venta = 0
+                
+                # Crear orden y reservar stock
+                cliente = carrito.cliente
+                # Max length is 20; keep code compact but readable.
+                codigo = f"OC{timezone.now().strftime('%y%m%d%H%M%S')}{uuid4().hex[:4].upper()}"
+                orden = OrdenCompra.objects.create(
+                    codigo=codigo,
+                    cliente=cliente,
+                    estado='PENDIENTE',
+                    total=0
+                )
+
+                for item in items_carrito:
+                    producto = item.producto
+                    cantidad = item.cantidad
+                    precio_unitario = producto.precio
+                    subtotal = cantidad * precio_unitario
+
+                    OrdenItem.objects.create(
+                        orden=orden,
+                        producto=producto,
+                        cantidad=cantidad,
+                        precio_historico=precio_unitario
+                    )
+
+                    total_venta += subtotal
+
+                create_order_stock_commitments(orden.pk)
+
+                orden.total = total_venta
+                orden.save(update_fields=['total'])
+
+                whatsapp_link = generar_link_whatsapp(items_carrito, total_venta)
+
+                # 3. LIMPIAR CARRITO
+                carrito.items.all().delete()
+
+                # 4. CREAR NOTIFICACIÓN DE COMPRA EXITOSA
+                Notificacion.objects.create(
+                    usuario=cliente.usuario,
+                    tipo='alerta',
+                    titulo='✅ Compra Realizada',
+                    mensaje=f'Tu compra por ${total_venta:.2f} ha sido procesada exitosamente.',
+                    datos_extra={
+                        'total': float(total_venta),
+                        'cantidad_items': items_count,
+                        'contexto': 'compra_exitosa'
+                    },
+                    canal='app',
+                    estado='pendiente'
+                )
+            
+            logger.info(
+                f"Compra completada por {self.request.user.email} | "
+                f"Total: ${total_venta:.2f} | Items: {items_count}"
+            )
+            
+            serializer = CarritoSerializer(carrito)
+            return Response(
+                {
+                    'status': 'Compra realizada con éxito',
+                    'orden_id': orden.id,
+                    'total': float(total_venta),
+                    'items_count': items_count,
+                    'whatsapp_link': whatsapp_link,
+                    'carrito': serializer.data
+                },
+                status=status.HTTP_200_OK
+            )
+        
+        except OrderInventoryError as e:
+            return Response(
+                {'error': e.detail, 'code': e.code},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except ValidationError as e:
+            return Response(
+                {'error': str(e.detail[0])},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except Exception as e:
+            logger.error(f"Error al finalizar compra: {str(e)}", exc_info=True)
+            return Response(
+                {'error': 'Error procesando la compra'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['post'])
+    def generar_pedido_whatsapp(self, request):
+        """
+        POST /api/gestion/carrito/generar_pedido_whatsapp/
+        
+        Genera un enlace de WhatsApp con los detalles del pedido.
+        El cliente se redirige a WhatsApp para confirmar el pedido.
+        
+        Response:
+        {
+            "whatsapp_link": "https://wa.me/5491122334455?text=...",
+            "total": 1250.00,
+            "items_count": 3
+        }
+        """
+        try:
+            carrito = self.get_carrito_cliente()
+            
+            if not carrito.items.exists():
+                return Response(
+                    {'error': 'El carrito está vacío'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Obtener items con relaciones
+            items_carrito = carrito.items.select_related('producto').all()
+            
+            # Calcular total
+            total_pedido = sum(
+                float(item.producto.precio) * item.cantidad 
+                for item in items_carrito
+            )
+            
+            # Generar link de WhatsApp
+            whatsapp_link = generar_link_whatsapp(items_carrito, total_pedido)
+            
+            logger.info(
+                f"Pedido WhatsApp generado para {self.request.user.email} | "
+                f"Total: ${total_pedido:.2f} | Items: {items_carrito.count()}"
+            )
+            
+            return Response(
+                {
+                    'whatsapp_link': whatsapp_link,
+                    'total': round(total_pedido, 2),
+                    'items_count': items_carrito.count(),
+                    'mensaje': 'Redirigiendo a WhatsApp...'
+                },
+                status=status.HTTP_200_OK
+            )
+        
+        except ValidationError as e:
+            return Response(
+                {'error': str(e.detail[0]) if hasattr(e, 'detail') else str(e)},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except Exception as e:
+            logger.error(f"Error generando pedido WhatsApp: {str(e)}", exc_info=True)
+            return Response(
+                {'error': 'Error al generar link de WhatsApp'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['post'])
+    def registrar_intencion_compra(self, request):
+        """
+        POST /api/gestion/carrito/registrar_intencion_compra/
+        
+        Registra una intención de compra (orden pendiente) en la base de datos
+        para auditoría cuando el cliente abre WhatsApp.
+        
+        Body:
+        {
+            "items": [{"producto_id": 1, "nombre": "X", "cantidad": 2, "precio": 100, "subtotal": 200}],
+            "total": 200
+        }
+        
+        Response:
+        {
+            "orden_id": 123,
+            "estado": "PENDIENTE",
+            "fecha_creacion": "2026-02-04T10:30:00Z"
+        }
+        """
+        try:
+            carrito = self.get_carrito_cliente()
+            items_carrito = carrito.items.select_related('producto').all()
+            
+            if not items_carrito.exists():
+                return Response(
+                    {'error': 'El carrito está vacío'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Construir JSON de items
+            items_json = []
+            total_pedido = 0
+            
+            for item in items_carrito:
+                precio = float(item.producto.precio)
+                subtotal = precio * item.cantidad
+                total_pedido += subtotal
+                
+                items_json.append({
+                    'producto_id': item.producto.id,
+                    'nombre': item.producto.nombre,
+                    'cantidad': item.cantidad,
+                    'precio': precio,
+                    'subtotal': subtotal
+                })
+            
+            # Obtener cliente
+            from usuarios.models import Cliente
+            cliente = Cliente.objects.filter(usuario=self.request.user).first()
+            
+            # Crear el contrato legacy y su OrdenCompra canónica en una sola TX.
+            from gestion.models import OrdenPendiente, Auditoria
+
+            with transaction.atomic():
+                orden = OrdenPendiente.objects.create(
+                    cliente=cliente,
+                    estado='PENDIENTE',
+                    items_json=items_json,
+                    monto_total=total_pedido,
+                )
+                orden_compra = OrdenCompra.objects.create(
+                    codigo=f'OP{orden.pk}',
+                    cliente=cliente,
+                    estado='PENDIENTE',
+                    total=total_pedido,
+                    notas='Compatibilidad canónica de OrdenPendiente legacy.',
+                )
+                for item in items_carrito:
+                    OrdenItem.objects.create(
+                        orden=orden_compra,
+                        producto=item.producto,
+                        cantidad=item.cantidad,
+                        precio_historico=item.producto.precio,
+                    )
+                orden.orden_compra = orden_compra
+                orden.save(update_fields=['orden_compra'])
+                create_order_stock_commitments(orden_compra.pk)
+            
+            # Registrar en auditoría
+            try:
+                ip_address = self.request.META.get('REMOTE_ADDR', '')
+                Auditoria.objects.create(
+                    tabla='OrdenPendiente',
+                    registro_id=orden.id,
+                    usuario=self.request.user,
+                    accion='ALTA',
+                    valor_nuevo={
+                        'id': orden.id,
+                        'estado': orden.estado,
+                        'monto_total': float(orden.monto_total),
+                        'items_count': len(items_json),
+                        'items_resumido': ', '.join([f"{item['nombre']} (x{item['cantidad']})" for item in items_json[:3]]),
+                        'fecha_creacion': orden.fecha_creacion.isoformat()
+                    },
+                    ip_address=ip_address
+                )
+            except Exception as audit_error:
+                logger.warning(f"No se registró auditoría para orden {orden.id}: {str(audit_error)}")
+            
+            logger.info(
+                f"Intención de compra registrada - Orden ID: {orden.id} | "
+                f"Usuario: {self.request.user.email} | Total: ${total_pedido:.2f}"
+            )
+            
+            return Response(
+                {
+                    'orden_id': orden.id,
+                    'estado': orden.estado,
+                    'fecha_creacion': orden.fecha_creacion.isoformat(),
+                    'monto_total': float(orden.monto_total),
+                    'items_count': len(items_json)
+                },
+                status=status.HTTP_201_CREATED
+            )
+        
+        except OrderInventoryError as e:
+            return Response(
+                {'error': e.detail, 'code': e.code},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as e:
+            logger.error(f"Error registrando intención de compra: {str(e)}", exc_info=True)
+            return Response(
+                {'error': 'Error al registrar la orden'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['post'], url_path='generar-pago-mercadopago')
+    def generar_pago_mercadopago(self, request):
+        try:
+            result = start_cart_checkout(
+                actor=request.user,
+                idempotency_key=request.headers.get('Idempotency-Key', ''),
+            )
+            return _checkout_result_response(
+                result,
+                request,
+                cart_compatibility=True,
+            )
+        except ProviderCheckoutError as exc:
+            return _checkout_error_response(exc)
+        except Exception as e:
+            logger.error(f"Error generando pago Mercado Pago: {str(e)}", exc_info=True)
+            return Response(
+                {'error': 'Error al generar el pago de Mercado Pago'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['get'], url_path='sugerencias_inteligentes')
+    def sugerencias_inteligentes(self, request):
+        """
+        GET /api/gestion/carrito/sugerencias_inteligentes/
+        
+        Analiza el diagnóstico del cliente y los productos en su carrito
+        para sugerir productos complementarios basados en su tipo de cabello.
+        
+        Implementa lógica de recomendación inteligente (IRQ-09).
+        """
+        try:
+            # 1. Obtener cliente
+            cliente = Cliente.objects.get(usuario=request.user)
+            
+            # 2. Obtener carrito actual (si existe)
+            carrito = Carrito.objects.filter(cliente=cliente).first()
+            productos_en_carrito = set(
+                carrito.items.values_list('producto_id', flat=True)
+            ) if carrito else set()
+            
+            # 3. Obtener último diagnóstico
+            ultimo_diag = DiagnosticoCapilar.objects.filter(
+                cliente=cliente
+            ).latest('fecha_diagnostico')
+            
+            if not ultimo_diag:
+                return Response({
+                    "sugerencias": [],
+                    "mensaje": "No hay diagnóstico disponible. Realiza un diagnóstico para obtener recomendaciones."
+                })
+            
+            # 4. Mapear diagnóstico a compatibilidad de producto
+            tag_busqueda = 'TODO'
+            razon = 'general'
+            
+            if ultimo_diag.estado_general:
+                estado = ultimo_diag.estado_general.nombre.lower()
+                if 'dañado' in estado or 'seco' in estado:
+                    tag_busqueda = 'DANADO'
+                    razon = f'cabello {estado}'
+                elif 'graso' in estado:
+                    tag_busqueda = 'GRASO'
+                    razon = 'cuero cabelludo graso'
+            
+            if ultimo_diag.cuero_cabelludo and 'graso' in ultimo_diag.cuero_cabelludo.nombre.lower():
+                tag_busqueda = 'GRASO'
+                razon = 'cuero cabelludo graso'
+            
+            # 5. Buscar productos sugeridos
+            # Nota: stock_disponible es una propiedad calculada, no un campo de BD
+            # Por eso filtramos por stock_real > 0
+            sugeridos = Producto.objects.filter(
+                compatibilidad=tag_busqueda,
+                stock_real__gt=0,
+                activo=True
+            ).exclude(
+                id__in=productos_en_carrito
+            )[:5]  # Top 5 sugerencias
+            
+            if not sugeridos.exists():
+                return Response({
+                    "sugerencias": [],
+                    "mensaje": f"No hay productos disponibles para tu tipo de {razon}."
+                })
+            
+            from gestion.serializers import ProductoSerializer
+            serializer = ProductoSerializer(sugeridos, many=True)
+            
+            logger.info(
+                f"Sugerencias generadas para {request.user.email} | "
+                f"Razón: {razon} | Productos: {sugeridos.count()}"
+            )
+            
+            return Response({
+                "mensaje_marketing": f"Basado en tu diagnóstico ({razon}), estos productos potenciarán tus resultados:",
+                "sugerencias": serializer.data,
+                "diagnostico_fecha": ultimo_diag.fecha_diagnostico
+            }, status=status.HTTP_200_OK)
+        
+        except Cliente.DoesNotExist:
+            return Response(
+                {'error': 'Usuario no es cliente del sistema'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except DiagnosticoCapilar.DoesNotExist:
+            return Response({
+                "sugerencias": [],
+                "mensaje": "No hay diagnóstico disponible. Realiza un diagnóstico para obtener recomendaciones."
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Error generando sugerencias: {str(e)}", exc_info=True)
+            return Response(
+                {'error': 'Error al generar sugerencias'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+# ============================================================
+# VIEWSETS PARA CONTENIDO EDUCATIVO
+# ============================================================
+
+class ContenidoEducativoViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestionar contenido educativo.
+    - Profesionales: CRUD completo de su contenido
+    - Clientes: Listar publicado, like, guardar
+    """
+    serializer_class = ContenidoEducativoSerializer
+    permission_classes = [IsAuthenticated]
+    filterset_fields = ['estado', 'tipo', 'autor', 'tags']
+    search_fields = ['titulo', 'descripcion', 'contenido_texto']
+    ordering_fields = ['fecha_publicacion', 'total_likes']
+    ordering = ['-fecha_publicacion']
+
+    def _active_personal(self):
+        return active_personal_for_user(self.request.user)
+
+    def _can_manage(self, contenido):
+        if user_can_manage_content_globally(self.request.user):
+            return True
+        personal = self._active_personal()
+        return personal is not None and contenido.autor_id == personal.pk
+
+    def _published_object(self):
+        queryset = ContenidoEducativo.objects.filter(
+            activo=True,
+            estado='PUBLICADO',
+        ).select_related('autor')
+        return get_object_or_404(queryset, pk=self.kwargs['pk'])
+
+    def check_object_permissions(self, request, obj):
+        super().check_object_permissions(request, obj)
+        if (
+            self.action in {'update', 'partial_update', 'destroy'}
+            and not self._can_manage(obj)
+        ):
+            raise PermissionDenied(
+                'No tienes permiso para modificar este contenido.'
+            )
+
+    def create(self, request, *args, **kwargs):
+        if self._active_personal() is None:
+            raise PermissionDenied(
+                'Solo un Personal activo puede crear contenido.'
+            )
+        return super().create(request, *args, **kwargs)
+
+    def get_queryset(self):
+        """
+        El permiso global ve todo lo activo. Un Personal activo ve también su
+        contenido propio; el resto sólo puede consultar contenido publicado.
+        """
+        user = self.request.user
+        base_queryset = ContenidoEducativo.objects.filter(
+            activo=True
+        ).select_related('autor').prefetch_related(
+            'me_gusta_recibidos',
+            'guardados_recibidos',
+        )
+
+        if user_can_manage_content_globally(user):
+            return base_queryset
+
+        personal = self._active_personal()
+        if personal is not None:
+            return base_queryset.filter(
+                Q(estado='PUBLICADO') | Q(autor=personal)
+            )
+
+        return base_queryset.filter(estado='PUBLICADO')
+
+    def perform_create(self, serializer):
+        """Asigna como autor únicamente al Personal activo autenticado."""
+        personal = self._active_personal()
+        if personal is None:
+            raise PermissionDenied(
+                'Solo un Personal activo puede crear contenido.'
+            )
+        serializer.save(autor=personal)
+        logger.info(f"Contenido creado por {personal.nombre}")
+
+    def perform_update(self, serializer):
+        """Sólo un autor activo o un gestor global puede editar contenido."""
+        contenido = serializer.instance
+        if not self._can_manage(contenido):
+            raise PermissionDenied(
+                'No tienes permiso para editar este contenido.'
+            )
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        """Eliminación lógica autorizada del contenido."""
+        if not self._can_manage(instance):
+            raise PermissionDenied(
+                'No tienes permiso para eliminar este contenido.'
+            )
+        instance.activo = False
+        instance.save()
+        logger.info(f"Contenido {instance.id} marcado como inactivo")
+
+    # === ENDPOINTS DE INTERACCIÓN ===
+
+    @action(detail=True, methods=['post'], url_path='like', permission_classes=[IsAuthenticated])
+    def toggle_like(self, request, pk=None):
+        """
+        Toggle: agregar/quitar me gusta
+        POST /api/contenido-educativo/{id}/like/
+        """
+        contenido = self._published_object()
+        
+        try:
+            cliente = request.user.cliente
+        except AttributeError:
+            return Response(
+                {'error': 'Solo clientes pueden dar like'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        with transaction.atomic():
+            like_existente = MeGusta.objects.filter(
+                contenido=contenido, 
+                cliente=cliente
+            ).first()
+            
+            if like_existente:
+                like_existente.delete()
+                logger.info(f"Like removido: {cliente.usuario.email} -> {contenido.id}")
+                return Response({
+                    'status': 'disliked',
+                    'total_likes': contenido.total_likes
+                }, status=status.HTTP_200_OK)
+            else:
+                MeGusta.objects.create(contenido=contenido, cliente=cliente)
+                logger.info(f"Like agregado: {cliente.usuario.email} -> {contenido.id}")
+                return Response({
+                    'status': 'liked',
+                    'total_likes': contenido.total_likes
+                }, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='guardar', permission_classes=[IsAuthenticated])
+    def toggle_guardar(self, request, pk=None):
+        """
+        Toggle: guardar/quitar de favoritos
+        POST /api/contenido-educativo/{id}/guardar/
+        """
+        contenido = self._published_object()
+        
+        try:
+            cliente = request.user.cliente
+        except AttributeError:
+            return Response(
+                {'error': 'Solo clientes pueden guardar contenido'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        with transaction.atomic():
+            guardado_existente = ContenidoGuardado.objects.filter(
+                contenido=contenido, 
+                cliente=cliente
+            ).first()
+            
+            if guardado_existente:
+                guardado_existente.delete()
+                logger.info(f"Contenido no guardado: {cliente.usuario.email} -> {contenido.id}")
+                return Response(
+                    {'status': 'unbooked'}, 
+                    status=status.HTTP_200_OK
+                )
+            else:
+                ContenidoGuardado.objects.create(contenido=contenido, cliente=cliente)
+                logger.info(f"Contenido guardado: {cliente.usuario.email} -> {contenido.id}")
+                return Response(
+                    {'status': 'bookmarked'}, 
+                    status=status.HTTP_201_CREATED
+                )
+
+    @action(detail=False, methods=['get'], url_path='mis-guardados', permission_classes=[IsAuthenticated])
+    def mis_guardados(self, request):
+        """
+        Lista contenido guardado por el cliente actual
+        GET /api/contenido-educativo/mis-guardados/
+        """
+        try:
+            cliente = request.user.cliente
+        except AttributeError:
+            return Response(
+                {'error': 'Solo clientes pueden ver guardados'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        guardados = ContenidoEducativo.objects.filter(
+            guardados_recibidos__cliente=cliente,
+            activo=True,
+            estado='PUBLICADO',
+        ).select_related('autor').prefetch_related('me_gusta_recibidos').distinct()
+
+        page = self.paginate_queryset(guardados)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = self.get_serializer(guardados, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], url_path='recomendados', permission_classes=[IsAuthenticated])
+    def recomendados_por_diagnostico(self, request):
+        """
+        Contenido recomendado basado en el último diagnóstico del cliente
+        GET /api/contenido-educativo/recomendados/
+        """
+        try:
+            cliente = request.user.cliente
+        except AttributeError:
+            return Response(
+                {'error': 'Solo clientes pueden ver recomendaciones'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        try:
+            # Obtener último diagnóstico
+            ultimo_diag = DiagnosticoCapilar.objects.filter(
+                cliente=cliente
+            ).select_related('estado_general', 'tipo_cabello').latest('fecha_diagnostico')
+            
+            # Construir tags desde el diagnóstico
+            tags_diagnostico = []
+            
+            if ultimo_diag.estado_general:
+                tags_diagnostico.append(ultimo_diag.estado_general.nombre.lower())
+            if ultimo_diag.tipo_cabello:
+                tags_diagnostico.append(ultimo_diag.tipo_cabello.nombre.lower())
+            
+            if not tags_diagnostico:
+                # Si no hay tags, retornar contenido más reciente
+                recomendados = ContenidoEducativo.objects.filter(
+                    estado='PUBLICADO',
+                    activo=True
+                ).select_related('autor').prefetch_related('me_gusta_recibidos')[:10]
+            else:
+                # Buscar contenido con tags similares
+                filtros = Q()
+                for tag in tags_diagnostico:
+                    filtros |= Q(tags__icontains=tag)
+                
+                recomendados = ContenidoEducativo.objects.filter(
+                    filtros,
+                    estado='PUBLICADO',
+                    activo=True
+                ).select_related('autor').prefetch_related('me_gusta_recibidos').distinct()
+            
+            # Paginar
+            page = self.paginate_queryset(recomendados)
+            if page is not None:
+                serializer = self.get_serializer(page, many=True)
+                return self.get_paginated_response(serializer.data)
+            
+            serializer = self.get_serializer(recomendados, many=True)
+            return Response(serializer.data)
+            
+        except DiagnosticoCapilar.DoesNotExist:
+            # Sin diagnóstico, retornar contenido más reciente
+            recomendados = ContenidoEducativo.objects.filter(
+                estado='PUBLICADO',
+                activo=True
+            ).select_related('autor').prefetch_related('me_gusta_recibidos')[:10]
+            
+            serializer = self.get_serializer(recomendados, many=True)
+            return Response(serializer.data)
+        except Exception as e:
+            logger.error(f"Error generando recomendaciones: {str(e)}", exc_info=True)
+            return Response(
+                {'error': 'Error al generar recomendaciones'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class MeGustaViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    ViewSet para gestionar los 'me gusta' en contenido educativo.
+    Las mutaciones se realizan sólo mediante la acción segura del contenido.
+    """
+    serializer_class = MeGustaSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'head', 'options']
+
+    def get_queryset(self):
+        """Cada usuario solo ve sus propios likes."""
+        user = self.request.user
+        try:
+            cliente = user.cliente
+            return MeGusta.objects.filter(
+                cliente=cliente,
+                contenido__activo=True,
+                contenido__estado='PUBLICADO',
+            ).select_related('contenido')
+        except Cliente.DoesNotExist:
+            return MeGusta.objects.none()
+
+
+class ContenidoGuardadoViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    ViewSet para contenido guardado por clientes.
+    Las mutaciones se realizan sólo mediante la acción segura del contenido.
+    """
+    serializer_class = ContenidoGuardadoSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'head', 'options']
+
+    def get_queryset(self):
+        """Cada cliente solo ve sus propios guardados."""
+        user = self.request.user
+        try:
+            cliente = user.cliente
+            return ContenidoGuardado.objects.filter(
+                cliente=cliente,
+                contenido__activo=True,
+                contenido__estado='PUBLICADO',
+            ).select_related('contenido')
+        except Cliente.DoesNotExist:
+            return ContenidoGuardado.objects.none()
+
+
+# ============================================================================
+# VIEWSET PARA ÓRDENES PENDIENTES (AUDITORÍA)
+# ============================================================================
+
+class OrdenPendienteViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestionar órdenes pendientes (intenciones de compra por WhatsApp).
+    Solo Yanina (admin) puede verlas y confirmar pagos.
+    """
+    queryset = OrdenPendiente.objects.all()
+    serializer_class = OrdenPendienteSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['estado', 'cliente', 'fecha_creacion']
+    search_fields = ['cliente__usuario__email', 'cliente__usuario__first_name', 'cliente__usuario__last_name']
+    ordering_fields = ['fecha_creacion', 'monto_total']
+    ordering = ['-fecha_creacion']
+    
+    def get_queryset(self):
+        """
+        Los clientes ven solo sus propias órdenes.
+        Los admins ven todas.
+        """
+        if self.request.user.has_perm(BusinessPermission.MANAGE_STOCK):
+            return OrdenPendiente.objects.all()
+        
+        try:
+            cliente = self.request.user.cliente
+            return OrdenPendiente.objects.filter(cliente=cliente)
+        except Cliente.DoesNotExist:
+            return OrdenPendiente.objects.none()
+    
+    @action(
+        detail=True,
+        methods=['post'],
+        permission_classes=[IsAuthenticated, CanManageStock],
+    )
+    def confirmar_pago(self, request, pk=None):
+        """
+        POST /api/gestion/ordenes-pendientes/{id}/confirmar_pago/
+        
+        Yanina confirma que recibió el pago por WhatsApp.
+        Descontar del stock_real y limpiar el stock_comprometido.
+        """
+        try:
+            visible_order = self.get_object()
+            orden, _result = apply_pending_order_inventory_effect(
+                visible_order.pk,
+                actor=request.user,
+            )
+            return Response(
+                {
+                    'status': 'Pago confirmado',
+                    'orden_id': orden.id,
+                    'estado': orden.estado,
+                    'fecha_completacion': orden.fecha_completacion.isoformat(),
+                    'mensaje': 'Stock descontado del inventario físico'
+                },
+                status=status.HTTP_200_OK
+            )
+        
+        except OrderInventoryError as e:
+            return Response(
+                {'error': e.detail, 'code': e.code},
+                status=status.HTTP_409_CONFLICT,
+            )
+        except Exception as e:
+            logger.error(f"Error confirmando pago de orden {pk}: {str(e)}", exc_info=True)
+            return Response(
+                {'error': 'Error al confirmar el pago'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(
+        detail=True,
+        methods=['post'],
+        permission_classes=[IsAuthenticated, CanManageStock],
+    )
+    def confirmar_entrega(self, request, pk=None):
+        """
+        POST /api/gestion/ordenes-pendientes/{id}/confirmar_entrega/
+        
+        Confirmar que la orden ha sido entregada.
+        Actualiza el estado a COMPLETADA y resta del stock_real y stock_comprometido.
+        """
+        try:
+            visible_order = self.get_object()
+            orden, _result = apply_pending_order_inventory_effect(
+                visible_order.pk,
+                actor=request.user,
+            )
+            return Response(
+                {
+                    'status': 'Entrega confirmada',
+                    'orden_id': orden.id,
+                    'estado': orden.estado,
+                    'fecha_completacion': orden.fecha_completacion.isoformat(),
+                    'mensaje': 'Orden completada y stock actualizado'
+                },
+                status=status.HTTP_200_OK
+            )
+        
+        except OrderInventoryError as e:
+            return Response(
+                {'error': e.detail, 'code': e.code},
+                status=status.HTTP_409_CONFLICT,
+            )
+        except Exception as e:
+            logger.error(f"Error confirmando entrega de orden {pk}: {str(e)}", exc_info=True)
+            return Response(
+                {'error': 'Error al confirmar la entrega'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['post'])
+    def registrar_pago(self, request, pk=None):
+        """
+        POST /api/gestion/ordenes-compra/{id}/registrar_pago/
+
+        Permite al profesional registrar un pago asociado a la orden.
+        """
+        return Response(
+            {
+                'code': 'LEGACY_PENDING_ORDER_PAYMENT_DISABLED',
+                'detail': 'OrdenPendiente no es un contexto financiero válido.',
+            },
+            status=status.HTTP_409_CONFLICT,
+        )
+
+    @action(detail=True, methods=['post'])
+    def cancelar(self, request, pk=None):
+        """
+        POST /api/gestion/ordenes-compra/{id}/cancelar/
+
+        Cancela una orden pendiente y libera el stock comprometido.
+        """
+        try:
+            visible_order = self.get_object()
+            orden = release_pending_order_stock_commitments(
+                visible_order.pk,
+                actor=request.user,
+            )
+
+            serializer = self.get_serializer(orden)
+            return Response(
+                {
+                    'status': 'Orden cancelada',
+                    'orden': serializer.data,
+                    'mensaje': 'Orden cancelada y stock liberado'
+                },
+                status=status.HTTP_200_OK
+            )
+
+        except OrderInventoryError as e:
+            return Response(
+                {'error': e.detail, 'code': e.code},
+                status=status.HTTP_409_CONFLICT,
+            )
+        except Exception as e:
+            logger.error(f"Error cancelando orden {pk}: {str(e)}", exc_info=True)
+            return Response(
+                {'error': 'Error al cancelar la orden'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+# ============================================
+# VIEWSET PARA ORDEN DE COMPRA
+# ============================================
+
+class OrdenCompraViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestionar órdenes de compra de clientes.
+    Segun el usuario, estos son pedidos efectuados por clientes que pasan a ser órdenes completadas.
+    """
+    queryset = OrdenCompra.objects.all()
+    serializer_class = OrdenCompraSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['estado', 'cliente', 'creado_at']
+    search_fields = ['cliente__usuario__email', 'codigo', 'cliente__usuario__first_name']
+    ordering_fields = ['creado_at', 'total']
+    ordering = ['-creado_at']
+    
+    def get_queryset(self):
+        """
+        Los clientes ven solo sus propias órdenes.
+        Los admins ven todas.
+        """
+        if self.request.user.has_perm(BusinessPermission.MANAGE_STOCK):
+            return OrdenCompra.objects.all()
+        
+        try:
+            cliente = self.request.user.cliente
+            return OrdenCompra.objects.filter(cliente=cliente)
+        except Cliente.DoesNotExist:
+            return OrdenCompra.objects.none()
+
+    @action(detail=True, methods=['post'], url_path='checkout')
+    def checkout(self, request, pk=None):
+        command = ProviderCheckoutCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        try:
+            result = start_order_checkout(
+                order_id=pk,
+                actor=request.user,
+                idempotency_key=request.headers.get('Idempotency-Key', ''),
+                channel=command.validated_data['channel'],
+            )
+        except ProviderCheckoutError as exc:
+            return _checkout_error_response(exc)
+        return _checkout_result_response(result, request)
+
+    @action(detail=True, methods=['post'])
+    def registrar_pago(self, request, pk=None):
+        """
+        POST /api/gestion/ordenes-compra/{id}/registrar_pago/
+
+        Permite al profesional registrar un pago asociado a la orden.
+        """
+        command = LegacyOrderPaymentCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        values = command.validated_data
+        try:
+            result = register_legacy_order_payment(
+                order_id=pk,
+                amount=values['monto'],
+                method=values['metodo_pago'],
+                occurred_at=values['fecha_pago'],
+                receipt=values.get('comprobante_foto'),
+                is_deposit=values['es_sena'],
+                idempotency_key=request.headers.get('Idempotency-Key', ''),
+                actor=request.user,
+            )
+        except LegacyOrderPaymentPermissionDenied:
+            raise PermissionDenied('No tienes permisos para registrar pagos.')
+        except LegacyOrderPaymentNotFound:
+            raise Http404
+        except LegacyOrderPaymentError as exc:
+            response_status = (
+                status.HTTP_409_CONFLICT
+                if isinstance(exc, LegacyOrderPaymentConflict)
+                else status.HTTP_400_BAD_REQUEST
+            )
+            return Response(
+                {exc.field: [exc.detail], 'code': exc.code},
+                status=response_status,
+            )
+
+        return Response(
+            {
+                'status': 'Pago registrado',
+                'created': result.created,
+                'pago': PagoSerializer(
+                    result.payment,
+                    context={'request': request},
+                ).data,
+            },
+            status=(
+                status.HTTP_201_CREATED
+                if result.created
+                else status.HTTP_200_OK
+            ),
+        )
+    
+    @action(
+        detail=True,
+        methods=['post'],
+        permission_classes=[IsAuthenticated, CanManageStock],
+    )
+    def confirmar_entrega(self, request, pk=None):
+        """
+        POST /api/gestion/ordenes-compra/{id}/confirmar_entrega/
+        
+        Confirma la entrega de una orden de compra a un cliente.
+        Descontar del stock_real y del stock_comprometido.
+        """
+        try:
+            visible_order = self.get_object()
+            result = apply_order_inventory_effect(
+                visible_order.pk,
+                actor=request.user,
+            )
+            orden = result.order
+            
+            # Serializar la orden actualizada
+            serializer = self.get_serializer(orden)
+            
+            return Response(
+                {
+                    'status': 'Entrega confirmada',
+                    'orden': serializer.data,
+                    'mensaje': 'Orden completada y stock actualizado'
+                },
+                status=status.HTTP_200_OK
+            )
+        
+        except OrderInventoryError as e:
+            return Response(
+                {'error': e.detail, 'code': e.code},
+                status=status.HTTP_409_CONFLICT,
+            )
+        except Exception as e:
+            logger.error(f"Error confirmando entrega de orden {pk}: {str(e)}", exc_info=True)
+            return Response(
+                {'error': 'Error al confirmar la entrega'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['post'])
+    def cancelar(self, request, pk=None):
+        """
+        POST /api/gestion/ordenes-compra/{id}/cancelar/
+
+        Cancela una orden pendiente y libera el stock comprometido.
+        """
+        try:
+            visible_order = self.get_object()
+            release_order_stock_commitments(
+                visible_order.pk,
+                actor=request.user,
+                final_state='CANCELADO',
+            )
+            orden = OrdenCompra.objects.get(pk=visible_order.pk)
+
+            serializer = self.get_serializer(orden)
+            return Response(
+                {
+                    'status': 'Orden cancelada',
+                    'orden': serializer.data,
+                    'mensaje': 'Orden cancelada y stock liberado'
+                },
+                status=status.HTTP_200_OK
+            )
+
+        except OrderInventoryError as e:
+            return Response(
+                {'error': e.detail, 'code': e.code},
+                status=status.HTTP_409_CONFLICT,
+            )
+        except Exception as e:
+            logger.error(f"Error cancelando orden {pk}: {str(e)}", exc_info=True)
+            return Response(
+                {'error': 'Error al cancelar la orden'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class PagoViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
+    """
+    ViewSet para Pagos e ingresos registrados; no representa caja física.
+    Reporte global por permiso y acciones semánticas; no expone CRUD.
+    """
+    queryset = Pago.objects.all().select_related(
+        'orden__cliente__usuario',
+        'turno__cliente__usuario',
+        'payment_intent__cliente__usuario',
+        'payment_intent__slot_hold',
+        'recorded_by',
+        'reconciled_by',
+    )
+    serializer_class = PagoSerializer
+    permission_classes = [IsAuthenticated]
+    lookup_field = 'public_id'
+    lookup_value_regex = '[0-9a-fA-F-]{36}'
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    search_fields = [
+        'orden__codigo',
+        'orden__cliente__usuario__email',
+        'turno__cliente__usuario__email',
+        'payment_intent__cliente__usuario__email',
+    ]
+    filterset_fields = ['metodo_pago', 'es_sena', 'status', 'currency']
+    ordering_fields = ['fecha_pago', 'monto', 'recorded_at']
+    ordering = ['-recorded_at']
+
+    def get_permissions(self):
+        if self.action == 'list':
+            classes = [IsAuthenticated, CanViewFinancialReports]
+        else:
+            classes = [IsAuthenticated]
+        return [permission() for permission in classes]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        solo_hoy = self.request.query_params.get('solo_hoy')
+        fecha = self.request.query_params.get('fecha')
+
+        if solo_hoy and solo_hoy.lower() in ['1', 'true', 'si', 'yes']:
+            queryset = queryset.filter(fecha_pago__date=timezone.localdate())
+
+        if fecha:
+            try:
+                fecha_dt = datetime.strptime(fecha, '%Y-%m-%d').date()
+                queryset = queryset.filter(fecha_pago__date=fecha_dt)
+            except ValueError:
+                pass
+
+        return queryset
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        summary_rows = list(
+            queryset.values('currency', 'status')
+            .annotate(total=Sum('monto'))
+            .order_by('currency', 'status')
+        )
+        by_method = list(
+            queryset.filter(status=Pago.Status.RECONCILED)
+            .values('currency', 'metodo_pago')
+            .annotate(total=Sum('monto'))
+            .order_by('currency', 'metodo_pago')
+        )
+        page = self.paginate_queryset(queryset)
+        serializer = self.get_serializer(
+            page if page is not None else queryset,
+            many=True,
+        )
+        summary = {
+            'by_status': summary_rows,
+            'reconciled_by_method': by_method,
+            'physical_cash_balance': None,
+        }
+        if page is not None:
+            response = self.get_paginated_response(serializer.data)
+            response.data['summary'] = summary
+            return response
+        return Response({'results': serializer.data, 'summary': summary})
+
+    @action(detail=True, methods=['post'], url_path='reconcile')
+    def reconcile(self, request, public_id=None):
+        command = ManualPaymentReconcileCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        try:
+            result = reconcile_manual_payment(
+                payment_public_id=public_id,
+                actor=request.user,
+                **command.validated_data,
+            )
+        except ManualPaymentError as exc:
+            return PaymentIntentViewSet._manual_payment_error_response(exc)
+        if result.code:
+            return Response(
+                {'code': result.code, 'detail': result.detail},
+                status=status.HTTP_409_CONFLICT,
+            )
+        data = self.get_serializer(result.payment).data
+        data['changed'] = result.changed
+        data['financial'] = PaymentIntentViewSet._financial_data(
+            result.financial
+        )
+        return Response(data)
+
+    @action(detail=True, methods=['get'], url_path='receipt')
+    def receipt(self, request, public_id=None):
+        try:
+            payment = self.get_queryset().get(public_id=public_id)
+        except Pago.DoesNotExist:
+            raise Http404
+        if not actor_can_read_payment(request.user, payment):
+            raise Http404
+        if not payment.comprobante_foto:
+            raise Http404
+        return FileResponse(
+            payment.comprobante_foto.open('rb'),
+            as_attachment=True,
+            filename=os.path.basename(payment.comprobante_foto.name),
+        )
+# ============================================
+# VIEWSET PARA IMÁGENES DE PRODUCTOS
+# ============================================
+
+class ImagenProductoViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestionar imágenes adicionales de productos.
+    Permite agregar múltiples imágenes a un producto existente.
+    """
+    queryset = ImagenProducto.objects.all()
+    serializer_class = ImagenProductoSerializer
+    pagination_class = None
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
+    filterset_fields = ['producto']
+    ordering_fields = ['orden', 'fecha_creacion']
+    ordering = ['orden', 'fecha_creacion']
+
+    def get_permissions(self):
+        """
+        Permisos dinámicos:
+        - list/retrieve: AllowAny (clientes pueden ver imágenes)
+        - create/update/destroy: manage_products
+        """
+        if self.action in ['list', 'retrieve']:
+            permission_classes = [AllowAny]
+        else:
+            permission_classes = [IsAuthenticated, CanManageProducts]
+        return [permission() for permission in permission_classes]
+
+    def perform_create(self, serializer):
+        """
+        Guarda la imagen asociada al producto.
+        Se ejecuta la optimización de imagen automáticamente en el modelo.
+        """
+        try:
+            serializer.save()
+        except Exception as e:
+            logger.error(f"Error al guardar imagen de producto: {str(e)}")
+            raise
+
+    def create(self, request, *args, **kwargs):
+        if 'imagen' not in request.FILES:
+            return Response(
+                {'detail': 'No se envio imagen, no se creo registro.'},
+                status=status.HTTP_200_OK
+            )
+        return super().create(request, *args, **kwargs)
+
+
+class SolicitudTecnicaReservaViewSet(viewsets.GenericViewSet):
+    """API previa al Turno; sólo gestiona intención y evaluación técnica."""
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = TechnicalBookingRequestPublicSerializer
+    pagination_class = None
+
+    def get_permissions(self):
+        if self.action in {'cola', 'revisar'}:
+            return [IsAuthenticated(), CanReviewTechnicalBooking()]
+        return [IsAuthenticated()]
+
+    def _client_queryset(self):
+        try:
+            cliente = self.request.user.cliente
+        except Cliente.DoesNotExist:
+            return SolicitudTecnicaReserva.objects.none()
+        return (
+            SolicitudTecnicaReserva.objects.filter(cliente=cliente)
+            .select_related(
+                'evaluacion_vigente',
+                'personal_preferido',
+                'cliente__usuario',
+            )
+            .prefetch_related(
+                'servicios_solicitados__servicio',
+                'decisiones_revision',
+            )
+        )
+
+    def get_queryset(self):
+        return self._client_queryset()
+
+    @staticmethod
+    def _domain_error_response(exc):
+        if isinstance(exc, TechnicalBookingRequestNotFound):
+            code = status.HTTP_404_NOT_FOUND
+        elif isinstance(exc, TechnicalBookingRequestPermissionDenied):
+            code = status.HTTP_403_FORBIDDEN
+        elif isinstance(exc, TechnicalBookingRequestTransitionError):
+            code = status.HTTP_409_CONFLICT
+        else:
+            code = status.HTTP_400_BAD_REQUEST
+        return Response({'detail': str(exc)}, status=code)
+
+    def list(self, request):
+        serializer = self.get_serializer(
+            self._client_queryset(),
+            many=True,
+        )
+        return Response(serializer.data)
+
+    def retrieve(self, request, pk=None):
+        solicitud = self.get_object()
+        return Response(self.get_serializer(solicitud).data)
+
+    @staticmethod
+    def _slot_hold_error_response(exc):
+        if isinstance(exc, SlotHoldNotFound):
+            response_status = status.HTTP_404_NOT_FOUND
+        elif isinstance(exc, SlotHoldConflict):
+            response_status = status.HTTP_409_CONFLICT
+        else:
+            response_status = status.HTTP_400_BAD_REQUEST
+        return Response(
+            {
+                'code': exc.code,
+                'detail': exc.detail,
+                'field': exc.field,
+            },
+            status=response_status,
+        )
+
+    @action(detail=True, methods=['post'], url_path='hold')
+    def hold(self, request, pk=None):
+        solicitud = self.get_object()
+        idempotency_key = request.headers.get('Idempotency-Key', '').strip()
+        if not idempotency_key:
+            return Response(
+                {
+                    'code': 'IDEMPOTENCY_KEY_REQUIRED',
+                    'detail': 'Debe informar el header Idempotency-Key.',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        command = SlotHoldCreateCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        try:
+            result = create_slot_hold(
+                solicitud_id=solicitud.pk,
+                personal_id=command.validated_data['personal_id'],
+                starts_at=command.validated_data['starts_at'],
+                idempotency_key=idempotency_key,
+                actor=request.user,
+            )
+        except SlotHoldError as exc:
+            return self._slot_hold_error_response(exc)
+        response_status = (
+            status.HTTP_201_CREATED if result.created else status.HTTP_200_OK
+        )
+        return Response(
+            SlotHoldPublicSerializer(
+                result.hold,
+                context={'database_now': database_now()},
+            ).data,
+            status=response_status,
+        )
+
+    @action(detail=False, methods=['post'], url_path='reservar')
+    def reservar(self, request):
+        try:
+            cliente = request.user.cliente
+        except Cliente.DoesNotExist:
+            raise PermissionDenied(
+                'Se requiere un perfil de Cliente activo.'
+            )
+        command = TechnicalBookingRequestCreateSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        try:
+            solicitud = create_technical_booking_request(
+                cliente=cliente,
+                actor=request.user,
+                **command.validated_data,
+            )
+        except TechnicalBookingRequestError as exc:
+            return self._domain_error_response(exc)
+        solicitud = self._client_queryset().get(pk=solicitud.pk)
+        return Response(
+            self.get_serializer(solicitud).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='aceptar-advertencia',
+    )
+    def aceptar_advertencia(self, request, pk=None):
+        # get_object aplica ownership antes del lock semántico del servicio.
+        solicitud = self.get_object()
+        try:
+            accept_technical_warning(
+                solicitud_id=solicitud.pk,
+                actor=request.user,
+            )
+        except TechnicalBookingRequestError as exc:
+            return self._domain_error_response(exc)
+        solicitud = self._client_queryset().get(pk=solicitud.pk)
+        return Response(self.get_serializer(solicitud).data)
+
+    @action(detail=True, methods=['post'], url_path='reevaluar')
+    def reevaluar(self, request, pk=None):
+        solicitud = self.get_object()
+        command = TechnicalBookingRequestReevaluateSerializer(
+            data=request.data
+        )
+        command.is_valid(raise_exception=True)
+        try:
+            reevaluate_technical_booking_request(
+                solicitud_id=solicitud.pk,
+                actor=request.user,
+                **command.validated_data,
+            )
+        except TechnicalBookingRequestError as exc:
+            return self._domain_error_response(exc)
+        solicitud = self._client_queryset().get(pk=solicitud.pk)
+        return Response(self.get_serializer(solicitud).data)
+
+    @action(detail=False, methods=['get'], url_path='cola')
+    def cola(self, request):
+        try:
+            solicitudes = eligible_review_requests(request.user)
+        except TechnicalBookingRequestError as exc:
+            return self._domain_error_response(exc)
+        return Response(
+            TechnicalBookingRequestReviewSerializer(
+                solicitudes,
+                many=True,
+                context={'request': request},
+            ).data
+        )
+
+    @action(detail=True, methods=['post'], url_path='revisar')
+    def revisar(self, request, pk=None):
+        command = TechnicalBookingReviewCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        try:
+            review_technical_booking_request(
+                solicitud_id=pk,
+                actor=request.user,
+                action=command.validated_data.pop('accion'),
+                **command.validated_data,
+            )
+        except TechnicalBookingRequestError as exc:
+            return self._domain_error_response(exc)
+        solicitud = (
+            SolicitudTecnicaReserva.objects.select_related(
+                'cliente__usuario',
+                'evaluacion_vigente',
+            )
+            .prefetch_related('servicios_solicitados__servicio')
+            .get(pk=pk)
+        )
+        return Response(
+            TechnicalBookingRequestReviewSerializer(
+                solicitud,
+                context={'request': request},
+            ).data
+        )
+
+
+class SlotHoldViewSet(viewsets.GenericViewSet):
+    """Lectura y liberación semántica; no expone PATCH ni escritura genérica."""
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = SlotHoldPublicSerializer
+    lookup_field = 'public_id'
+    lookup_value_regex = '[0-9a-fA-F-]{36}'
+
+    def get_queryset(self):
+        try:
+            cliente = self.request.user.cliente
+        except Cliente.DoesNotExist:
+            return SlotHold.objects.none()
+        return SlotHold.objects.filter(cliente=cliente).select_related('personal')
+
+    def _serialize(self, hold):
+        return self.get_serializer(
+            hold,
+            context={
+                **self.get_serializer_context(),
+                'database_now': database_now(),
+            },
+        ).data
+
+    def retrieve(self, request, *args, **kwargs):
+        # GET calcula estado efectivo, pero nunca materializa una transición.
+        return Response(self._serialize(self.get_object()))
+
+    def list(self, request, *args, **kwargs):
+        # Historial propio para reanudar el recorrido después de recargar la UI.
+        serializer = self.get_serializer(
+            self.get_queryset(),
+            many=True,
+            context={
+                **self.get_serializer_context(),
+                'database_now': database_now(),
+                'include_resume_metadata': True,
+            },
+        )
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['post'], url_path='release')
+    def release(self, request, public_id=None):
+        hold = self.get_object()
+        command = SlotHoldReleaseCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        try:
+            result = release_slot_hold(
+                public_id=hold.public_id,
+                actor=request.user,
+            )
+        except SlotHoldNotFound:
+            raise Http404
+        except SlotHoldConflict as exc:
+            return SolicitudTecnicaReservaViewSet._slot_hold_error_response(exc)
+        data = self._serialize(result.hold)
+        data['changed'] = result.changed
+        data['expiration_materialized'] = result.expiration_materialized
+        return Response(data, status=status.HTTP_200_OK)
+
+
+class PaymentIntentViewSet(viewsets.GenericViewSet):
+    """Creación, lectura propia y cancelación; no expone CRUD de estado."""
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = PaymentIntentPublicSerializer
+    lookup_field = 'public_id'
+    lookup_value_regex = '[0-9a-fA-F-]{36}'
+
+    OPERATIONAL_READ_PERMISSIONS = (
+        BusinessPermission.REGISTER_PAYMENT,
+        BusinessPermission.CONFIRM_DEPOSIT,
+        BusinessPermission.VIEW_FINANCIAL_REPORTS,
+    )
+
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return PaymentIntentOperationalSerializer
+        return PaymentIntentPublicSerializer
+
+    def _can_read_operational_obligations(self):
+        user = self.request.user
+        return bool(
+            getattr(user, 'is_active', False)
+            and any(
+                user.has_perm(permission)
+                for permission in self.OPERATIONAL_READ_PERMISSIONS
+            )
+        )
+
+    @staticmethod
+    def _operational_queryset():
+        return (
+            PaymentIntent.objects.select_related(
+                'cliente__usuario',
+                'slot_hold',
+                'policy',
+            )
+            .prefetch_related(
+                'lines',
+                'payments',
+                'reconciliation_cases',
+                'provider_attempts__provider_events',
+            )
+            .order_by('-created_at', '-pk')
+        )
+
+    def get_queryset(self):
+        try:
+            cliente = self.request.user.cliente
+        except Cliente.DoesNotExist:
+            return PaymentIntent.objects.none()
+        return (
+            PaymentIntent.objects.filter(cliente=cliente)
+            .select_related('slot_hold', 'policy')
+            .prefetch_related(
+                'lines',
+                'payments',
+                'reconciliation_cases',
+                'provider_attempts__provider_events',
+            )
+        )
+
+    def _serialize(self, intent):
+        return self.get_serializer(
+            intent,
+            context={
+                **self.get_serializer_context(),
+                'database_now': database_now(),
+            },
+        ).data
+
+    def list(self, request, *args, **kwargs):
+        if not self._can_read_operational_obligations():
+            raise PermissionDenied(
+                'No tiene permisos para consultar obligaciones financieras.'
+            )
+        queryset = self._operational_queryset()
+        search = request.query_params.get('search', '').strip()
+        if search:
+            queryset = queryset.filter(
+                Q(cliente__usuario__email__icontains=search)
+                | Q(cliente__usuario__first_name__icontains=search)
+                | Q(cliente__usuario__last_name__icontains=search)
+            )
+        intent_status = request.query_params.get('status', '').strip()
+        if intent_status:
+            queryset = queryset.filter(status=intent_status)
+        page = self.paginate_queryset(queryset)
+        serializer = self.get_serializer(
+            page if page is not None else queryset,
+            many=True,
+            context={
+                **self.get_serializer_context(),
+                'database_now': database_now(),
+            },
+        )
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return Response(serializer.data)
+
+    @staticmethod
+    def _error_response(exc):
+        if isinstance(exc, PaymentIntentNotFound):
+            response_status = status.HTTP_404_NOT_FOUND
+        elif isinstance(exc, PaymentIntentConflict):
+            response_status = status.HTTP_409_CONFLICT
+        else:
+            response_status = status.HTTP_400_BAD_REQUEST
+        return Response(
+            {
+                'code': exc.code,
+                'detail': exc.detail,
+                'field': exc.field,
+            },
+            status=response_status,
+        )
+
+    def create(self, request):
+        idempotency_key = request.headers.get('Idempotency-Key', '').strip()
+        if not idempotency_key:
+            return Response(
+                {
+                    'code': 'IDEMPOTENCY_KEY_REQUIRED',
+                    'detail': 'Debe informar el header Idempotency-Key.',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        command = PaymentIntentCreateCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        try:
+            hold = SlotHold.objects.get(
+                public_id=command.validated_data['slot_hold_public_id'],
+                cliente__usuario=request.user,
+            )
+        except SlotHold.DoesNotExist:
+            raise Http404
+        try:
+            result = create_payment_intent(
+                hold=hold,
+                mode=command.validated_data['mode'],
+                idempotency_key=idempotency_key,
+                actor=request.user,
+            )
+        except PaymentIntentError as exc:
+            return self._error_response(exc)
+        if not result.succeeded:
+            return Response(
+                {'code': result.code, 'detail': result.detail},
+                status=status.HTTP_409_CONFLICT,
+            )
+        response_status = (
+            status.HTTP_201_CREATED if result.created else status.HTTP_200_OK
+        )
+        return Response(self._serialize(result.intent), status=response_status)
+
+    @action(detail=False, methods=['get'], url_path='options')
+    def options(self, request):
+        command = PaymentIntentOptionsQuerySerializer(
+            data=request.query_params
+        )
+        command.is_valid(raise_exception=True)
+        try:
+            hold = SlotHold.objects.get(
+                public_id=command.validated_data['slot_hold_public_id'],
+                cliente__usuario=request.user,
+            )
+        except SlotHold.DoesNotExist:
+            raise Http404
+        try:
+            result = get_payment_intent_options(
+                hold=hold,
+                actor=request.user,
+            )
+        except PaymentIntentError as exc:
+            return self._error_response(exc)
+        return Response({
+            'slot_hold_public_id': str(result.hold.public_id),
+            'policy_version': result.policy_version,
+            'total_amount': str(result.total_amount),
+            'currency': result.currency,
+            'expires_at': result.expires_at.isoformat(),
+            'modes': [
+                {
+                    'mode': option.mode,
+                    'required_amount': str(option.required_amount),
+                }
+                for option in result.modes
+            ],
+            'existing_intent': (
+                self._serialize(result.existing_intent)
+                if result.existing_intent is not None
+                else None
+            ),
+        })
+
+    def retrieve(self, request, *args, **kwargs):
+        return Response(self._serialize(self.get_object()))
+
+    @action(detail=True, methods=['post'], url_path='checkout')
+    def checkout(self, request, public_id=None):
+        command = ProviderCheckoutCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        try:
+            result = start_booking_checkout(
+                intent_public_id=public_id,
+                actor=request.user,
+                idempotency_key=request.headers.get('Idempotency-Key', ''),
+                channel=command.validated_data['channel'],
+            )
+        except ProviderCheckoutError as exc:
+            return _checkout_error_response(exc)
+        return _checkout_result_response(result, request)
+
+    @action(detail=True, methods=['post'], url_path='cancel')
+    def cancel(self, request, public_id=None):
+        intent = self.get_object()
+        command = PaymentIntentCancelCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        try:
+            result = cancel_payment_intent(
+                public_id=intent.public_id,
+                actor=request.user,
+            )
+        except PaymentIntentError as exc:
+            return self._error_response(exc)
+        data = self._serialize(result.intent)
+        data['changed'] = result.changed
+        return Response(data)
+
+    @staticmethod
+    def _manual_payment_error_response(exc):
+        if isinstance(exc, ManualPaymentPermissionDenied):
+            response_status = status.HTTP_403_FORBIDDEN
+        elif isinstance(exc, ManualPaymentNotFound):
+            response_status = status.HTTP_404_NOT_FOUND
+        elif isinstance(exc, ManualPaymentConflict):
+            response_status = status.HTTP_409_CONFLICT
+        else:
+            response_status = status.HTTP_400_BAD_REQUEST
+        return Response(
+            {
+                'code': exc.code,
+                'detail': exc.detail,
+                'field': exc.field,
+            },
+            status=response_status,
+        )
+
+    @staticmethod
+    def _financial_data(snapshot):
+        return {
+            'paid_reconciled': snapshot.paid_reconciled,
+            'confirmation_due': snapshot.confirmation_due,
+            'balance': snapshot.balance,
+            'financial_threshold_reached': (
+                snapshot.financial_threshold_reached
+            ),
+        }
+
+    @action(detail=True, methods=['get', 'post'], url_path='payments')
+    def payments(self, request, public_id=None):
+        if request.method == 'POST':
+            idempotency_key = request.headers.get(
+                'Idempotency-Key',
+                '',
+            ).strip()
+            if not idempotency_key:
+                return Response(
+                    {
+                        'code': 'IDEMPOTENCY_KEY_REQUIRED',
+                        'detail': 'Debe informar el header Idempotency-Key.',
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            command = ManualPaymentRegisterCommandSerializer(data=request.data)
+            command.is_valid(raise_exception=True)
+            try:
+                result = register_manual_payment(
+                    intent_public_id=public_id,
+                    idempotency_key=idempotency_key,
+                    actor=request.user,
+                    **command.validated_data,
+                )
+            except ManualPaymentError as exc:
+                return self._manual_payment_error_response(exc)
+            if not result.succeeded:
+                return Response(
+                    {'code': result.code, 'detail': result.detail},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            data = PagoSerializer(
+                result.payment,
+                context=self.get_serializer_context(),
+            ).data
+            data['financial'] = self._financial_data(result.financial)
+            return Response(
+                data,
+                status=(
+                    status.HTTP_201_CREATED
+                    if result.created
+                    else status.HTTP_200_OK
+                ),
+            )
+
+        try:
+            intent = (
+                PaymentIntent.objects.select_related(
+                    'cliente__usuario',
+                    'slot_hold',
+                )
+                .prefetch_related('payments')
+                .get(public_id=public_id)
+            )
+        except PaymentIntent.DoesNotExist:
+            raise Http404
+        can_read = bool(
+            intent.cliente.usuario_id == request.user.pk
+            or request.user.has_perm(BusinessPermission.REGISTER_PAYMENT)
+            or request.user.has_perm(BusinessPermission.CONFIRM_DEPOSIT)
+            or request.user.has_perm(
+                BusinessPermission.VIEW_FINANCIAL_REPORTS
+            )
+        )
+        if not can_read:
+            raise Http404
+        snapshot = financial_snapshot(intent)
+        return Response({
+            'results': PagoSerializer(
+                intent.payments.order_by('recorded_at', 'pk'),
+                many=True,
+                context=self.get_serializer_context(),
+            ).data,
+            'financial': self._financial_data(snapshot),
+        })
+

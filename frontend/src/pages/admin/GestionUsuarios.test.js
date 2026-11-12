@@ -1,0 +1,635 @@
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import axios from 'axios';
+import Swal from 'sweetalert2';
+
+import GestionUsuarios from './GestionUsuarios';
+import { notify } from '../../utils/notificaciones';
+
+
+const mockNavigate = jest.fn();
+const mockHasPermission = jest.fn(() => true);
+
+
+jest.mock('axios', () => ({
+    __esModule: true,
+    default: {
+        get: jest.fn(),
+        post: jest.fn(),
+        patch: jest.fn()
+    }
+}));
+jest.mock('sweetalert2', () => ({
+    __esModule: true,
+    default: { fire: jest.fn() }
+}));
+jest.mock('react-router-dom', () => ({
+    useNavigate: () => mockNavigate
+}), { virtual: true });
+jest.mock('../../utils/notificaciones', () => ({
+    notify: {
+        success: jest.fn(),
+        error: jest.fn(),
+        info: jest.fn()
+    }
+}));
+jest.mock('../../context/SessionContext', () => ({
+    useSession: () => ({ hasPermission: mockHasPermission })
+}));
+
+
+const activeUser = {
+    id: 10,
+    email: 'activa@test.com',
+    first_name: 'Cuenta',
+    last_name: 'Activa',
+    is_staff: false,
+    is_active: true,
+    business_role: 'CLIENTE'
+};
+
+const inactiveUser = {
+    ...activeUser,
+    id: 11,
+    email: 'inactiva@test.com',
+    is_active: false
+};
+
+const accessSummary = {
+    identity: {
+        id: 10,
+        email: 'activa@test.com',
+        first_name: 'Cuenta',
+        last_name: 'Activa'
+    },
+    account: {
+        is_active: true,
+        is_staff: false,
+        is_superuser: false
+    },
+    business_role: 'EMPLEADO',
+    business_roles: ['EMPLEADO'],
+    role_state: 'VALID',
+    profiles: {
+        cliente: { exists: true, id: 10, active: true },
+        personal: {
+            exists: true,
+            id: 21,
+            active: false,
+            job_role: 'asistente'
+        }
+    },
+    assigned_capabilities: [
+        'gestion.view_stock',
+        'usuarios.manage_users'
+    ],
+    effective_capabilities: ['gestion.view_stock'],
+    capabilities: [
+        {
+            code: 'gestion.view_stock',
+            assigned: true,
+            effective: true,
+            origins: [
+                { type: 'BUSINESS_ROLE', identifier: 'EMPLEADO' },
+                { type: 'TECHNICAL_GROUP', identifier: 'STOCK_READERS' },
+                { type: 'INDIVIDUAL', identifier: null }
+            ]
+        },
+        {
+            code: 'usuarios.manage_users',
+            assigned: true,
+            effective: false,
+            origins: [
+                { type: 'TECHNICAL_GROUP', identifier: 'ACCESS_REVIEW' }
+            ]
+        }
+    ],
+    warnings: [
+        {
+            code: 'INACTIVE_PERSONAL_FOR_LABOR_ROLE',
+            message: 'El BusinessRole laboral está vinculado a Personal inactivo.'
+        },
+        {
+            code: 'ADMIN_CAPABILITIES_OUTSIDE_ROLE',
+            message: 'La cuenta conserva capacidades administrativas fuera de su rol.'
+        }
+    ],
+    technical: {
+        permission_evaluation: 'EFFECTIVE',
+        has_individual_business_permissions: true,
+        has_technical_group_business_permissions: true,
+        has_permissions_outside_business_catalog: false
+    }
+};
+
+
+describe('GestionUsuarios account status actions', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockHasPermission.mockImplementation(() => true);
+        localStorage.setItem('access_token', 'test-token');
+        axios.post.mockResolvedValue({ data: { changed: true } });
+    });
+
+    test('ofrece altas de cliente, Personal y administrador', async () => {
+        axios.get.mockResolvedValue({ data: [activeUser] });
+
+        render(<GestionUsuarios />);
+        await screen.findByText('activa@test.com');
+
+        fireEvent.click(screen.getByRole('button', { name: 'Nuevo cliente' }));
+        expect(mockNavigate).toHaveBeenCalledWith('/admin/clientes');
+        fireEvent.click(screen.getByRole('button', { name: 'Nuevo Personal' }));
+        expect(mockNavigate).toHaveBeenCalledWith('/admin/personal');
+        expect(screen.getByRole('button', { name: /Nuevo administrador/ })).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Nuevo Usuario' })).not.toBeInTheDocument();
+    });
+
+    test('no ofrece accesos rápidos a pantallas sin permiso propio', async () => {
+        mockHasPermission.mockImplementation(
+            (permission) => permission === 'usuarios.manage_users'
+        );
+        axios.get.mockResolvedValue({ data: [activeUser] });
+
+        render(<GestionUsuarios />);
+        await screen.findByText('activa@test.com');
+
+        expect(screen.queryByRole('button', { name: '← Volver' }))
+            .not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Nuevo cliente' }))
+            .not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Nuevo Personal' }))
+            .not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /Nuevo administrador/ }))
+            .not.toBeInTheDocument();
+        expect(axios.post).not.toHaveBeenCalled();
+    });
+
+    test('assign_roles sin manage_users tampoco expone ni dispara el alta', async () => {
+        mockHasPermission.mockImplementation(
+            (permission) => permission === 'usuarios.assign_roles'
+        );
+        axios.get.mockResolvedValue({ data: [activeUser] });
+
+        render(<GestionUsuarios />);
+        await screen.findByText('activa@test.com');
+
+        expect(screen.queryByRole('button', { name: /Nuevo administrador/ }))
+            .not.toBeInTheDocument();
+        expect(screen.queryByRole('heading', { name: 'Nuevo administrador' }))
+            .not.toBeInTheDocument();
+        expect(axios.post).not.toHaveBeenCalled();
+    });
+
+    test('abre alta de administrador sin checkbox ni controles técnicos', async () => {
+        axios.get.mockResolvedValue({ data: [activeUser] });
+
+        render(<GestionUsuarios />);
+        fireEvent.click(await screen.findByRole('button', {
+            name: /Nuevo administrador/
+        }));
+
+        expect(screen.getByRole('heading', { name: 'Nuevo administrador' })).toBeInTheDocument();
+        expect(screen.getByLabelText('Nombre')).toBeInTheDocument();
+        expect(screen.getByLabelText('Apellido')).toBeInTheDocument();
+        expect(screen.getByLabelText('Email')).toBeInTheDocument();
+        expect(screen.getByLabelText('Contraseña temporal')).toBeInTheDocument();
+        expect(screen.getByLabelText('Motivo')).toBeInTheDocument();
+        const administratorForm = screen.getByRole('button', {
+            name: 'Crear administrador'
+        }).closest('form');
+        expect(within(administratorForm).queryByRole('checkbox')).not.toBeInTheDocument();
+        expect(within(administratorForm).queryByLabelText(/staff/i)).not.toBeInTheDocument();
+        expect(within(administratorForm).queryByLabelText(/rol/i)).not.toBeInTheDocument();
+    });
+
+    test('consulta y muestra el resumen canónico como sólo lectura', async () => {
+        axios.get.mockImplementation((url) => {
+            if (url.includes('/resumen-acceso/')) {
+                return Promise.resolve({ data: accessSummary });
+            }
+            return Promise.resolve({ data: [activeUser] });
+        });
+
+        render(<GestionUsuarios />);
+        await screen.findByText('activa@test.com');
+        fireEvent.click(screen.getByRole('button', { name: 'Ver accesos' }));
+
+        const dialog = await screen.findByRole('dialog', {
+            name: 'Resumen de acceso'
+        });
+        expect(axios.get).toHaveBeenCalledWith(
+            'http://127.0.0.1:8000/api/gestion/admin/usuarios/10/resumen-acceso/',
+            { headers: { Authorization: 'Bearer test-token' } }
+        );
+        expect(within(dialog).getByText('Empleado')).toBeInTheDocument();
+        expect(dialog).toHaveTextContent('Cliente: #10 · Activo');
+        expect(dialog).toHaveTextContent('Personal: #21 · Inactivo · Función asistente');
+        expect(within(dialog).getByText('gestion.view_stock')).toBeInTheDocument();
+        expect(within(dialog).getByText('usuarios.manage_users')).toBeInTheDocument();
+        expect(dialog).toHaveTextContent(
+            'Origen: Rol Empleado · Grupo técnico STOCK_READERS · Permiso individual'
+        );
+        expect(within(dialog).getByText('Asignada, no efectiva')).toBeInTheDocument();
+        expect(dialog).toHaveTextContent('INACTIVE_PERSONAL_FOR_LABOR_ROLE');
+        expect(dialog).toHaveTextContent('ADMIN_CAPABILITIES_OUTSIDE_ROLE');
+        expect(within(dialog).queryByRole('textbox')).not.toBeInTheDocument();
+        expect(within(dialog).queryByRole('checkbox')).not.toBeInTheDocument();
+        expect(within(dialog).queryByRole('combobox')).not.toBeInTheDocument();
+
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Cerrar' }));
+        expect(screen.queryByRole('dialog', {
+            name: 'Resumen de acceso'
+        })).not.toBeInTheDocument();
+    });
+
+    test('envía solo el contrato dedicado y actualiza el listado por BusinessRole', async () => {
+        const createdAdministrator = {
+            id: 20,
+            email: 'ana.admin@example.com',
+            first_name: 'Ana',
+            last_name: 'Pérez',
+            is_staff: false,
+            is_active: true,
+            business_role: 'ADMINISTRADOR'
+        };
+        axios.get
+            .mockResolvedValueOnce({ data: [activeUser] })
+            .mockResolvedValueOnce({ data: [activeUser, createdAdministrator] });
+        axios.post.mockResolvedValue({
+            data: {
+                created: true,
+                usuario_id: 20,
+                email: 'ana.admin@example.com',
+                rol: 'ADMINISTRADOR',
+                usuario_activo: true
+            }
+        });
+
+        render(<GestionUsuarios />);
+        fireEvent.click(await screen.findByRole('button', {
+            name: /Nuevo administrador/
+        }));
+        fireEvent.change(screen.getByLabelText('Nombre'), {
+            target: { value: 'Ana' }
+        });
+        fireEvent.change(screen.getByLabelText('Apellido'), {
+            target: { value: 'Pérez' }
+        });
+        fireEvent.change(screen.getByLabelText('Email'), {
+            target: { value: 'ana.admin@example.com' }
+        });
+        fireEvent.change(screen.getByLabelText('Contraseña temporal'), {
+            target: { value: 'Temporal!Admin2026' }
+        });
+        fireEvent.change(screen.getByLabelText('Motivo'), {
+            target: { value: 'Incorporación como administradora' }
+        });
+        fireEvent.click(screen.getByRole('button', {
+            name: 'Crear administrador'
+        }));
+
+        await waitFor(() => {
+            expect(axios.post).toHaveBeenCalledWith(
+                'http://127.0.0.1:8000/api/usuarios/admin/administradores/crear/',
+                {
+                    first_name: 'Ana',
+                    last_name: 'Pérez',
+                    email: 'ana.admin@example.com',
+                    password_temporal: 'Temporal!Admin2026',
+                    motivo: 'Incorporación como administradora'
+                },
+                { headers: { Authorization: 'Bearer test-token' } }
+            );
+        });
+        const payload = axios.post.mock.calls[0][1];
+        expect(payload).not.toHaveProperty('role');
+        expect(payload).not.toHaveProperty('business_role');
+        expect(payload).not.toHaveProperty('is_staff');
+        expect(payload).not.toHaveProperty('is_superuser');
+        expect(payload).not.toHaveProperty('is_active');
+        expect(payload).not.toHaveProperty('groups');
+        expect(payload).not.toHaveProperty('user_permissions');
+        expect(payload).not.toHaveProperty('cliente');
+        expect(payload).not.toHaveProperty('personal');
+        expect(
+            axios.post.mock.calls.some(
+                ([url]) => url === 'http://127.0.0.1:8000/api/gestion/admin/usuarios/'
+            )
+        ).toBe(false);
+        await waitFor(() => {
+            expect(screen.getByText('ana.admin@example.com')).toBeInTheDocument();
+            expect(screen.getByText('Administrador')).toBeInTheDocument();
+        });
+        expect(notify.success).toHaveBeenCalledWith(
+            'Administrador creado exitosamente.'
+        );
+        expect(screen.queryByRole('heading', {
+            name: 'Nuevo administrador'
+        })).not.toBeInTheDocument();
+    });
+
+    test.each([
+        ['EMAIL_ALREADY_EXISTS', 'Ya existe una cuenta con ese email.'],
+        ['INVALID_PASSWORD', 'La contraseña temporal no cumple los requisitos de seguridad.'],
+        ['PERMISSION_DENIED', 'No tenés permisos para crear administradores.']
+    ])('muestra error seguro de onboarding %s', async (code, message) => {
+        axios.get.mockResolvedValue({ data: [activeUser] });
+        axios.post.mockRejectedValue({
+            response: { data: { error: { code } } }
+        });
+
+        render(<GestionUsuarios />);
+        fireEvent.click(await screen.findByRole('button', {
+            name: /Nuevo administrador/
+        }));
+        fireEvent.change(screen.getByLabelText('Nombre'), {
+            target: { value: 'Ana' }
+        });
+        fireEvent.change(screen.getByLabelText('Apellido'), {
+            target: { value: 'Pérez' }
+        });
+        fireEvent.change(screen.getByLabelText('Email'), {
+            target: { value: 'ana.admin@example.com' }
+        });
+        fireEvent.change(screen.getByLabelText('Contraseña temporal'), {
+            target: { value: 'Temporal!Admin2026' }
+        });
+        fireEvent.change(screen.getByLabelText('Motivo'), {
+            target: { value: 'Incorporación como administradora' }
+        });
+        fireEvent.click(screen.getByRole('button', {
+            name: 'Crear administrador'
+        }));
+
+        await waitFor(() => {
+            expect(notify.error).toHaveBeenCalledWith(message);
+        });
+        expect(screen.getByRole('heading', {
+            name: 'Nuevo administrador'
+        })).toBeInTheDocument();
+    });
+
+    test('desactiva mediante la action semántica y envía motivo', async () => {
+        axios.get.mockResolvedValue({ data: [activeUser] });
+        Swal.fire.mockResolvedValue({
+            isConfirmed: true,
+            value: 'Baja administrativa'
+        });
+
+        render(<GestionUsuarios />);
+        fireEvent.click(await screen.findByRole('button', {
+            name: 'Desactivar'
+        }));
+
+        await waitFor(() => {
+            expect(axios.post).toHaveBeenCalledWith(
+                'http://127.0.0.1:8000/api/gestion/admin/usuarios/10/desactivar-cuenta/',
+                { motivo: 'Baja administrativa' },
+                { headers: { Authorization: 'Bearer test-token' } }
+            );
+        });
+        expect(axios.patch).not.toHaveBeenCalled();
+        expect(notify.success).toHaveBeenCalledWith(
+            'Cuenta desactivada correctamente.'
+        );
+    });
+
+    test('reactiva mediante la action semántica y actualiza el listado', async () => {
+        axios.get.mockResolvedValue({ data: [inactiveUser] });
+        Swal.fire.mockResolvedValue({
+            isConfirmed: true,
+            value: 'Reincorporación aprobada'
+        });
+
+        render(<GestionUsuarios />);
+        fireEvent.click(await screen.findByRole('button', {
+            name: 'Reactivar'
+        }));
+
+        await waitFor(() => {
+            expect(axios.post).toHaveBeenCalledWith(
+                'http://127.0.0.1:8000/api/gestion/admin/usuarios/11/reactivar-cuenta/',
+                { motivo: 'Reincorporación aprobada' },
+                { headers: { Authorization: 'Bearer test-token' } }
+            );
+        });
+        expect(axios.get.mock.calls.length).toBeGreaterThanOrEqual(2);
+        expect(axios.patch).not.toHaveBeenCalled();
+        expect(notify.success).toHaveBeenCalledWith(
+            'Cuenta reactivada correctamente.'
+        );
+    });
+
+    test('informa que Cliente inactivo se preserva al reactivar cuenta', async () => {
+        axios.get.mockResolvedValue({ data: [inactiveUser] });
+        axios.post.mockResolvedValue({
+            data: {
+                changed: true,
+                warnings: ['CLIENT_PROFILE_INACTIVE'],
+                refresh_tokens_revoked: 0
+            }
+        });
+        Swal.fire.mockResolvedValue({
+            isConfirmed: true,
+            value: 'Reactivación conservando perfiles'
+        });
+
+        render(<GestionUsuarios />);
+        fireEvent.click(await screen.findByRole('button', { name: 'Reactivar' }));
+
+        await waitFor(() => expect(notify.info).toHaveBeenCalledWith(
+            'La cuenta se reactivó, pero el perfil Cliente permanece inactivo.'
+        ));
+    });
+
+    test('muestra un mensaje comprensible para el último administrador', async () => {
+        axios.get.mockResolvedValue({ data: [activeUser] });
+        Swal.fire.mockResolvedValue({
+            isConfirmed: true,
+            value: 'Baja administrativa'
+        });
+        axios.post.mockRejectedValue({
+            response: {
+                data: { error: { code: 'LAST_ACTIVE_ADMIN' } }
+            }
+        });
+
+        render(<GestionUsuarios />);
+        fireEvent.click(await screen.findByRole('button', {
+            name: 'Desactivar'
+        }));
+
+        await waitFor(() => {
+            expect(notify.error).toHaveBeenCalledWith(
+                'No se puede desactivar al último administrador activo.'
+            );
+        });
+    });
+
+    test('oculta cambio de rol si falta uno de los permisos requeridos', async () => {
+        mockHasPermission.mockImplementation(
+            (permission) => permission === 'usuarios.manage_users'
+        );
+        axios.get.mockResolvedValue({ data: [activeUser] });
+
+        render(<GestionUsuarios />);
+        await screen.findByText('activa@test.com');
+
+        expect(screen.queryByRole('button', {
+            name: 'Cambiar rol de activa@test.com'
+        })).not.toBeInTheDocument();
+    });
+
+    test('confirma el cambio, envía motivo y muestra el resultado actualizado', async () => {
+        axios.get.mockImplementation((url) => {
+            if (url.includes('/resumen-acceso/')) {
+                return Promise.resolve({ data: accessSummary });
+            }
+            return Promise.resolve({ data: [activeUser] });
+        });
+        const updatedSummary = {
+            ...accessSummary,
+            business_role: 'ADMINISTRADOR',
+            business_roles: ['ADMINISTRADOR']
+        };
+        axios.post.mockResolvedValue({
+            data: {
+                changed: true,
+                usuario_id: 10,
+                previous_role: 'EMPLEADO',
+                business_role: 'ADMINISTRADOR',
+                audit_id: 91,
+                access_summary: updatedSummary
+            }
+        });
+
+        render(<GestionUsuarios />);
+        fireEvent.click(await screen.findByRole('button', {
+            name: 'Cambiar rol de activa@test.com'
+        }));
+        const dialog = await screen.findByRole('dialog', {
+            name: 'Cambiar BusinessRole'
+        });
+        expect(dialog).toHaveTextContent('Rol actual: Empleado');
+        expect(dialog).toHaveTextContent('Cliente: #10');
+        expect(dialog).toHaveTextContent('Personal: #21 · Inactivo');
+
+        fireEvent.change(within(dialog).getByLabelText('Rol destino'), {
+            target: { value: 'ADMINISTRADOR' }
+        });
+        fireEvent.change(within(dialog).getByLabelText('Motivo del cambio'), {
+            target: { value: 'Promoción administrativa aprobada' }
+        });
+        fireEvent.click(within(dialog).getByRole('checkbox'));
+        fireEvent.click(within(dialog).getByRole('button', {
+            name: 'Confirmar cambio'
+        }));
+
+        await waitFor(() => {
+            expect(axios.post).toHaveBeenCalledWith(
+                'http://127.0.0.1:8000/api/gestion/admin/usuarios/10/cambiar-rol-negocio/',
+                {
+                    role: 'ADMINISTRADOR',
+                    motivo: 'Promoción administrativa aprobada'
+                },
+                { headers: { Authorization: 'Bearer test-token' } }
+            );
+        });
+        expect(await within(dialog).findByText('Rol actualizado')).toBeInTheDocument();
+        expect(dialog).toHaveTextContent('Empleado → Administrador');
+        expect(screen.getAllByText('Administrador').length).toBeGreaterThan(0);
+        expect(notify.success).toHaveBeenCalledWith(
+            'BusinessRole actualizado correctamente.'
+        );
+    });
+
+    test('advierte perfiles incompatibles y autoridad residual', async () => {
+        const administratorSummary = {
+            ...accessSummary,
+            business_role: 'ADMINISTRADOR',
+            business_roles: ['ADMINISTRADOR'],
+            capabilities: [
+                {
+                    code: 'usuarios.manage_users',
+                    effective: true,
+                    origins: [
+                        { type: 'BUSINESS_ROLE', identifier: 'ADMINISTRADOR' },
+                        { type: 'TECHNICAL_GROUP', identifier: 'ACCESS_REVIEW' }
+                    ]
+                }
+            ]
+        };
+        axios.get.mockImplementation((url) => (
+            url.includes('/resumen-acceso/')
+                ? Promise.resolve({ data: administratorSummary })
+                : Promise.resolve({ data: [activeUser] })
+        ));
+
+        render(<GestionUsuarios />);
+        fireEvent.click(await screen.findByRole('button', {
+            name: 'Cambiar rol de activa@test.com'
+        }));
+        const dialog = await screen.findByRole('dialog', {
+            name: 'Cambiar BusinessRole'
+        });
+        expect(dialog).toHaveTextContent(
+            'La degradación conservaría autoridad residual: usuarios.manage_users.'
+        );
+
+        fireEvent.change(within(dialog).getByLabelText('Rol destino'), {
+            target: { value: 'PROFESIONAL' }
+        });
+        expect(dialog).toHaveTextContent(
+            'El rol laboral requiere que el perfil Personal esté activo.'
+        );
+    });
+
+    test.each([
+        [
+            403,
+            'PERMISSION_DENIED',
+            'No tenés permisos para cambiar roles de negocio.'
+        ],
+        [
+            409,
+            'RESIDUAL_ADMIN_CAPABILITIES',
+            'La cuenta conservaría autoridad administrativa residual.'
+        ]
+    ])('muestra el conflicto seguro de cambio de rol %s', async (
+        responseStatus,
+        code,
+        message
+    ) => {
+        axios.get.mockImplementation((url) => (
+            url.includes('/resumen-acceso/')
+                ? Promise.resolve({ data: accessSummary })
+                : Promise.resolve({ data: [activeUser] })
+        ));
+        axios.post.mockRejectedValue({
+            response: {
+                status: responseStatus,
+                data: { error: { code } }
+            }
+        });
+
+        render(<GestionUsuarios />);
+        fireEvent.click(await screen.findByRole('button', {
+            name: 'Cambiar rol de activa@test.com'
+        }));
+        const dialog = await screen.findByRole('dialog', {
+            name: 'Cambiar BusinessRole'
+        });
+        fireEvent.change(within(dialog).getByLabelText('Motivo del cambio'), {
+            target: { value: 'Cambio administrativo rechazado' }
+        });
+        fireEvent.click(within(dialog).getByRole('checkbox'));
+        fireEvent.click(within(dialog).getByRole('button', {
+            name: 'Confirmar cambio'
+        }));
+
+        await waitFor(() => {
+            expect(notify.error).toHaveBeenCalledWith(message);
+        });
+        expect(within(dialog).getByRole('alert')).toHaveTextContent(message);
+    });
+});
