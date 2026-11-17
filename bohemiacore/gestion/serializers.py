@@ -9,7 +9,7 @@ from .models import (
     PerfilTecnicoServicio, PoliticaRiesgoTecnico,
     ReglaIntervaloTecnico, ReglaDiagnosticoTecnico,
     ReglaFrecuenciaTecnica,
-    TipoEquipamiento, FichaTecnica, DiagnosticoCapilar,
+    TipoEquipamiento, FichaTecnica, CorreccionFichaTecnica, DiagnosticoCapilar,
     CorreccionDiagnosticoCapilar, RequisitoServicio,
     CategoriaProducto, Promocion, Configuracion, ConfiguracionRetoque,
     Carrito, CarritoItem, ContenidoEducativo, MeGusta, ContenidoGuardado,
@@ -25,7 +25,6 @@ from usuarios.roles import BusinessPermission, BusinessRole
 import os
 from django.core.exceptions import ValidationError 
 from datetime import datetime
-from django.db import transaction
 from django.utils import timezone
 
 from .effective_access import user_can_manage_service_formula
@@ -400,11 +399,14 @@ class TurnoSerializer(serializers.ModelSerializer):
         return instance
 
 class FichaTecnicaSerializer(serializers.ModelSerializer):
-    """Serializador para el registro técnico del profesional"""
+    """Lectura de la ficha; las mutaciones usan comandos semánticos."""
     detalle_turno_id = serializers.IntegerField(source='detalle_turno.id', read_only=True)
     servicio_nombre = serializers.CharField(source='detalle_turno.servicio.nombre', read_only=True)
     servicio_id = serializers.IntegerField(source='detalle_turno.servicio.id', read_only=True)
     profesional_nombre = serializers.CharField(source='profesional_autor.get_full_name', read_only=True)
+    completada_por_nombre = serializers.CharField(
+        source='completada_por.get_full_name', read_only=True
+    )
     cliente_id = serializers.IntegerField(source='detalle_turno.turno.cliente.id', read_only=True)
     cliente_nombre = serializers.CharField(source='detalle_turno.turno.cliente.usuario.get_full_name', read_only=True)
     turno_id = serializers.IntegerField(source='detalle_turno.turno.id', read_only=True)
@@ -414,7 +416,7 @@ class FichaTecnicaSerializer(serializers.ModelSerializer):
     
     # Campo extra para enviar la plantilla al frontend (Lógica de Inicio)
     formula_base_servicio = serializers.CharField(
-        source='detalle_turno.servicio.plantilla_formula', read_only=True
+        source='formula_estandar_referencia', read_only=True
     )
     
     # Campos de lectura con nombres amigables para el frontend
@@ -424,89 +426,127 @@ class FichaTecnicaSerializer(serializers.ModelSerializer):
     estado_general_final_nombre = serializers.CharField(
         source='estado_general_final.nombre', read_only=True
     )
+    completion_errors = serializers.SerializerMethodField()
+    correcciones_count = serializers.IntegerField(
+        source='correcciones_trazables.count', read_only=True
+    )
     
     class Meta:
         model = FichaTecnica
         fields = [
             'id', 'detalle_turno', 'detalle_turno_id', 'servicio_nombre',
-            'servicio_id', 'profesional_autor', 'profesional_nombre', 'formula_base_servicio',
+            'servicio_id', 'profesional_autor', 'profesional_nombre',
+            'completada_por', 'completada_por_nombre', 'formula_base_servicio',
             'cliente_id', 'cliente_nombre', 'turno_id', 'turno_fecha', 'turno_hora',
             'formula', 'observaciones_proceso', 'comentario_cliente',
             'rutina_recomendada', 'rutina_recomendada_nombre',
             'porosidad_final', 'porosidad_final_nombre',
             'estado_general_final', 'estado_general_final_nombre',
-            'resultado_post_servicio', 'foto_resultado', 'fecha_registro'
+            'resultado_post_servicio', 'foto_resultado', 'estado', 'version',
+            'fecha_registro', 'actualizada_en', 'completada_en',
+            'completion_errors', 'correcciones_count',
         ]
-        read_only_fields = [
-            'id', 'fecha_registro', 'detalle_turno_id', 'servicio_nombre', 
-            'servicio_id', 'profesional_autor', 'profesional_nombre',
-            'formula_base_servicio',
-            'cliente_id', 'cliente_nombre', 'turno_id', 'turno_fecha', 'turno_hora',
-            'porosidad_final_nombre', 'estado_general_final_nombre',
-            'rutina_recomendada_nombre'
-        ]
+        read_only_fields = fields
+
+    def get_completion_errors(self, obj):
+        from .technical_record_services import technical_record_completion
+
+        _, errors = technical_record_completion(obj)
+        return errors
 
     def to_representation(self, instance):
         representation = super().to_representation(instance)
         request = self.context.get('request')
         user = getattr(request, 'user', None)
-        if getattr(user, 'cliente', None) is not None:
+        if not user_can_manage_service_formula(user):
             representation.pop('formula', None)
             representation.pop('formula_base_servicio', None)
         return representation
-    
-    def validate(self, data):
-        user = self.context['request'].user
-        detalle = data.get(
-            'detalle_turno',
-            getattr(self.instance, 'detalle_turno', None),
-        )
 
-        if self.instance is not None and 'detalle_turno' in data:
-            if data['detalle_turno'].pk != self.instance.detalle_turno_id:
-                raise serializers.ValidationError({
-                    'detalle_turno': [
-                        'El Detalle de Turno no puede modificarse.'
-                    ]
-                })
 
-        personal = getattr(user, 'perfil_profesional', None)
-        if (
-            personal is None
-            or not personal.activo
-            or detalle is None
-            or detalle.turno.profesional_id != personal.pk
-        ):
-            raise PermissionDenied(
-                'Sólo el Personal asignado al Turno puede gestionar su ficha.'
-            )
+class TechnicalRecordFieldsCommandSerializer(serializers.Serializer):
+    formula = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    observaciones_proceso = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    comentario_cliente = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    rutina_recomendada = serializers.PrimaryKeyRelatedField(
+        queryset=Rutina.objects.all(), required=False, allow_null=True
+    )
+    porosidad_final = serializers.PrimaryKeyRelatedField(
+        queryset=PorosidadCabello.objects.all(), required=False, allow_null=True
+    )
+    estado_general_final = serializers.PrimaryKeyRelatedField(
+        queryset=EstadoGeneral.objects.all(), required=False, allow_null=True
+    )
+    resultado_post_servicio = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    foto_resultado = serializers.ImageField(required=False, allow_null=True)
 
-        if 'formula' in data and not user.has_perm(
-            BusinessPermission.MANAGE_FORMULAS
-        ):
-            raise PermissionDenied(
-                'No tiene permisos para modificar fórmulas.'
-            )
-        
-        if detalle.turno.estado not in ['confirmado', 'en_proceso']:
-            raise serializers.ValidationError("No se puede registrar una ficha para un turno que no ha sido iniciado o confirmado.")
-        
-        if (
-            self.instance is None
-            and FichaTecnica.objects.filter(detalle_turno=detalle).exists()
-        ):
-            raise serializers.ValidationError("Este servicio ya tiene una ficha técnica registrada.")
-            
-        return data
-    
-    def create(self, validated_data):
-        # Implementación del Punto 2 del análisis: Persistencia Robusta y Atómica
-        with transaction.atomic():
-            # 1. Asignar autor
-            validated_data['profesional_autor'] = self.context['request'].user
-            ficha = super().create(validated_data)
+    def to_internal_value(self, data):
+        unexpected = set(data.keys()) - set(self.fields)
+        if unexpected:
+            raise serializers.ValidationError({
+                field: ['Este campo no está permitido.']
+                for field in sorted(unexpected)
+            })
+        return super().to_internal_value(data)
 
-            return ficha
+
+class TechnicalRecordCreateCommandSerializer(TechnicalRecordFieldsCommandSerializer):
+    detalle_turno = serializers.PrimaryKeyRelatedField(
+        queryset=DetalleTurno.objects.all()
+    )
+
+
+class TechnicalRecordVersionedCommandSerializer(TechnicalRecordFieldsCommandSerializer):
+    version = serializers.IntegerField(min_value=1)
+
+
+class TechnicalRecordDraftCommandSerializer(TechnicalRecordVersionedCommandSerializer):
+    def validate(self, attrs):
+        if set(attrs) == {'version'}:
+            raise serializers.ValidationError({
+                'non_field_errors': ['Debe informar al menos un campo técnico.']
+            })
+        return attrs
+
+
+class TechnicalRecordCompleteCommandSerializer(
+    TechnicalRecordVersionedCommandSerializer
+):
+    pass
+
+
+class TechnicalRecordCorrectionCommandSerializer(
+    TechnicalRecordVersionedCommandSerializer
+):
+    motivo = serializers.CharField(
+        min_length=10,
+        max_length=2000,
+        trim_whitespace=True,
+    )
+
+    def validate(self, attrs):
+        if set(attrs) <= {'version', 'motivo'}:
+            raise serializers.ValidationError({
+                'non_field_errors': ['Debe informar al menos un campo a corregir.']
+            })
+        return attrs
+
+
+class CorreccionFichaTecnicaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CorreccionFichaTecnica
+        fields = [
+            'public_id', 'ficha', 'actor', 'motivo', 'version_anterior',
+            'version_nueva', 'campos', 'valores_anteriores',
+            'valores_nuevos', 'corregido_en',
+        ]
+        read_only_fields = fields
 
 """
 class PasoRutinaSerializer(serializers.ModelSerializer):
@@ -712,10 +752,17 @@ class PerfilTecnicoServicioSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'servicio', 'familia', 'familia_code',
             'estado_clasificacion', 'nivel_riesgo', 'activa',
+            'requisito_ficha', 'modo_formula_ficha',
+            'campos_requeridos_ficha',
         ]
         read_only_fields = ['id', 'familia_code']
 
     def validate(self, attrs):
+        from .technical_record_services import (
+            TechnicalRecordInvalid,
+            validate_required_fields_configuration,
+        )
+
         state = attrs.get(
             'estado_clasificacion',
             getattr(self.instance, 'estado_clasificacion', None),
@@ -731,6 +778,34 @@ class PerfilTecnicoServicioSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({
                 'nivel_riesgo': 'Un Servicio clasificado requiere nivel de riesgo.'
             })
+        requirement = attrs.get(
+            'requisito_ficha',
+            getattr(
+                self.instance,
+                'requisito_ficha',
+                PerfilTecnicoServicio.RequisitoFicha.PENDIENTE,
+            ),
+        )
+        formula_mode = attrs.get(
+            'modo_formula_ficha',
+            getattr(
+                self.instance,
+                'modo_formula_ficha',
+                PerfilTecnicoServicio.ModoFormulaFicha.PENDIENTE,
+            ),
+        )
+        fields = attrs.get(
+            'campos_requeridos_ficha',
+            getattr(self.instance, 'campos_requeridos_ficha', []),
+        )
+        try:
+            validate_required_fields_configuration(
+                requirement=requirement,
+                formula_mode=formula_mode,
+                fields=fields,
+            )
+        except TechnicalRecordInvalid as exc:
+            raise serializers.ValidationError({exc.field: exc.detail}) from exc
         return attrs
 
 

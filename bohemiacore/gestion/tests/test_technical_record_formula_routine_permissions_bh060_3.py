@@ -413,7 +413,10 @@ class TechnicalRecordFormulaRoutineAuthorizationTests(APITestCase):
 
         ficha.refresh_from_db()
         self.assertEqual(create_response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertEqual(update_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(
+            update_response.status_code,
+            status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
         self.assertEqual(ficha.observaciones_proceso, 'Histórico técnico')
 
     def test_record_update_preserves_author_detail_and_formula_permission(self):
@@ -442,8 +445,14 @@ class TechnicalRecordFormulaRoutineAuthorizationTests(APITestCase):
         )
 
         ficha.refresh_from_db()
-        self.assertEqual(formula_response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertEqual(spoof_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            formula_response.status_code,
+            status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+        self.assertEqual(
+            spoof_response.status_code,
+            status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
         self.assertEqual(ficha.formula, 'FÓRMULA 1')
         self.assertEqual(ficha.profesional_autor, actor)
         self.assertEqual(ficha.detalle_turno, self.detail)

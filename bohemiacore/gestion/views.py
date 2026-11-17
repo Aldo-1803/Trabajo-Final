@@ -78,7 +78,12 @@ from .serializers import (
     PagoSerializer, LegacyOrderPaymentCommandSerializer,
     ManualPaymentReconcileCommandSerializer,
     ManualPaymentRegisterCommandSerializer,
-    TipoEquipamientoSerializer, FichaTecnicaSerializer, RequisitoServicioSerializer,
+    TipoEquipamientoSerializer, FichaTecnicaSerializer,
+    TechnicalRecordCreateCommandSerializer,
+    TechnicalRecordDraftCommandSerializer,
+    TechnicalRecordCompleteCommandSerializer,
+    TechnicalRecordCorrectionCommandSerializer,
+    CorreccionFichaTecnicaSerializer, RequisitoServicioSerializer,
     DiagnosticoCapilarSerializer, CorreccionDiagnosticoCommandSerializer,
     CorreccionDiagnosticoCapilarSerializer,
     CategoriaProductoSerializer, PromocionSerializer, ConfiguracionSerializer, ConfiguracionRetoqueSummarySerializer,
@@ -257,6 +262,19 @@ from .hair_profile_services import (
     correct_diagnosis,
     create_professional_evaluation,
 )
+from .technical_record_services import (
+    TechnicalRecordConflict,
+    TechnicalRecordInvalid,
+    TechnicalRecordNotFound,
+    TechnicalRecordPermissionDenied,
+    can_read_turn_context,
+    complete_record,
+    correct_record,
+    create_draft,
+    save_draft,
+    technical_record_completion,
+    technical_record_policy,
+)
 from .turno_management_services import (
     CLIENT_CANCELLABLE_STATES,
     CLIENT_REPROGRAMMABLE_STATES,
@@ -329,6 +347,7 @@ from .effective_access import (
     active_personal_for_user,
     user_can_manage_content_globally,
     user_can_manage_service_formula,
+    user_can_manage_technical_record,
     user_can_read_global_technical_record,
 )
 from usuarios.access_services import (
@@ -4834,10 +4853,11 @@ class FichaTecnicaViewSet(viewsets.ModelViewSet):
     queryset = FichaTecnica.objects.select_related(
         'detalle_turno__turno__cliente__usuario',
         'detalle_turno__turno__profesional__usuario',
-        'detalle_turno__servicio',
+        'detalle_turno__servicio__perfil_tecnico',
         'profesional_autor',
+        'completada_por',
         'rutina_recomendada',
-    )
+    ).order_by('-fecha_registro', '-pk')
     serializer_class = FichaTecnicaSerializer
     permission_classes = [IsAuthenticated]
 
@@ -4847,8 +4867,14 @@ class FichaTecnicaViewSet(viewsets.ModelViewSet):
         'por_turno',
         'por_cliente',
         'mis_fichas',
+        'contexto_turno',
     }
-    WRITE_ACTIONS = {'create', 'update', 'partial_update'}
+    WRITE_ACTIONS = {
+        'create',
+        'guardar_borrador',
+        'completar',
+        'corregir',
+    }
 
     def get_permissions(self):
         if self.action in self.READ_ACTIONS:
@@ -4887,6 +4913,226 @@ class FichaTecnicaViewSet(viewsets.ModelViewSet):
 
     def destroy(self, request, *args, **kwargs):
         raise MethodNotAllowed(request.method)
+
+    def update(self, request, *args, **kwargs):
+        raise MethodNotAllowed(request.method)
+
+    def partial_update(self, request, *args, **kwargs):
+        raise MethodNotAllowed(request.method)
+
+    @staticmethod
+    def _technical_record_error_response(exc):
+        if isinstance(exc, TechnicalRecordPermissionDenied):
+            response_status = status.HTTP_403_FORBIDDEN
+        elif isinstance(exc, TechnicalRecordNotFound):
+            response_status = status.HTTP_404_NOT_FOUND
+        elif isinstance(exc, TechnicalRecordConflict):
+            response_status = status.HTTP_409_CONFLICT
+        else:
+            response_status = status.HTTP_400_BAD_REQUEST
+        return Response(
+            {'code': exc.code, 'detail': exc.detail, 'field': exc.field},
+            status=response_status,
+        )
+
+    def create(self, request, *args, **kwargs):
+        command = TechnicalRecordCreateCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        detail = command.validated_data.pop('detalle_turno')
+        try:
+            record = create_draft(
+                actor=request.user,
+                detail_id=detail.pk,
+                values=command.validated_data,
+            )
+        except (
+            TechnicalRecordInvalid,
+            TechnicalRecordConflict,
+            TechnicalRecordNotFound,
+            TechnicalRecordPermissionDenied,
+        ) as exc:
+            return self._technical_record_error_response(exc)
+        output = self.get_serializer(record)
+        return Response(output.data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='guardar-borrador')
+    def guardar_borrador(self, request, pk=None):
+        command = TechnicalRecordDraftCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        expected_version = command.validated_data.pop('version')
+        try:
+            result = save_draft(
+                actor=request.user,
+                record_id=pk,
+                expected_version=expected_version,
+                values=command.validated_data,
+            )
+        except (
+            TechnicalRecordInvalid,
+            TechnicalRecordConflict,
+            TechnicalRecordNotFound,
+            TechnicalRecordPermissionDenied,
+        ) as exc:
+            return self._technical_record_error_response(exc)
+        return Response(self.get_serializer(result.record).data)
+
+    @action(detail=True, methods=['post'])
+    def completar(self, request, pk=None):
+        command = TechnicalRecordCompleteCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        expected_version = command.validated_data.pop('version')
+        try:
+            result = complete_record(
+                actor=request.user,
+                record_id=pk,
+                expected_version=expected_version,
+                values=command.validated_data,
+            )
+        except (
+            TechnicalRecordInvalid,
+            TechnicalRecordConflict,
+            TechnicalRecordNotFound,
+            TechnicalRecordPermissionDenied,
+        ) as exc:
+            return self._technical_record_error_response(exc)
+        return Response(self.get_serializer(result.record).data)
+
+    @action(detail=True, methods=['post'])
+    def corregir(self, request, pk=None):
+        command = TechnicalRecordCorrectionCommandSerializer(data=request.data)
+        command.is_valid(raise_exception=True)
+        expected_version = command.validated_data.pop('version')
+        reason = command.validated_data.pop('motivo')
+        try:
+            result = correct_record(
+                actor=request.user,
+                record_id=pk,
+                expected_version=expected_version,
+                reason=reason,
+                values=command.validated_data,
+            )
+        except (
+            TechnicalRecordInvalid,
+            TechnicalRecordConflict,
+            TechnicalRecordNotFound,
+            TechnicalRecordPermissionDenied,
+        ) as exc:
+            return self._technical_record_error_response(exc)
+        return Response({
+            'ficha': self.get_serializer(result.record).data,
+            'correccion': CorreccionFichaTecnicaSerializer(
+                result.correction
+            ).data,
+        })
+
+    @action(detail=False, methods=['get'], url_path='contexto-turno')
+    def contexto_turno(self, request):
+        turno_id = request.query_params.get('turno_id')
+        if not turno_id:
+            return Response(
+                {'detail': 'Se requiere turno_id.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            turno = Turno.objects.select_related(
+                'cliente__usuario', 'profesional__usuario'
+            ).prefetch_related(
+                'detalles__servicio__perfil_tecnico'
+            ).get(pk=turno_id)
+        except (Turno.DoesNotExist, ValueError):
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        if not can_read_turn_context(actor=request.user, turno=turno):
+            raise PermissionDenied(
+                'No puede consultar el contexto técnico de este Turno.'
+            )
+
+        details = list(turno.detalles.all().order_by('pk'))
+        records = {
+            record.detalle_turno_id: record
+            for record in self.queryset.filter(
+                detalle_turno_id__in=[detail.pk for detail in details]
+            )
+        }
+        personal = getattr(request.user, 'perfil_profesional', None)
+        can_manage = bool(
+            user_can_manage_technical_record(request.user)
+            and personal is not None
+            and turno.profesional_id == personal.pk
+            and turno.estado in {
+                Turno.Estado.CONFIRMADO,
+                Turno.Estado.EN_PROCESO,
+            }
+        )
+        can_formula = user_can_manage_service_formula(request.user)
+        items = []
+        for detail in details:
+            policy = technical_record_policy(detail.servicio)
+            record = records.get(detail.pk)
+            errors = []
+            if record is not None:
+                _, errors = technical_record_completion(record)
+            item = {
+                'detalle_turno_id': detail.pk,
+                'servicio_id': detail.servicio_id,
+                'servicio_nombre': detail.servicio.nombre,
+                'politica': {
+                    'estado': policy.status,
+                    'motivo_pendiente': policy.reason,
+                    'ficha_requerida': (
+                        policy.record_required if policy.defined else None
+                    ),
+                    'modo_formula': policy.formula_mode,
+                    'campos_requeridos': list(policy.required_fields),
+                },
+                'ficha': (
+                    self.get_serializer(record).data
+                    if record is not None
+                    else None
+                ),
+                'completion_errors': errors,
+                'restricciones_edicion': {
+                    'puede_crear_borrador': can_manage and record is None,
+                    'puede_guardar_borrador': bool(
+                        can_manage
+                        and record is not None
+                        and record.estado == FichaTecnica.Estado.BORRADOR
+                    ),
+                    'puede_completar': bool(
+                        can_manage
+                        and policy.defined
+                        and record is not None
+                        and record.estado == FichaTecnica.Estado.BORRADOR
+                    ),
+                    'puede_corregir': bool(
+                        can_manage
+                        and record is not None
+                        and record.estado == FichaTecnica.Estado.COMPLETA
+                    ),
+                    'correccion_post_finalizacion': (
+                        'PENDIENTE_NO_PERMITIDA'
+                        if turno.estado == Turno.Estado.REALIZADO
+                        else 'NO_APLICA'
+                    ),
+                },
+            }
+            if (
+                can_formula
+                and policy.formula_mode
+                in {
+                    PerfilTecnicoServicio.ModoFormulaFicha.OPCIONAL,
+                    PerfilTecnicoServicio.ModoFormulaFicha.REQUERIDA,
+                }
+            ):
+                item['formula_estandar_catalogo'] = (
+                    detail.servicio.plantilla_formula or None
+                )
+            items.append(item)
+        return Response({
+            'turno_id': turno.pk,
+            'turno_estado': turno.estado,
+            'cliente_id': turno.cliente_id,
+            'detalles': items,
+        })
     
     @action(detail=False, methods=['get'])
     def por_turno(self, request):

@@ -13,6 +13,8 @@ from .models import (
     AgendaCuidados,
     Auditoria,
     ConfiguracionRetoque,
+    DetalleTurno,
+    FichaTecnica,
     FinalizacionTurno,
     Notificacion,
     Promocion,
@@ -20,6 +22,10 @@ from .models import (
     Turno,
 )
 from .routine_services import ensure_internal_routine_assignment
+from .technical_record_services import (
+    TechnicalRecordInvalid,
+    finalization_record_status,
+)
 
 
 TURN_FINALIZED_EVENT = 'TURN_FINALIZED'
@@ -339,12 +345,36 @@ def finalize_turno(*, actor, turno_id, idempotency_key=''):
 
     previous_state = turno.estado
     details = list(
-        turno.detalles.select_related(
+        DetalleTurno.objects.select_for_update(of=('self',)).filter(
+            turno=turno
+        ).select_related(
             'servicio__rutina_recomendada',
             'servicio__impacto_porosidad',
             'servicio__impacto_estado',
+            'servicio__perfil_tecnico',
         ).order_by('pk')
     )
+    records_by_detail = {
+        record.detalle_turno_id: record
+        for record in FichaTecnica.objects.select_for_update(
+            of=('self',)
+        ).filter(
+            detalle_turno_id__in=[detail.pk for detail in details]
+        ).select_related(
+            'detalle_turno__servicio__perfil_tecnico'
+        ).order_by('pk')
+    }
+    try:
+        technical_record_statuses = finalization_record_status(
+            details=details,
+            records_by_detail=records_by_detail,
+        )
+    except TechnicalRecordInvalid as exc:
+        raise TurnoFinalizationInvalid(
+            exc.detail,
+            code=exc.code,
+            field=exc.field,
+        ) from exc
 
     turno.estado = Turno.Estado.REALIZADO
     turno.save(update_fields=['estado'])
@@ -365,6 +395,7 @@ def finalize_turno(*, actor, turno_id, idempotency_key=''):
     promotion_ids = _create_promotions(turno, details)
     effects = {
         'automatic_diagnosis_ids': [],
+        'technical_records': technical_record_statuses,
         'profile': profile_effect,
         **care_effects,
         'final_notification_id': final_notification.pk,

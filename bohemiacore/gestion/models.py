@@ -348,6 +348,17 @@ class PerfilTecnicoServicio(models.Model):
         MEDIO = 'MEDIO', 'Medio'
         ALTO = 'ALTO', 'Alto'
 
+    class RequisitoFicha(models.TextChoices):
+        PENDIENTE = 'PENDIENTE', 'Definición pendiente'
+        NO_REQUERIDA = 'NO_REQUERIDA', 'No requerida para finalizar'
+        REQUERIDA = 'REQUERIDA', 'Requerida para finalizar'
+
+    class ModoFormulaFicha(models.TextChoices):
+        PENDIENTE = 'PENDIENTE', 'Definición pendiente'
+        NO_APLICA = 'NO_APLICA', 'No aplica'
+        OPCIONAL = 'OPCIONAL', 'Opcional'
+        REQUERIDA = 'REQUERIDA', 'Requerida'
+
     servicio = models.OneToOneField(
         Servicio,
         on_delete=models.CASCADE,
@@ -371,6 +382,29 @@ class PerfilTecnicoServicio(models.Model):
         default=NivelRiesgo.NO_DEFINIDO,
     )
     activa = models.BooleanField(default=True)
+    requisito_ficha = models.CharField(
+        max_length=20,
+        choices=RequisitoFicha.choices,
+        default=RequisitoFicha.PENDIENTE,
+        help_text=(
+            'Política explícita de ficha para finalizar. PENDIENTE conserva '
+            'el comportamiento previo sin declarar completitud.'
+        ),
+    )
+    modo_formula_ficha = models.CharField(
+        max_length=20,
+        choices=ModoFormulaFicha.choices,
+        default=ModoFormulaFicha.PENDIENTE,
+        help_text='Aplicabilidad explícita de fórmula en la ficha.',
+    )
+    campos_requeridos_ficha = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=(
+            'Campos no químicos requeridos para completar la ficha. La fórmula '
+            'se configura mediante modo_formula_ficha.'
+        ),
+    )
 
     class Meta:
         verbose_name = 'Perfil técnico de Servicio'
@@ -1963,6 +1997,10 @@ class DetalleTurno(models.Model):
     
 
 class FichaTecnica(models.Model):
+    class Estado(models.TextChoices):
+        BORRADOR = 'BORRADOR', 'Borrador'
+        COMPLETA = 'COMPLETA', 'Completa'
+
     # Relación 1:1 con el detalle del servicio realizado
     # Esto asegura que cada servicio de un turno pueda tener su propia fórmula
     detalle_turno = models.OneToOneField(
@@ -1974,13 +2012,28 @@ class FichaTecnica(models.Model):
     # Profesional que realizó la anotación técnica
     profesional_autor = models.ForeignKey(
         'usuarios.Usuario',
-        on_delete=models.SET_NULL,
+        on_delete=models.PROTECT,
         null=True,
         related_name='fichas_redactadas'
+    )
+    completada_por = models.ForeignKey(
+        'usuarios.Usuario',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='fichas_tecnicas_completadas',
     )
     
     # NUEVO: Campos granulares según tu análisis
     formula = models.TextField(blank=True, null=True)  # Aquí se guarda la fórmula ajustada
+    formula_estandar_referencia = models.TextField(
+        blank=True,
+        null=True,
+        help_text=(
+            'Snapshot de la fórmula estándar al crear la ficha; no equivale '
+            'a la fórmula efectivamente utilizada.'
+        ),
+    )
     observaciones_proceso = models.TextField(blank=True, null=True)
     comentario_cliente = models.TextField(blank=True, null=True)
     rutina_recomendada = models.ForeignKey(
@@ -2013,7 +2066,17 @@ class FichaTecnica(models.Model):
     
     resultado_post_servicio = models.TextField(blank=True, null=True)
     foto_resultado = models.ImageField(upload_to='fichas_tecnicas/', null=True, blank=True)
+    estado = models.CharField(
+        max_length=20,
+        choices=Estado.choices,
+        default=Estado.BORRADOR,
+    )
+    version = models.PositiveIntegerField(default=1)
     fecha_registro = models.DateTimeField(auto_now_add=True)
+    actualizada_en = models.DateTimeField(auto_now=True)
+    completada_en = models.DateTimeField(null=True, blank=True)
+
+    history = HistoricalRecords()
 
     class Meta:
         verbose_name = "Ficha Técnica"
@@ -2022,6 +2085,42 @@ class FichaTecnica(models.Model):
             ('manage_technical_record', 'Can manage technical records'),
             ('manage_formulas', 'Can manage formulas'),
         ]
+
+
+class CorreccionFichaTecnica(models.Model):
+    """Evento inmutable de corrección de una ficha completa."""
+
+    public_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    ficha = models.ForeignKey(
+        FichaTecnica,
+        on_delete=models.PROTECT,
+        related_name='correcciones_trazables',
+    )
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='correcciones_ficha_tecnica_realizadas',
+    )
+    motivo = models.TextField()
+    version_anterior = models.PositiveIntegerField()
+    version_nueva = models.PositiveIntegerField()
+    campos = models.JSONField(default=list)
+    valores_anteriores = models.JSONField(default=dict)
+    valores_nuevos = models.JSONField(default=dict)
+    corregido_en = models.DateTimeField(default=timezone.now, editable=False)
+
+    class Meta:
+        ordering = ['-corregido_en', '-pk']
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError('Una corrección de ficha persistida es inmutable.')
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError(
+            'Una corrección de ficha persistida no puede eliminarse.'
+        )
 
 
 class ListaEspera(models.Model):
