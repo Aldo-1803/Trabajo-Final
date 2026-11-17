@@ -1951,6 +1951,13 @@ class FinalizacionTurno(models.Model):
     command_fingerprint = models.CharField(max_length=64)
     estado_anterior = models.CharField(max_length=20)
     estado_final = models.CharField(max_length=20)
+    parametros_snapshot = models.JSONField(
+        default=dict,
+        help_text=(
+            'Snapshot inmutable de reglas y parámetros usados para producir '
+            'los efectos de esta finalización.'
+        ),
+    )
     efectos = models.JSONField(default=dict)
     finalizado_en = models.DateTimeField(default=timezone.now, editable=False)
 
@@ -1994,6 +2001,106 @@ class DetalleTurno(models.Model):
 
     def __str__(self):
         return f"{self.servicio.nombre} - Turno ID: {self.turno.id}"
+
+
+class EfectoFinalizacion(models.Model):
+    """Identidad causal inmutable de un efecto derivado de una finalización."""
+
+    class Tipo(models.TextChoices):
+        IMPACTO_PERFIL = 'IMPACTO_PERFIL', 'Impacto de perfil capilar'
+        CUIDADO_AGENDA = 'CUIDADO_AGENDA', 'Ítem de agenda de cuidados'
+        NOTIFICACION_CUIDADO = (
+            'NOTIFICACION_CUIDADO',
+            'Notificación de regla de cuidado',
+        )
+        ASIGNACION_RUTINA = 'ASIGNACION_RUTINA', 'Asignación de rutina'
+        NOTIFICACION_FINAL = 'NOTIFICACION_FINAL', 'Notificación de finalización'
+        PROMOCION_RETOQUE = 'PROMOCION_RETOQUE', 'Promoción de retoque'
+        DIAGNOSTICO_AUTOMATICO = (
+            'DIAGNOSTICO_AUTOMATICO',
+            'Diagnóstico automático post-servicio',
+        )
+        AUDITORIA = 'AUDITORIA', 'Auditoría semántica'
+
+    class Estado(models.TextChoices):
+        COMPLETADO = 'COMPLETADO', 'Completado'
+        OMITIDO = 'OMITIDO', 'Omitido por política'
+        PENDIENTE = 'PENDIENTE', 'Pendiente'
+        FALLIDO = 'FALLIDO', 'Fallido'
+
+    finalizacion = models.ForeignKey(
+        FinalizacionTurno,
+        on_delete=models.PROTECT,
+        related_name='efectos_trazables',
+    )
+    tipo = models.CharField(max_length=40, choices=Tipo.choices)
+    estado = models.CharField(max_length=20, choices=Estado.choices)
+    clave_logica = models.CharField(max_length=255)
+    detalle_turno = models.ForeignKey(
+        DetalleTurno,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='efectos_finalizacion',
+    )
+    servicio = models.ForeignKey(
+        Servicio,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='efectos_finalizacion',
+    )
+    regla_cuidado = models.ForeignKey(
+        ReglaCuidado,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='efectos_finalizacion',
+    )
+    rutina = models.ForeignKey(
+        Rutina,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='efectos_finalizacion',
+    )
+    configuracion_retoque = models.ForeignKey(
+        ConfiguracionRetoque,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='efectos_finalizacion',
+    )
+    parametros_snapshot = models.JSONField(default=dict)
+    resultado = models.JSONField(default=dict)
+    creado_en = models.DateTimeField(default=timezone.now, editable=False)
+
+    class Meta:
+        ordering = ['pk']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['finalizacion', 'clave_logica'],
+                name='unique_finalization_effect_logical_key',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['finalizacion', 'tipo', 'estado'],
+                name='final_effect_type_state_idx',
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError(
+                'Un efecto de finalización persistido es inmutable.'
+            )
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError(
+            'Un efecto de finalización persistido no puede eliminarse.'
+        )
     
 
 class FichaTecnica(models.Model):

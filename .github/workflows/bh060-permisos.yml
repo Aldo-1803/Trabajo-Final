@@ -100,7 +100,7 @@ jobs:
               gestion.tests.test_technical_risk_profiles
           - block: B3
             name: agenda, turnos y CU-27
-            expected: 176
+            expected: 192
             timeout: 25
             database: test_bohemia_hair_ci_b3
             labels: >-
@@ -114,6 +114,7 @@ jobs:
               gestion.tests.test_turno_read_authorization_api
               gestion.tests.test_turno_skill_compatibility
               gestion.tests.test_turno_finalization_increment0.TurnoFinalizationApiTests
+              gestion.tests.test_finalization_effects_increment3
               gestion.tests.test_residual_authorization_closure_bh060_f1.ResidualAuthorizationClosureBh060F1Tests.test_anonymous_cannot_read_or_mutate_any_closed_surface
               gestion.tests.test_residual_authorization_closure_bh060_f1.ResidualAuthorizationClosureBh060F1Tests.test_client_staff_and_inactive_grants_have_zero_authority
               gestion.tests.test_residual_authorization_closure_bh060_f1.ResidualAuthorizationClosureBh060F1Tests.test_employee_and_professional_have_schedule_read_only

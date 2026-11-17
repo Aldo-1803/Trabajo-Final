@@ -18,6 +18,7 @@ from gestion.models import (
     DetalleTurno,
     DiagnosticoCapilar,
     EstadoGeneral,
+    EfectoFinalizacion,
     FinalizacionTurno,
     Habilidad,
     Notificacion,
@@ -293,7 +294,7 @@ class TurnoFinalizationApiTests(APITestCase):
         turno = self.create_turno()
 
         with patch(
-            'gestion.turno_finalization_services.Notificacion.objects.create',
+            'gestion.finalization_effect_services.Notificacion.objects.create',
             side_effect=RuntimeError('notification storage unavailable'),
         ):
             with self.assertRaises(RuntimeError):
@@ -308,6 +309,7 @@ class TurnoFinalizationApiTests(APITestCase):
         turno.refresh_from_db()
         self.assertEqual(turno.estado, Turno.Estado.CONFIRMADO)
         self.assertFalse(FinalizacionTurno.objects.filter(turno=turno).exists())
+        self.assertFalse(EfectoFinalizacion.objects.exists())
         self.assertFalse(Notificacion.objects.filter(origen_id=turno.pk).exists())
 
     def test_retry_does_not_duplicate_routine_notifications_or_promotion(self):
@@ -549,6 +551,14 @@ class TurnoFinalizationConcurrencyTests(TransactionTestCase):
             [False, True],
         )
         self.assertEqual(FinalizacionTurno.objects.filter(turno=self.turno).count(), 1)
+        finalization = FinalizacionTurno.objects.get(turno=self.turno)
+        self.assertEqual(
+            EfectoFinalizacion.objects.filter(
+                finalizacion=finalization,
+                tipo=EfectoFinalizacion.Tipo.NOTIFICACION_FINAL,
+            ).count(),
+            1,
+        )
         self.assertEqual(
             Notificacion.objects.filter(
                 origen_entidad='Turno',
