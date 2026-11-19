@@ -144,7 +144,7 @@ tareas nuevas.
 ### [Generales](generales/)
 
 Análisis e impactos transversales sobre flujos, permisos, sesiones y acceso de
-Personal, además de la auditoría integral del proyecto. Contiene 16 documentos.
+Personal, además de la auditoría integral del proyecto. Contiene 17 documentos.
 
 Documentos principales:
 
@@ -158,5 +158,6 @@ Documentos principales:
 - [Flujos profesionales, Incremento 2: fichas técnicas trazables](generales/IMPLEMENTACION_FLUJOS_PROFESIONALES_2_FICHAS_TECNICAS.md)
 - [Flujos profesionales, Incremento 3: automatizaciones trazables](generales/IMPLEMENTACION_FLUJOS_PROFESIONALES_3_AUTOMATIZACIONES.md)
 - [Flujos profesionales, Incremento 4: interfaz profesional React](generales/IMPLEMENTACION_FLUJOS_PROFESIONALES_4_UI_REACT.md)
+- [Flujos profesionales, Incremento 5: compatibilidad presencial](generales/IMPLEMENTACION_FLUJOS_PROFESIONALES_5_COMPATIBILIDAD_PRESENCIAL.md)
 - [Roles y permisos](generales/ANALISIS_ROLES_PERMISOS.md)
 - [Gestión de acceso de Personal](generales/IMPACTO_GESTION_ACCESO_PERSONAL.md)
