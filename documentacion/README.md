@@ -144,7 +144,11 @@ tareas nuevas.
 ### [Generales](generales/)
 
 Análisis e impactos transversales sobre flujos, permisos, sesiones y acceso de
-Personal, además de la auditoría integral del proyecto. Contiene 17 documentos.
+Personal, además de la auditoría integral del proyecto. Contiene 18 documentos.
+
+`FLUJOS PROFESIONALES 0–5 = CERRADOS TÉCNICAMENTE`. Este trabajo complementario
+es posterior al cierre histórico de BH-062 y no modifica retroactivamente su
+alcance, auditoría ni clasificación.
 
 Documentos principales:
 
@@ -159,5 +163,36 @@ Documentos principales:
 - [Flujos profesionales, Incremento 3: automatizaciones trazables](generales/IMPLEMENTACION_FLUJOS_PROFESIONALES_3_AUTOMATIZACIONES.md)
 - [Flujos profesionales, Incremento 4: interfaz profesional React](generales/IMPLEMENTACION_FLUJOS_PROFESIONALES_4_UI_REACT.md)
 - [Flujos profesionales, Incremento 5: compatibilidad presencial](generales/IMPLEMENTACION_FLUJOS_PROFESIONALES_5_COMPATIBILIDAD_PRESENCIAL.md)
+- [Auditoría independiente de flujos profesionales, Incrementos 0–5](generales/AUDITORIA_FLUJOS_PROFESIONALES_INCREMENTOS_0_5.md)
 - [Roles y permisos](generales/ANALISIS_ROLES_PERMISOS.md)
 - [Gestión de acceso de Personal](generales/IMPACTO_GESTION_ACCESO_PERSONAL.md)
+
+El cierre conserva como riesgos no resueltos R-01 a R-07 de la auditoría:
+
+- **R-01:** `EN_PROCESO` admite edición de ficha, pero no finalización;
+- **R-02:** la creación asistida queda en `SOLICITADO` sin orquestación integral
+  del evaluador técnico;
+- **R-03:** React no proyecta toda la evidencia de riesgo y conserva mensajes
+  genéricos en algunos casos de sólo lectura;
+- **R-04:** sigue pendiente la política capilar multiservicio;
+- **R-05:** no existe recuperación automática ante corrupción manual del
+  ledger;
+- **R-06:** los datos anteriores a los ledgers mantienen procedencia histórica
+  desconocida cuando no existe evidencia;
+- **R-07:** permanecen warnings históricos y no se ejecutó navegador E2E.
+
+Continuidad oficial pendiente:
+
+- **BH-063 — Turnos asistidos/presenciales:** deberá resolver la transición
+  autorizada hasta `CONFIRMADO`, el evaluador técnico moderno, disponibilidad,
+  concurrencia e idempotencia de creación, conservando compatibilidad con el
+  recorrido técnico publicado;
+- **BH-064 — Alta rápida de cliente presencial:** deberá definir un alta básica
+  idempotente sin diagnóstico universal y entregar la identidad mínima de
+  Cliente requerida por BH-063.
+
+El registro externo de backlog debe verificarse y actualizarse manualmente, sin
+crear un sustituto de `BACKLOH.xlsx`: BH-062 conserva su cierre histórico, los
+flujos profesionales 0–5 se registran como trabajo posterior cerrado y BH-063 y
+BH-064 permanecen pendientes. Las autoevaluaciones periódicas continúan siendo
+una propuesta no analizada ni implementada.
