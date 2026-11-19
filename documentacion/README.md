@@ -126,12 +126,13 @@ corresponden a:
 - anticipación de condiciones técnicas en esas pantallas ausentes;
 - pruebas React integradas de esos tres flujos no publicados.
 
-Pendientes funcionales separados del cierre de BH-062:
+El recorrido profesional de diagnóstico, fichas y finalización fue integrado
+posteriormente como trabajo complementario en el Incremento 4 de flujos
+profesionales enlazado en la documentación general. La auditoría BH-062 conserva
+su resultado histórico y no se reescribe retroactivamente.
 
-- integración profesional de diagnóstico y corrección del perfil capilar;
-- integración segura de fichas técnicas;
-- endurecimiento e integración de finalización de servicios;
-- análisis de la relación funcional de esos procesos con BH-063 y BH-064.
+Pendiente funcional separado de ambos cierres: analizar la relación de estos
+procesos con BH-063 y BH-064 sin anticipar sus políticas.
 
 El seguimiento capilar basado en autoevaluaciones periódicas permanece como una
 propuesta funcional no analizada ni implementada. Este cierre no modifica el
@@ -143,7 +144,7 @@ tareas nuevas.
 ### [Generales](generales/)
 
 Análisis e impactos transversales sobre flujos, permisos, sesiones y acceso de
-Personal, además de la auditoría integral del proyecto. Contiene 15 documentos.
+Personal, además de la auditoría integral del proyecto. Contiene 16 documentos.
 
 Documentos principales:
 
@@ -156,5 +157,6 @@ Documentos principales:
 - [Flujos profesionales, Incremento 1: perfil y evaluaciones trazables](generales/IMPLEMENTACION_FLUJOS_PROFESIONALES_1_PERFIL_EVALUACIONES.md)
 - [Flujos profesionales, Incremento 2: fichas técnicas trazables](generales/IMPLEMENTACION_FLUJOS_PROFESIONALES_2_FICHAS_TECNICAS.md)
 - [Flujos profesionales, Incremento 3: automatizaciones trazables](generales/IMPLEMENTACION_FLUJOS_PROFESIONALES_3_AUTOMATIZACIONES.md)
+- [Flujos profesionales, Incremento 4: interfaz profesional React](generales/IMPLEMENTACION_FLUJOS_PROFESIONALES_4_UI_REACT.md)
 - [Roles y permisos](generales/ANALISIS_ROLES_PERMISOS.md)
 - [Gestión de acceso de Personal](generales/IMPACTO_GESTION_ACCESO_PERSONAL.md)

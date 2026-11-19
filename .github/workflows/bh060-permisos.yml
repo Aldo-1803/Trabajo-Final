@@ -82,12 +82,13 @@ jobs:
               gestion.tests.test_audit_middleware
           - block: B2
             name: diagnóstico, ficha y rutinas
-            expected: 206
+            expected: 216
             timeout: 20
             database: test_bohemia_hair_ci_b2
             labels: >-
               gestion.tests.test_diagnosis_authorization_api
               gestion.tests.test_hair_profile_evaluations_increment1.HairProfileEvaluationApiTests
+              gestion.tests.test_professional_workflow_context_increment4
               gestion.tests.test_skills_api
               gestion.tests.test_skills_migration
               gestion.tests.test_technical_record_formula_routine_permissions_bh060_3
@@ -439,7 +440,7 @@ jobs:
             echo
             echo '| Bloque | Tests esperados | Jest | Build | Duración | Referencia |'
             echo '|---|---:|---|---|---:|---|'
-            echo "| Frontend | 289 | ${tests} | ${build} | ${duration} s | [run ${GITHUB_RUN_ID}](https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) / job ${GITHUB_JOB} |"
+            echo "| Frontend | 438 | ${tests} | ${build} | ${duration} s | [run ${GITHUB_RUN_ID}](https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) / job ${GITHUB_JOB} |"
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Guardar logs de fallo frontend

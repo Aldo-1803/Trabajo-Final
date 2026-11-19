@@ -17,6 +17,7 @@ import RecuperarContrasena from '../pages/auth/RecuperarContrasena';
 import ResetearClave from '../pages/auth/ResetearClave';
 import Operaciones from '../pages/session/Operaciones';
 import MiAgendaLaboral from '../pages/session/MiAgendaLaboral';
+import TrabajoTecnicoTurno from '../pages/session/TrabajoTecnicoTurno';
 import CuentaSinAcceso from '../pages/session/CuentaSinAcceso';
 import ErrorAcceso from '../pages/session/ErrorAcceso';
 import AccesoDenegado from '../pages/session/AccesoDenegado';
@@ -79,6 +80,7 @@ import {
     OPERATIONS_PERMISSIONS,
     PERSONAL_MANAGEMENT_PERMISSIONS,
     PRODUCT_PERMISSIONS,
+    PROFESSIONAL_WORKFLOW_CAPABILITY,
     REPORT_PERMISSIONS,
     SERVICE_ACCESS
 } from '../utils/accessRules';
@@ -103,6 +105,7 @@ export const AppRoutes = () => {
                 {/* Session landing routes */}
                 <Route path={SESSION_ROUTES.OPERACIONES} element={<ProtectedRoute requiredAnyPermission={OPERATIONS_PERMISSIONS}><Operaciones /></ProtectedRoute>} />
                 <Route path={SESSION_ROUTES.MI_AGENDA_LABORAL} element={<ProtectedRoute requiredActiveProfile="personal"><MiAgendaLaboral /></ProtectedRoute>} />
+                <Route path={SESSION_ROUTES.TRABAJO_TECNICO_TURNO} element={<ProtectedRoute requiredActiveProfile="personal" requiredCapability={PROFESSIONAL_WORKFLOW_CAPABILITY}><TrabajoTecnicoTurno /></ProtectedRoute>} />
                 <Route path={SESSION_ROUTES.REVISION_TECNICA} element={<ProtectedRoute requiredCapability="technical_booking.review"><RevisionTecnica /></ProtectedRoute>} />
                 <Route path={SESSION_ROUTES.CUENTA_SIN_ACCESO} element={<CuentaSinAcceso />} />
                 <Route path={SESSION_ROUTES.ERROR_ACCESO} element={<ErrorAcceso />} />

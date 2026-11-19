@@ -10,6 +10,7 @@ export const AUTH_ROUTES = {
 export const SESSION_ROUTES = {
     OPERACIONES: '/operaciones',
     MI_AGENDA_LABORAL: '/mi-agenda-laboral',
+    TRABAJO_TECNICO_TURNO: '/turnos/:turnoId/trabajo-tecnico',
     REVISION_TECNICA: '/revision-tecnica',
   CUENTA_SIN_ACCESO: '/cuenta-sin-acceso',
   ERROR_ACCESO: '/error-acceso',

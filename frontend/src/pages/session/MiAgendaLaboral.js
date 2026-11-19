@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import axios from 'axios';
+import { Link } from 'react-router-dom';
 
 import TurnoSemanticActions from '../../components/TurnoSemanticActions';
 import { useSession } from '../../context/SessionContext';
@@ -9,7 +10,7 @@ const TURNOS_URL = 'http://127.0.0.1:8000/api/gestion/turnos/';
 
 
 const MiAgendaLaboral = () => {
-    const { loading, hasPermission } = useSession();
+    const { loading, hasPermission, hasCapability, profiles } = useSession();
     const [turnos, setTurnos] = useState([]);
     const [loadingTurnos, setLoadingTurnos] = useState(false);
     const [error, setError] = useState('');
@@ -18,6 +19,9 @@ const MiAgendaLaboral = () => {
     const canRegisterArrival = hasPermission('gestion.register_arrival');
     const canReprogram = hasPermission('gestion.reprogram_any_turno');
     const canCancel = hasPermission('gestion.cancel_any_turno');
+    const canOpenTechnicalWorkflow = hasCapability?.(
+        'technical_record.read_global'
+    ) === true;
 
     const loadAgenda = useCallback(async () => {
         setLoadingTurnos(true);
@@ -92,6 +96,12 @@ const MiAgendaLaboral = () => {
                                             </button>
                                         )}
                                         <TurnoSemanticActions turno={turno} canReprogram={canReprogram} canCancel={canCancel} onCompleted={loadAgenda} onError={setError} />
+                                        {canOpenTechnicalWorkflow
+                                            && turno.profesional === profiles?.personal?.id && (
+                                            <Link to={`/turnos/${turno.id}/trabajo-tecnico`} className="text-sm font-semibold text-rose-700 hover:underline">
+                                                Trabajo técnico
+                                            </Link>
+                                        )}
                                     </div>
                                 </li>
                             ))}

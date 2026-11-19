@@ -198,6 +198,38 @@ describe('ProtectedRoute declarativo con acceso por URL directa', () => {
         expectRedirect('/acceso-denegado');
     });
 
+    test('Personal activo con capability entra por URL al trabajo técnico', () => {
+        renderDirectUrl('/turnos/44/trabajo-tecnico', {
+            requiredActiveProfile: 'personal',
+            requiredCapability: 'technical_record.read_global'
+        }, {
+            personalProfile: true,
+            personalActive: true,
+            capabilities: {'technical_record.read_global': true}
+        });
+
+        expect(screen.getByText('Contenido protegido')).toBeInTheDocument();
+    });
+
+    test('3. capability ausente no monta ni consulta trabajo técnico por URL', () => {
+        useSession.mockReturnValue(sessionContext({
+            personalProfile: true,
+            personalActive: true
+        }));
+
+        render(
+            <ProtectedRoute
+                requiredActiveProfile="personal"
+                requiredCapability="technical_record.read_global"
+            >
+                <FetchingProtectedContent />
+            </ProtectedRoute>
+        );
+
+        expectRedirect('/acceso-denegado');
+        expect(protectedFetch).not.toHaveBeenCalled();
+    });
+
     test('Cliente sin perfil Personal no entra a mi agenda laboral', () => {
         renderDirectUrl('/mi-agenda-laboral', {
             requiredActiveProfile: 'personal'

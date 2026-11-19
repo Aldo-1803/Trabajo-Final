@@ -23,7 +23,9 @@ const sessionContext = ({
     businessRole = 'EMPLEADO',
     permissions = [],
     isStaff = false,
-    personalActive = false
+    personalActive = false,
+    personalId = 14,
+    capabilities = {}
 } = {}) => ({
     user: {
         first_name: 'Ana',
@@ -34,7 +36,9 @@ const sessionContext = ({
     permissions,
     loading: false,
     hasPermission: (permission) => permissions.includes(permission),
-    hasActiveProfile: (profile) => profile === 'personal' && personalActive
+    hasCapability: (capability) => capabilities[capability] === true,
+    hasActiveProfile: (profile) => profile === 'personal' && personalActive,
+    profiles: { personal: { id: personalId, active: personalActive } }
 });
 
 
@@ -50,7 +54,8 @@ const confirmedTurno = {
     cliente_nombre: 'Ana Pérez',
     servicio_nombre: 'Corte',
     hora_inicio: '10:00:00',
-    estado: 'confirmado'
+    estado: 'confirmado',
+    profesional: 14
 };
 
 const TEST_NOW = new Date('2026-06-15T15:00:00-05:00');
@@ -373,5 +378,26 @@ describe('Operaciones por permisos efectivos', () => {
         expect(await screen.findByText('Estado: cancelado')).toBeInTheDocument();
         expect(screen.getByText('Turno cancelado correctamente.')).toBeInTheDocument();
         expect(axios.patch).not.toHaveBeenCalled();
+    });
+
+    test('Operaciones muestra trabajo técnico sólo para el Turno propio', async () => {
+        axios.get.mockResolvedValue({
+            data: [confirmedTurno, {
+                ...confirmedTurno,
+                id: 11,
+                cliente_nombre: 'Cliente ajeno',
+                profesional: 99
+            }]
+        });
+        renderOperations({
+            permissions: ['gestion.view_global_agenda'],
+            personalActive: true,
+            capabilities: {'technical_record.read_global': true}
+        });
+
+        expect(await screen.findByRole('link', { name: 'Trabajo técnico' }))
+            .toHaveAttribute('href', '/turnos/10/trabajo-tecnico');
+        expect(screen.getAllByText('Cliente ajeno')).toHaveLength(1);
+        expect(screen.getAllByRole('link', { name: 'Trabajo técnico' })).toHaveLength(1);
     });
 });

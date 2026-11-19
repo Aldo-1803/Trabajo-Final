@@ -42,7 +42,7 @@ from .models import (
     FamiliaProcesoTecnico, PerfilTecnicoServicio, PoliticaRiesgoTecnico,
     ReglaIntervaloTecnico, ReglaDiagnosticoTecnico, ReglaFrecuenciaTecnica,
     PaymentIntent, SlotHold, SolicitudTecnicaReserva, MovimientoStock,
-    ProviderPaymentAttempt,
+    ProviderPaymentAttempt, VigenciaCampoPerfilCapilar, FinalizacionTurno,
     #PasoRutinaCliente
     #PasoRutina
 )
@@ -271,6 +271,7 @@ from .technical_record_services import (
     complete_record,
     correct_record,
     create_draft,
+    inspect_finalization_record_status,
     save_draft,
     technical_record_completion,
     technical_record_policy,
@@ -345,6 +346,7 @@ from .personal_skill_services import (
 from .service_skill_compatibility import service_skill_policy
 from .effective_access import (
     active_personal_for_user,
+    user_can_create_diagnosis,
     user_can_manage_content_globally,
     user_can_manage_service_formula,
     user_can_manage_technical_record,
@@ -5054,8 +5056,11 @@ class FichaTecnicaViewSet(viewsets.ModelViewSet):
             )
         }
         personal = getattr(request.user, 'perfil_profesional', None)
+        has_technical_capability = user_can_manage_technical_record(
+            request.user
+        )
         can_manage = bool(
-            user_can_manage_technical_record(request.user)
+            has_technical_capability
             and personal is not None
             and turno.profesional_id == personal.pk
             and turno.estado in {
@@ -5064,6 +5069,14 @@ class FichaTecnicaViewSet(viewsets.ModelViewSet):
             }
         )
         can_formula = user_can_manage_service_formula(request.user)
+        can_create_diagnosis = user_can_create_diagnosis(request.user)
+        can_finalize = bool(
+            request.user.is_active
+            and personal is not None
+            and personal.activo
+            and turno.profesional_id == personal.pk
+            and request.user.has_perm(BusinessPermission.FINALIZE_SERVICE)
+        )
         items = []
         for detail in details:
             policy = technical_record_policy(detail.servicio)
@@ -5071,6 +5084,24 @@ class FichaTecnicaViewSet(viewsets.ModelViewSet):
             errors = []
             if record is not None:
                 _, errors = technical_record_completion(record)
+            corrections = []
+            if record is not None:
+                for correction in record.correcciones_trazables.order_by(
+                    '-corregido_en', '-pk'
+                ):
+                    correction_data = CorreccionFichaTecnicaSerializer(
+                        correction
+                    ).data
+                    if not can_formula:
+                        correction_data['campos'] = [
+                            field for field in correction_data['campos']
+                            if field != 'formula'
+                        ]
+                        correction_data['valores_anteriores'].pop(
+                            'formula', None
+                        )
+                        correction_data['valores_nuevos'].pop('formula', None)
+                    corrections.append(correction_data)
             item = {
                 'detalle_turno_id': detail.pk,
                 'servicio_id': detail.servicio_id,
@@ -5090,6 +5121,7 @@ class FichaTecnicaViewSet(viewsets.ModelViewSet):
                     else None
                 ),
                 'completion_errors': errors,
+                'correcciones': corrections,
                 'restricciones_edicion': {
                     'puede_crear_borrador': can_manage and record is None,
                     'puede_guardar_borrador': bool(
@@ -5127,11 +5159,241 @@ class FichaTecnicaViewSet(viewsets.ModelViewSet):
                     detail.servicio.plantilla_formula or None
                 )
             items.append(item)
+
+        profile_states = {
+            state.campo: state
+            for state in VigenciaCampoPerfilCapilar.objects.filter(
+                cliente=turno.cliente
+            ).select_related('diagnostico_fuente')
+        }
+        current_profile = {}
+        for field in (
+            'tipo_cabello',
+            'grosor_cabello',
+            'porosidad_cabello',
+            'cuero_cabelludo',
+            'estado_general',
+        ):
+            value = getattr(turno.cliente, field)
+            current = profile_states.get(field)
+            current_profile[field] = {
+                'id': value.pk if value is not None else None,
+                'nombre': value.nombre if value is not None else None,
+                'procedencia': (
+                    current.procedencia
+                    if current is not None
+                    else DiagnosticoCapilar.Procedencia.DESCONOCIDO
+                ),
+                'diagnostico_fuente_id': (
+                    current.diagnostico_fuente_id
+                    if current is not None
+                    else None
+                ),
+                'actualizado_en': (
+                    current.actualizado_en if current is not None else None
+                ),
+            }
+
+        diagnoses = list(
+            DiagnosticoCapilar.objects.filter(cliente=turno.cliente)
+            .select_related(
+                'profesional',
+                'autor',
+                'tipo_cabello',
+                'grosor_cabello',
+                'porosidad_cabello',
+                'cuero_cabelludo',
+                'estado_general',
+                'regla_diagnostico',
+                'rutina_sugerida',
+                'rutina_asignada',
+                'servicio_urgente',
+            )
+            .prefetch_related('correcciones_trazables')
+            .order_by('-fecha_diagnostico', '-pk')
+        )
+        evaluations = []
+        for diagnosis in diagnoses:
+            serialized_evaluation = DiagnosticoCapilarSerializer(
+                diagnosis,
+                context=self.get_serializer_context(),
+            ).data
+            public_evaluation_fields = {
+                'id',
+                'tipo_cabello',
+                'tipo_cabello_nombre',
+                'grosor_cabello',
+                'grosor_cabello_nombre',
+                'porosidad_cabello',
+                'porosidad_cabello_nombre',
+                'cuero_cabelludo',
+                'cuero_cabelludo_nombre',
+                'estado_general',
+                'estado_general_nombre',
+                'observaciones',
+                'recomendaciones',
+                'campos_evaluados',
+                'resultado_calculado',
+                'estado_resultado',
+                'fecha_diagnostico',
+                'procedencia',
+            }
+            evaluation = {
+                key: value
+                for key, value in serialized_evaluation.items()
+                if key in public_evaluation_fields
+            }
+            evaluation['puede_corregir'] = bool(
+                can_create_diagnosis
+                and (
+                    has_technical_capability
+                    or diagnosis.profesional_id == request.user.pk
+                )
+            )
+            serialized_corrections = CorreccionDiagnosticoCapilarSerializer(
+                diagnosis.correcciones_trazables.order_by(
+                    '-corregido_en', '-pk'
+                ),
+                many=True,
+            ).data
+            public_correction_fields = {
+                'public_id',
+                'motivo',
+                'campos',
+                'valores_anteriores',
+                'valores_nuevos',
+                'corregido_en',
+            }
+            evaluation['correcciones'] = [
+                {
+                    key: value
+                    for key, value in correction.items()
+                    if key in public_correction_fields
+                }
+                for correction in serialized_corrections
+            ]
+            evaluations.append(evaluation)
+
+        finalization_statuses, missing_required = (
+            inspect_finalization_record_status(
+                details=details,
+                records_by_detail=records,
+            )
+        )
+        blockers = []
+        warnings = []
+        finalization = FinalizacionTurno.objects.filter(turno=turno).first()
+        if finalization is None:
+            if turno.estado != Turno.Estado.CONFIRMADO:
+                blockers.append({
+                    'code': 'INVALID_FINALIZATION_TRANSITION',
+                    'detail': (
+                        'Sólo un Turno confirmado puede finalizarse.'
+                    ),
+                })
+            if not can_finalize:
+                blockers.append({
+                    'code': 'FINALIZE_SERVICE_PERMISSION_REQUIRED',
+                    'detail': 'No tiene autoridad efectiva para finalizar.',
+                })
+            if missing_required:
+                blockers.append({
+                    'code': 'REQUIRED_TECHNICAL_RECORD_INCOMPLETE',
+                    'detail': (
+                        'Hay fichas técnicas obligatorias pendientes.'
+                    ),
+                    'detalle_turno_ids': list(missing_required),
+                })
+        for record_status in finalization_statuses:
+            if record_status['policy_status'] == 'PENDIENTE':
+                warnings.append({
+                    'code': record_status['policy_reason'],
+                    'detail': (
+                        'La política técnica del Servicio está pendiente; '
+                        'no se inventan requisitos bloqueantes.'
+                    ),
+                    'detalle_turno_id': record_status['detalle_turno_id'],
+                })
+
+        persisted_result = None
+        if finalization is not None:
+            persisted_result = {
+                'finalization_id': str(finalization.public_id),
+                'estado_actual': finalization.estado_final,
+                'persisted': True,
+                'effects': {
+                    'summary': finalization.efectos.get('summary', {}),
+                },
+            }
+
         return Response({
             'turno_id': turno.pk,
             'turno_estado': turno.estado,
+            'turno': {
+                'id': turno.pk,
+                'fecha': turno.fecha,
+                'hora_inicio': turno.hora_inicio,
+                'estado': turno.estado,
+                'profesional_id': turno.profesional_id,
+                'profesional_nombre': (
+                    f'{turno.profesional.nombre} '
+                    f'{turno.profesional.apellido}'
+                ).strip() if turno.profesional is not None else None,
+            },
             'cliente_id': turno.cliente_id,
+            'cliente': {
+                'id': turno.cliente_id,
+                'nombre': (
+                    turno.cliente.usuario.get_full_name().strip()
+                    or turno.cliente.usuario.email
+                ),
+            },
+            'perfil_capilar': current_profile,
+            'evaluaciones': evaluations,
             'detalles': items,
+            'catalogos': {
+                'tipo_cabello': TipoCabelloSerializer(
+                    TipoCabello.objects.all().order_by('nombre'), many=True
+                ).data,
+                'grosor_cabello': GrosorCabelloSerializer(
+                    GrosorCabello.objects.all().order_by('nombre'), many=True
+                ).data,
+                'porosidad_cabello': PorosidadCabelloSerializer(
+                    PorosidadCabello.objects.all().order_by('nombre'), many=True
+                ).data,
+                'cuero_cabelludo': CueroCabelludoSerializer(
+                    CueroCabelludo.objects.all().order_by('nombre'), many=True
+                ).data,
+                'estado_general': EstadoGeneralSerializer(
+                    EstadoGeneral.objects.all().order_by('nombre'), many=True
+                ).data,
+                'rutinas': [
+                    {'id': routine.pk, 'nombre': routine.nombre}
+                    for routine in Rutina.objects.filter(
+                        estado='publicada'
+                    ).order_by('nombre', 'pk')
+                ],
+            },
+            'access': {
+                'can_read_technical_context': True,
+                'can_create_evaluation': can_create_diagnosis,
+                'can_manage_technical_records': can_manage,
+                'can_manage_formulas': can_formula,
+                'can_finalize': can_finalize,
+            },
+            'preflight': {
+                'ready': bool(
+                    finalization is None
+                    and can_finalize
+                    and turno.estado == Turno.Estado.CONFIRMADO
+                    and not missing_required
+                ),
+                'already_finalized': finalization is not None,
+                'blockers': blockers,
+                'warnings': warnings,
+                'technical_records': finalization_statuses,
+            },
+            'finalizacion': persisted_result,
         })
     
     @action(detail=False, methods=['get'])

@@ -555,8 +555,8 @@ def correct_record(*, actor, record_id, expected_version, reason, values):
     return TechnicalRecordMutationResult(record, correction)
 
 
-def finalization_record_status(*, details, records_by_detail):
-    """Valida sólo políticas explícitas y devuelve evidencia por Detalle."""
+def inspect_finalization_record_status(*, details, records_by_detail):
+    """Proyecta evidencia y bloqueos sin mutar ni finalizar el Turno."""
     statuses = []
     missing_required = []
     for detail in details:
@@ -582,6 +582,15 @@ def finalization_record_status(*, details, records_by_detail):
         })
         if policy.record_required and not complete:
             missing_required.append(detail.pk)
+    return statuses, tuple(missing_required)
+
+
+def finalization_record_status(*, details, records_by_detail):
+    """Valida sólo políticas explícitas y devuelve evidencia por Detalle."""
+    statuses, missing_required = inspect_finalization_record_status(
+        details=details,
+        records_by_detail=records_by_detail,
+    )
     if missing_required:
         raise TechnicalRecordInvalid(
             (

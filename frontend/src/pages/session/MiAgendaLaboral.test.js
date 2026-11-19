@@ -10,6 +10,11 @@ jest.mock('axios', () => ({
     default: { get: jest.fn(), post: jest.fn() }
 }));
 jest.mock('../../context/SessionContext', () => ({ useSession: jest.fn() }));
+jest.mock('react-router-dom', () => ({
+    Link: ({ to, children, ...props }) => (
+        <a href={to} {...props}>{children}</a>
+    )
+}), { virtual: true });
 
 
 const ownTurno = {
@@ -19,13 +24,16 @@ const ownTurno = {
     servicio_nombre: 'Corte',
     fecha: '2026-10-23',
     hora_inicio: '10:00:00',
-    estado: 'confirmado'
+    estado: 'confirmado',
+    profesional: 14
 };
 
-const renderAgenda = (permissions = []) => {
+const renderAgenda = (permissions = [], capabilities = {}) => {
     useSession.mockReturnValue({
         loading: false,
-        hasPermission: (permission) => permissions.includes(permission)
+        hasPermission: (permission) => permissions.includes(permission),
+        hasCapability: (capability) => capabilities[capability] === true,
+        profiles: { personal: { id: 14, active: true } }
     });
     return render(<MiAgendaLaboral />);
 };
@@ -72,5 +80,23 @@ describe('MiAgendaLaboral', () => {
         expect(await screen.findByRole('button', { name: visible })).toBeInTheDocument();
         expect(screen.queryByRole('button', { name: hidden })).not.toBeInTheDocument();
         expect(screen.queryByRole('button', { name: 'Registrar llegada' })).not.toBeInTheDocument();
+    });
+
+    test('1. entrada desde agenda autorizada abre el trabajo técnico asignado', async () => {
+        renderAgenda([], {'technical_record.read_global': true});
+
+        expect(await screen.findByRole('link', { name: 'Trabajo técnico' }))
+            .toHaveAttribute('href', '/turnos/8/trabajo-tecnico');
+    });
+
+    test('capability sin ownership no publica acceso técnico en agenda', async () => {
+        axios.get.mockResolvedValue({
+            data: [{ ...ownTurno, profesional: 99 }]
+        });
+        renderAgenda([], {'technical_record.read_global': true});
+
+        expect(await screen.findByText('Cliente Propio')).toBeInTheDocument();
+        expect(screen.queryByRole('link', { name: 'Trabajo técnico' }))
+            .not.toBeInTheDocument();
     });
 });

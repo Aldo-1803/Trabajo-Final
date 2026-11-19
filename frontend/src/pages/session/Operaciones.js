@@ -19,7 +19,14 @@ const localDate = () => {
 
 
 const Operaciones = () => {
-    const { user, loading, hasPermission, hasActiveProfile } = useSession();
+    const {
+        user,
+        loading,
+        hasPermission,
+        hasCapability,
+        hasActiveProfile,
+        profiles
+    } = useSession();
     const [turnosHoy, setTurnosHoy] = useState([]);
     const [loadingTurnos, setLoadingTurnos] = useState(false);
     const [errorTurnos, setErrorTurnos] = useState('');
@@ -40,6 +47,9 @@ const Operaciones = () => {
     ].some((permission) => hasPermission(permission));
     const hasActivePersonal = hasActiveProfile?.('personal') === true;
     const canReadOwnAgenda = !canViewAgenda && hasActivePersonal;
+    const canOpenTechnicalWorkflow = hasCapability?.(
+        'technical_record.read_global'
+    ) === true;
 
     const cargarTurnosHoy = useCallback(async () => {
         if (!canViewAgenda && !canReadOwnAgenda) return;
@@ -188,6 +198,12 @@ const Operaciones = () => {
                                                         onCompleted={operationCompleted}
                                                         onError={setArrivalError}
                                                     />
+                                                    {canOpenTechnicalWorkflow
+                                                        && turno.profesional === profiles?.personal?.id && (
+                                                        <Link to={`/turnos/${turno.id}/trabajo-tecnico`} className="text-sm font-semibold text-rose-700 hover:underline">
+                                                            Trabajo técnico
+                                                        </Link>
+                                                    )}
                                                 </div>
                                             </li>
                                         ))}

@@ -39,6 +39,8 @@ export const CONTENT_MANAGEMENT_CAPABILITIES = Object.freeze([
     'content.manage_global'
 ]);
 
+export const PROFESSIONAL_WORKFLOW_CAPABILITY = 'technical_record.read_global';
+
 export const SERVICE_ACCESS = Object.freeze({
     permissions: Object.freeze(['gestion.manage_prices']),
     capabilities: Object.freeze(['service_formula.manage'])
