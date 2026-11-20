@@ -22,10 +22,10 @@ const NuevoCliente = () => {
 
     return (
         <main className="min-h-screen bg-stone-50 px-4 py-10">
-            <section className="mx-auto max-w-xl rounded-xl bg-white p-6 shadow">
-                <h1 className="mb-2 text-2xl font-bold text-stone-700">Nuevo cliente</h1>
+            <section className="mx-auto max-w-3xl rounded-xl bg-white p-6 shadow">
+                <h1 className="mb-2 text-2xl font-bold text-stone-700">Alta rápida presencial</h1>
                 <p className="mb-6 text-sm text-stone-500">
-                    Alta presencial con acceso mediante contraseña temporal.
+                    Buscá primero una identidad existente. Las altas nuevas no solicitan contraseña y quedan pendientes de reclamo web.
                 </p>
                 <ClienteCreationForm
                     onCreated={onCreated}

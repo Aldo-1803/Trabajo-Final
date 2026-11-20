@@ -15,6 +15,8 @@ import Login from '../pages/auth/Login';
 import Registro from '../pages/auth/Registro';
 import RecuperarContrasena from '../pages/auth/RecuperarContrasena';
 import ResetearClave from '../pages/auth/ResetearClave';
+import ReclamarAcceso from '../pages/auth/ReclamarAcceso';
+import ConfirmarReclamoAcceso from '../pages/auth/ConfirmarReclamoAcceso';
 import Operaciones from '../pages/session/Operaciones';
 import MiAgendaLaboral from '../pages/session/MiAgendaLaboral';
 import TrabajoTecnicoTurno from '../pages/session/TrabajoTecnicoTurno';
@@ -98,6 +100,8 @@ export const AppRoutes = () => {
                 <Route path={AUTH_ROUTES.REGISTRO} element={<Registro />} />
                 <Route path={AUTH_ROUTES.RECUPERAR_CONTRASENA} element={<RecuperarContrasena />} />
                 <Route path={AUTH_ROUTES.RESETEAR_CLAVE} element={<ResetearClave />} />
+                <Route path={AUTH_ROUTES.RECLAMAR_ACCESO} element={<ReclamarAcceso />} />
+                <Route path={AUTH_ROUTES.CONFIRMAR_RECLAMO_ACCESO} element={<ConfirmarReclamoAcceso />} />
                 <Route path="/compra-exitosa" element={<ProtectedRoute requiredProfile="cliente"><RetornoMercadoPago result="success" /></ProtectedRoute>} />
                 <Route path="/compra-pendiente" element={<ProtectedRoute requiredProfile="cliente"><RetornoMercadoPago result="pending" /></ProtectedRoute>} />
                 <Route path="/compra-fallida" element={<ProtectedRoute requiredProfile="cliente"><RetornoMercadoPago result="failure" /></ProtectedRoute>} />

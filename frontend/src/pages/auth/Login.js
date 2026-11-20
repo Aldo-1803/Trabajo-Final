@@ -166,6 +166,13 @@ const Login = () => {
                                 >
                                     ¿Olvidaste tu contraseña?
                                 </button>
+                                <button
+                                    type="button"
+                                    onClick={() => navigate('/reclamar-acceso')}
+                                    className="w-full text-sm font-semibold text-gray-500 hover:text-amber-700 transition py-2"
+                                >
+                                    ¿Tu alta fue presencial? Reclamar acceso
+                                </button>
                             </div>
                         </div>
                     </>

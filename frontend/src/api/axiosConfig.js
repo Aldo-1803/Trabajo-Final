@@ -15,7 +15,9 @@ const PUBLIC_AUTH_PATHS = [
     '/api/usuarios/login/',
     '/api/usuarios/registro/',
     '/api/usuarios/recuperar-contrasena/',
-    '/api/usuarios/resetear-clave/'
+    '/api/usuarios/resetear-clave/',
+    '/api/usuarios/access-claim/request/',
+    '/api/usuarios/access-claim/confirm/'
 ];
 
 

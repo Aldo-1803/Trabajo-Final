@@ -30,14 +30,17 @@ class UsuarioAdmin(BusinessReadOnlyAdminMixin, BaseUserAdmin):
     ⚠️ IMPORTANTE: "Desactivar" un usuario NO lo elimina, solo lo desactiva temporalmente.
     Los datos se mantienen en el sistema y pueden ser recuperados.
     """
-    list_display = ('email', 'first_name', 'last_name', 'is_staff', 'is_active', 'estado_badge')
-    list_filter = ('is_staff', 'is_active', 'date_joined')
+    list_display = (
+        'email', 'first_name', 'last_name', 'web_access_status', 'is_staff',
+        'is_active', 'estado_badge',
+    )
+    list_filter = ('web_access_status', 'is_staff', 'is_active', 'date_joined')
     search_fields = ('email', 'first_name', 'last_name')
     ordering = ('-date_joined',)  # Mostrar primero los más nuevos
     
     # Campos a mostrar en el formulario de edición
     fieldsets = (
-        (None, {'fields': ('email', 'password')}),
+        (None, {'fields': ('email', 'password', 'web_access_status')}),
         ('Información Personal', {'fields': ('first_name', 'last_name')}),
         ('Permisos', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')}),
         ('Fechas importantes', {'fields': ('last_login', 'date_joined')}),
@@ -59,6 +62,7 @@ class UsuarioAdmin(BusinessReadOnlyAdminMixin, BaseUserAdmin):
         'is_superuser',
         'groups',
         'user_permissions',
+        'web_access_status',
     )
     actions = None
     business_view_permissions = (BusinessPermission.MANAGE_USERS,)
@@ -105,6 +109,8 @@ class ClienteAdmin(BusinessReadOnlyAdminMixin, admin.ModelAdmin):
     readonly_fields = (
         'usuario',
         'activo',
+        'numero_normalizado',
+        'numero_normalizacion_estado',
         'fecha_creacion',
         'fecha_actualizacion',
     )
@@ -121,7 +127,7 @@ class ClienteAdmin(BusinessReadOnlyAdminMixin, admin.ModelAdmin):
     
     fieldsets = (
         ('Usuario Asociado', {'fields': ('usuario',)}),
-        ('Información Personal', {'fields': ('zona', 'redes', 'numero', 'fecha_nacimiento', 'sexo')}),
+        ('Información Personal', {'fields': ('zona', 'redes', 'numero', 'numero_normalizado', 'numero_normalizacion_estado', 'fecha_nacimiento', 'sexo')}),
         ('Diagnóstico', {'fields': ('tipo_cabello', 'grosor_cabello', 'porosidad_cabello', 'cuero_cabelludo', 'estado_general')}),
         ('Productos', {'fields': ('productos_actuales',)}),
         ('Estado', {'fields': ('activo',)}),

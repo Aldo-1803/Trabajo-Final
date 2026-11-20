@@ -43,17 +43,14 @@ const fillRequiredFields = () => {
     fireEvent.change(screen.getByLabelText('Apellido *'), {
         target: { value: 'Pérez' }
     });
-    fireEvent.change(screen.getByLabelText('Email *'), {
+    fireEvent.change(screen.getByLabelText('Email (opcional)'), {
         target: { value: 'ana@test.com' }
     });
-    fireEvent.change(screen.getByLabelText('Teléfono'), {
+    fireEvent.change(screen.getByLabelText('Teléfono (opcional)'), {
         target: { value: '1122334455' }
     });
     fireEvent.change(screen.getByLabelText('Zona'), {
         target: { value: 'Centro' }
-    });
-    fireEvent.change(screen.getByLabelText('Contraseña temporal *'), {
-        target: { value: 'Temporal!Cliente2026' }
     });
     fireEvent.change(screen.getByLabelText('Motivo *'), {
         target: { value: 'Alta presencial en recepción' }
@@ -78,7 +75,19 @@ describe('GestionClientes administrative creation', () => {
             (permission) => permission === 'usuarios.create_walkin_client'
         );
         axios.get.mockResolvedValue({ data: [] });
-        axios.post.mockResolvedValue({ data: { created: true } });
+        axios.post.mockResolvedValue({
+            data: {
+                created: true,
+                recovered: false,
+                cliente_id: 31,
+                display_name: 'Ana Pérez',
+                masked_email: 'a**@test.com',
+                masked_phone: '***4455',
+                cliente_activo: true,
+                web_access_status: 'PENDING_CLAIM',
+                operation_id: 'operation-31'
+            }
+        });
     });
 
     afterEach(() => consoleError.mockRestore());
@@ -86,8 +95,8 @@ describe('GestionClientes administrative creation', () => {
     test('abre el modal Nuevo cliente', async () => {
         await renderAndOpenCreateModal();
 
-        expect(screen.getByRole('heading', { name: 'Nuevo cliente' })).toBeInTheDocument();
-        expect(screen.getByLabelText('Contraseña temporal *')).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: 'Alta rápida presencial' })).toBeInTheDocument();
+        expect(screen.queryByLabelText(/Contraseña/)).not.toBeInTheDocument();
         expect(screen.queryByLabelText(/is_staff/i)).not.toBeInTheDocument();
         expect(screen.queryByLabelText(/^rol/i)).not.toBeInTheDocument();
     });
@@ -118,21 +127,21 @@ describe('GestionClientes administrative creation', () => {
         await renderAndOpenCreateModal();
         fillRequiredFields();
 
-        fireEvent.click(screen.getByRole('button', { name: 'Crear cliente' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Confirmar alta' }));
 
         await waitFor(() => {
             expect(axios.post).toHaveBeenCalledWith(
-                'http://127.0.0.1:8000/api/usuarios/admin/clientes/crear/',
+                '/api/usuarios/asistido/clientes/alta-rapida/',
                 {
                     first_name: 'Ana',
                     last_name: 'Pérez',
                     email: 'ana@test.com',
                     telefono: '1122334455',
                     zona: 'Centro',
-                    password_temporal: 'Temporal!Cliente2026',
-                    motivo: 'Alta presencial en recepción'
+                    motivo: 'Alta presencial en recepción',
+                    medio_alta: 'PRESENCIAL'
                 },
-                { headers: { Authorization: 'Bearer test-token' } }
+                { headers: { 'Idempotency-Key': expect.any(String) } }
             );
         });
         const payload = axios.post.mock.calls[0][1];
@@ -144,42 +153,56 @@ describe('GestionClientes administrative creation', () => {
                 'Cliente creado correctamente.'
             );
         });
-        expect(screen.queryByRole('heading', { name: 'Nuevo cliente' })).not.toBeInTheDocument();
+        expect(await screen.findByText('PENDING_CLAIM')).toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: 'Finalizar' }));
+        expect(screen.queryByRole('heading', { name: 'Alta rápida presencial' })).not.toBeInTheDocument();
         expect(axios.get.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
 
-    test('muestra un mensaje comprensible si el email ya existe', async () => {
+    test('muestra un conflicto de identidad comprensible', async () => {
         axios.post.mockRejectedValue({
             response: {
-                data: { error: { code: 'EMAIL_ALREADY_EXISTS' } }
+                status: 409,
+                data: {
+                    error: {
+                        code: 'EMAIL_ALREADY_EXISTS',
+                        detail: 'El email ya pertenece a otra identidad.'
+                    }
+                }
             }
         });
         await renderAndOpenCreateModal();
         fillRequiredFields();
 
-        fireEvent.click(screen.getByRole('button', { name: 'Crear cliente' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Confirmar alta' }));
 
         await waitFor(() => {
             expect(notify.error).toHaveBeenCalledWith(
-                'Ya existe una cuenta con ese email.'
+                'El email ya pertenece a otra identidad.'
             );
         });
     });
 
-    test('muestra un mensaje comprensible para password inválida', async () => {
+    test('muestra un mensaje comprensible para teléfono inválido', async () => {
         axios.post.mockRejectedValue({
             response: {
-                data: { error: { code: 'INVALID_PASSWORD' } }
+                status: 400,
+                data: {
+                    error: {
+                        code: 'INVALID_PHONE',
+                        detail: 'El teléfono es inválido.'
+                    }
+                }
             }
         });
         await renderAndOpenCreateModal();
         fillRequiredFields();
 
-        fireEvent.click(screen.getByRole('button', { name: 'Crear cliente' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Confirmar alta' }));
 
         await waitFor(() => {
             expect(notify.error).toHaveBeenCalledWith(
-                'La contraseña temporal no cumple los requisitos de seguridad.'
+                'El teléfono es inválido.'
             );
         });
     });

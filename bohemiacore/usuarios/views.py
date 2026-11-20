@@ -24,6 +24,7 @@ from django.utils.decorators import method_decorator
 from django.views.decorators.cache import never_cache
 
 
+from django.db import transaction
 from django.db.models import Min
 from .serializers import (
     AdminAdministratorAccountCreateCommandSerializer,
@@ -314,20 +315,30 @@ class LoginView(APIView):
     def post(self, request):
         email = request.data.get('email')
         password = request.data.get('password')
-
+        if not isinstance(email, str) or not email.strip() or not isinstance(password, str):
+            return Response(
+                {'detail': 'Credenciales inválidas.'},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        normalized_email = Usuario.objects.normalize_email(email.strip())
         try:
-            usuario = Usuario.objects.get(email=email)
+            usuario = Usuario.objects.get(email__iexact=normalized_email)
+            if (
+                usuario.web_access_status
+                == Usuario.WebAccessStatus.PENDING_CLAIM
+            ):
+                return Response(
+                    {'detail': 'Credenciales inválidas.'},
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
             if usuario.check_password(password) and usuario.is_active:
                 refresh = RefreshToken.for_user(usuario)
                 return Response({
                     'access': str(refresh.access_token),
                     'refresh': str(refresh),
                 }, status=status.HTTP_200_OK)
-            else:
-                print(f"[LOGIN] Credenciales inválidas para {email}")
-                return Response({'detail': 'Credenciales inválidas.'}, status=status.HTTP_401_UNAUTHORIZED)
-        except Usuario.DoesNotExist:
-            print(f"[LOGIN] Usuario no encontrado: {email}")
+            return Response({'detail': 'Credenciales inválidas.'}, status=status.HTTP_401_UNAUTHORIZED)
+        except (Usuario.DoesNotExist, Usuario.MultipleObjectsReturned):
             return Response({'detail': 'Credenciales inválidas.'}, status=status.HTTP_401_UNAUTHORIZED)
 
 class PerfilView(APIView):
@@ -381,13 +392,22 @@ class PasswordResetRequestView(APIView):
 
     def post(self, request):
         email = request.data.get('email')
+        generic_response = {
+            "mensaje": "Si el correo existe en nuestro sistema, recibirás un correo de recuperación."
+        }
         
         # (Opcional) Usar un Serializer aquí es más limpio
-        if not email:
+        if not isinstance(email, str) or not email.strip():
             return Response({"error": "Email es requerido."}, status=status.HTTP_400_BAD_REQUEST)
-
+        normalized_email = Usuario.objects.normalize_email(email.strip())
         try:
-            usuario = Usuario.objects.get(email=email)
+            usuario = Usuario.objects.get(email__iexact=normalized_email)
+            if (
+                usuario.web_access_status
+                == Usuario.WebAccessStatus.PENDING_CLAIM
+                or not usuario.email
+            ):
+                return Response(generic_response, status=status.HTTP_200_OK)
             
             # --- Lógica de Token (reemplaza get_random_string) ---
             
@@ -423,7 +443,7 @@ class PasswordResetRequestView(APIView):
                 asunto,
                 text_content,
                 settings.DEFAULT_FROM_EMAIL,
-                [email]
+                [usuario.email]
             )
             
             # Agregar versión HTML
@@ -434,19 +454,19 @@ class PasswordResetRequestView(APIView):
             
             # 5. La respuesta segura (¡igual que la suya!)
             return Response(
-                {"mensaje": "Si el correo existe en nuestro sistema, recibirás un correo de recuperación."},
+                generic_response,
                 status=status.HTTP_200_OK
             )
             
         except Usuario.DoesNotExist:
             # No revelar si el usuario existe
             return Response(
-                {"mensaje": "Si el correo existe en nuestro sistema, recibirás un correo de recuperación."},
+                generic_response,
                 status=status.HTTP_200_OK
             )
         except Exception as e:
             return Response(
-                {"error": f"Error al enviar el correo: {str(e)}"},
+                {"error": "No se pudo procesar la solicitud de recuperación."},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
@@ -483,21 +503,25 @@ class PasswordResetConfirmView(APIView):
             usuario = None
 
         # 3. Validar el token contra el usuario
-        if usuario is not None and default_token_generator.check_token(usuario, token):
-            
-            # 4. ¡ÉXITO! El token es válido. Cambiar la contraseña.
-            usuario.set_password(new_password)
-            usuario.save()
-            return Response(
-                {"mensaje": "Contraseña actualizada exitosamente."},
-                status=status.HTTP_200_OK
-            )
-        else:
-            # 5. ¡FALLO! El token es inválido o el usuario no existe
-            return Response(
-                {"error": "El enlace de reseteo es inválido o ha expirado."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        if usuario is not None:
+            with transaction.atomic():
+                usuario = Usuario.objects.select_for_update().get(pk=usuario.pk)
+                if (
+                    usuario.web_access_status
+                    != Usuario.WebAccessStatus.PENDING_CLAIM
+                    and usuario.email
+                    and default_token_generator.check_token(usuario, token)
+                ):
+                    usuario.set_password(new_password)
+                    usuario.save(update_fields=['password'])
+                    return Response(
+                        {"mensaje": "Contraseña actualizada exitosamente."},
+                        status=status.HTTP_200_OK
+                    )
+        return Response(
+            {"error": "El enlace de reseteo es inválido o ha expirado."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
 
 
 #----------------------------------------------------

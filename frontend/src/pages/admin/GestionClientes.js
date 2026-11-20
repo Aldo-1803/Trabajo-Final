@@ -20,11 +20,7 @@ const GestionClientes = () => {
     const fetchClientes = async () => {
         setLoading(true);
         try {
-            const token = localStorage.getItem('access_token');
-            const response = await axios.get(
-                'http://127.0.0.1:8000/api/usuarios/clientes/',
-                { headers: { Authorization: `Bearer ${token}` } }
-            );
+            const response = await axios.get('/api/usuarios/clientes/');
             setClientes(response.data);
             setError('');
         } catch (requestError) {
@@ -89,9 +85,9 @@ const GestionClientes = () => {
             </div>
             {creating && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
-                    <section className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white p-6 shadow-2xl">
-                        <h2 className="mb-2 text-2xl font-bold text-gray-800">Nuevo cliente</h2>
-                        <p className="mb-6 text-sm text-gray-500">Alta presencial con acceso mediante contraseña temporal.</p>
+                    <section className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-xl bg-white p-6 shadow-2xl">
+                        <h2 className="mb-2 text-2xl font-bold text-gray-800">Alta rápida presencial</h2>
+                        <p className="mb-6 text-sm text-gray-500">La identidad nueva queda activa, sin contraseña y con acceso web pendiente de reclamo.</p>
                         <ClienteCreationForm
                             onCreated={async () => {
                                 setCreating(false);

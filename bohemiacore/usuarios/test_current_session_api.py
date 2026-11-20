@@ -80,6 +80,7 @@ class CurrentSessionApiTests(APITestCase):
                 'first_name': 'Ana',
                 'last_name': 'Pérez',
                 'is_active': True,
+                'web_access_status': Usuario.WebAccessStatus.LEGACY_UNKNOWN,
             },
             'business_role': BusinessRole.CLIENTE,
             'permissions': [],

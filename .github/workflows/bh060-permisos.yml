@@ -40,7 +40,7 @@ jobs:
         include:
           - block: B1
             name: roles, usuarios y Personal
-            expected: 416
+            expected: 443
             timeout: 30
             database: test_bohemia_hair_ci_b1
             labels: >-
@@ -51,6 +51,10 @@ jobs:
               usuarios.test_client_account_creation_services
               usuarios.test_client_account_creation_api
               usuarios.test_client_access_api
+              usuarios.test_walkin_client_bh064.AuthenticationCompatibilityTests
+              usuarios.test_walkin_client_bh064.WalkInClientApiTests
+              usuarios.test_walkin_client_bh064.WalkInClientServiceTests
+              usuarios.test_walkin_client_bh064.WebAccessClaimTests
               usuarios.test_administrator_account_creation_services
               usuarios.test_administrator_account_creation_api
               usuarios.test_bh059_c_role_change_services
@@ -300,6 +304,7 @@ jobs:
         gestion.tests.test_turno_finalization_increment0.TurnoFinalizationConcurrencyTests
         gestion.tests.test_hair_profile_evaluations_increment1.HairProfileWriterConcurrencyTests
         gestion.tests.test_technical_records_increment2.TechnicalRecordConcurrencyTests
+        usuarios.test_walkin_client_bh064.WalkInConcurrencyTests
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -357,7 +362,7 @@ jobs:
             echo
             echo '| Bloque | Tests esperados | Resultado | Duración | Referencia |'
             echo '|---|---:|---|---:|---|'
-            echo "| B7 | 69 | ${result} | ${duration} s | [run ${GITHUB_RUN_ID}](https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) / job ${GITHUB_JOB} |"
+            echo "| B7 | 72 | ${result} | ${duration} s | [run ${GITHUB_RUN_ID}](https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) / job ${GITHUB_JOB} |"
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Guardar log de fallo B7
@@ -441,7 +446,7 @@ jobs:
             echo
             echo '| Bloque | Tests esperados | Jest | Build | Duración | Referencia |'
             echo '|---|---:|---|---|---:|---|'
-            echo "| Frontend | 438 | ${tests} | ${build} | ${duration} s | [run ${GITHUB_RUN_ID}](https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) / job ${GITHUB_JOB} |"
+            echo "| Frontend | 449 | ${tests} | ${build} | ${duration} s | [run ${GITHUB_RUN_ID}](https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) / job ${GITHUB_JOB} |"
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Guardar logs de fallo frontend

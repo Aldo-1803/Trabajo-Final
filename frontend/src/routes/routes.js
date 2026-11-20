@@ -4,6 +4,8 @@ export const AUTH_ROUTES = {
   REGISTRO: '/registro',
   RECUPERAR_CONTRASENA: '/recuperar-contrasena',
   RESETEAR_CLAVE: '/resetear-clave/:uid/:token',
+  RECLAMAR_ACCESO: '/reclamar-acceso',
+  CONFIRMAR_RECLAMO_ACCESO: '/reclamar-acceso/:token',
 };
 
 // Rutas seguras de estado y experiencia inicial
@@ -73,6 +75,8 @@ export const NO_HEADER_ROUTES = [
   AUTH_ROUTES.REGISTRO,
   AUTH_ROUTES.RECUPERAR_CONTRASENA,
   AUTH_ROUTES.RESETEAR_CLAVE,
+  AUTH_ROUTES.RECLAMAR_ACCESO,
+  AUTH_ROUTES.CONFIRMAR_RECLAMO_ACCESO,
   SESSION_ROUTES.OPERACIONES,
   SESSION_ROUTES.CUENTA_SIN_ACCESO,
   SESSION_ROUTES.ERROR_ACCESO,

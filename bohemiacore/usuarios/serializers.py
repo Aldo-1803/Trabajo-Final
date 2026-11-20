@@ -17,6 +17,10 @@ from gestion.models import (
 from usuarios.access_services import assign_initial_client_role
 from usuarios.roles import BusinessPermission, get_business_role
 from gestion.effective_access import build_session_capabilities
+from usuarios.contact_normalization import (
+    InvalidArgentinePhone,
+    normalize_argentine_phone,
+)
 
 
 class StrictInputFieldsMixin:
@@ -113,10 +117,71 @@ class AdminAdministratorAccountCreateCommandSerializer(
         return value
 
 
+class WalkInClientCreateCommandSerializer(
+    StrictInputFieldsMixin,
+    serializers.Serializer,
+):
+    first_name = serializers.CharField(max_length=150, trim_whitespace=True)
+    last_name = serializers.CharField(max_length=150, trim_whitespace=True)
+    email = serializers.EmailField(required=False, allow_null=True, allow_blank=True)
+    telefono = serializers.CharField(required=False, allow_blank=True, max_length=20)
+    zona = serializers.CharField(required=False, allow_blank=True, max_length=100)
+    motivo = serializers.CharField(min_length=3, max_length=500)
+    medio_alta = serializers.ChoiceField(
+        choices=('PRESENCIAL',),
+        default='PRESENCIAL',
+    )
+    duplicate_resolution = serializers.ChoiceField(
+        choices=('USE_EXISTING', 'CREATE_DISTINCT'),
+        required=False,
+    )
+    candidate_client_id = serializers.IntegerField(min_value=1, required=False)
+    reviewed_candidate_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        required=False,
+        allow_empty=True,
+    )
+    duplicate_reason = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=500,
+    )
+
+
+class WebAccessClaimRequestSerializer(
+    StrictInputFieldsMixin,
+    serializers.Serializer,
+):
+    email = serializers.EmailField()
+
+
+class WebAccessClaimConfirmSerializer(
+    StrictInputFieldsMixin,
+    serializers.Serializer,
+):
+    token = serializers.CharField(max_length=200)
+    password = serializers.CharField(write_only=True, trim_whitespace=False)
+    password2 = serializers.CharField(write_only=True, trim_whitespace=False)
+
+    def validate(self, attrs):
+        if attrs['password'] != attrs['password2']:
+            raise serializers.ValidationError({
+                'password': ['Las contraseñas no coinciden.'],
+            })
+        return attrs
+
+
 class CurrentSessionUserSerializer(serializers.ModelSerializer):
     class Meta:
         model = Usuario
-        fields = ('id', 'email', 'first_name', 'last_name', 'is_active')
+        fields = (
+            'id',
+            'email',
+            'first_name',
+            'last_name',
+            'is_active',
+            'web_access_status',
+        )
         read_only_fields = fields
 
 
@@ -164,7 +229,7 @@ class UsuarioPerfilReadSerializer(serializers.ModelSerializer):
     """
     Serializer de "solo lectura" (plano) para MOSTRAR el perfil.
     """
-    email = serializers.EmailField()
+    email = serializers.EmailField(allow_null=True)
     first_name = serializers.CharField()
     last_name = serializers.CharField()
     
@@ -394,7 +459,24 @@ class UsuarioPerfilUpdateSerializer(serializers.ModelSerializer):
         
         # Mapeo de campos del Cliente
         cliente.zona = validated_data.get('zona', cliente.zona)
-        cliente.numero = validated_data.get('numero', cliente.numero)
+        if 'numero' in validated_data:
+            numero = validated_data['numero'].strip()
+            cliente.numero = numero or None
+            if numero:
+                try:
+                    cliente.numero_normalizado = normalize_argentine_phone(numero)
+                except InvalidArgentinePhone as exc:
+                    raise serializers.ValidationError({
+                        'numero': [str(exc)],
+                    }) from exc
+                cliente.numero_normalizacion_estado = (
+                    Cliente.PhoneNormalizationStatus.VALID
+                )
+            else:
+                cliente.numero_normalizado = None
+                cliente.numero_normalizacion_estado = (
+                    Cliente.PhoneNormalizationStatus.LEGACY_UNKNOWN
+                )
         cliente.fecha_nacimiento = validated_data.get('fecha_nacimiento', cliente.fecha_nacimiento)
         cliente.sexo = validated_data.get('sexo', cliente.sexo)
         cliente.redes = validated_data.get('redes', cliente.redes)
@@ -405,6 +487,8 @@ class UsuarioPerfilUpdateSerializer(serializers.ModelSerializer):
         cliente.save(update_fields=[
             'zona',
             'numero',
+            'numero_normalizado',
+            'numero_normalizacion_estado',
             'fecha_nacimiento',
             'sexo',
             'redes',
@@ -499,10 +583,6 @@ class RegistroSerializer(StrictInputFieldsMixin, serializers.ModelSerializer):
         if attrs['password'] != attrs['password2']:
             raise serializers.ValidationError({"password": "Las contraseñas no coinciden."})
 
-        numero = attrs.get('numero', '')
-        if numero and not numero.isdigit():
-            raise serializers.ValidationError({"numero": "El teléfono solo debe contener números."})
-
         password = attrs['password']
         if not re.search(r'[A-Za-z]', password):
             raise serializers.ValidationError({"password": "La contraseña debe incluir al menos una letra."})
@@ -513,6 +593,23 @@ class RegistroSerializer(StrictInputFieldsMixin, serializers.ModelSerializer):
 
         validate_password(attrs['password'])
         return attrs
+
+    def validate_email(self, value):
+        normalized = Usuario.objects.normalize_email(value.strip())
+        if Usuario.objects.filter(email__iexact=normalized).exists():
+            raise serializers.ValidationError(
+                'Ya existe un Usuario con este email.'
+            )
+        return normalized
+
+    def validate_numero(self, value):
+        if not value:
+            return value
+        try:
+            normalize_argentine_phone(value)
+        except InvalidArgentinePhone as exc:
+            raise serializers.ValidationError(str(exc)) from exc
+        return value.strip()
 
     @transaction.atomic
     def create(self, validated_data):
@@ -526,6 +623,13 @@ class RegistroSerializer(StrictInputFieldsMixin, serializers.ModelSerializer):
             'sexo': validated_data.pop('sexo', 'F'),
             'fecha_nacimiento': validated_data.pop('fecha_nacimiento', None),
         }
+        if cliente_data['numero']:
+            cliente_data['numero_normalizado'] = normalize_argentine_phone(
+                cliente_data['numero']
+            )
+            cliente_data['numero_normalizacion_estado'] = (
+                Cliente.PhoneNormalizationStatus.VALID
+            )
         hair_data = {
             field: validated_data.pop(field)
             for field in (
@@ -539,7 +643,10 @@ class RegistroSerializer(StrictInputFieldsMixin, serializers.ModelSerializer):
         }
         
         # Crear el Usuario
-        user = Usuario.objects.create_user(**validated_data)
+        user = Usuario.objects.create_user(
+            **validated_data,
+            web_access_status=Usuario.WebAccessStatus.CLAIMED,
+        )
         
         # Crear el Cliente con todos los datos
         cliente = Cliente.objects.create(usuario=user, **cliente_data)

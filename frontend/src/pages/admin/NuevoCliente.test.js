@@ -9,7 +9,7 @@ const mockNavigate = jest.fn();
 
 jest.mock('axios', () => ({
     __esModule: true,
-    default: { post: jest.fn() }
+    default: { get: jest.fn(), post: jest.fn() }
 }));
 jest.mock('../../context/SessionContext', () => ({ useSession: jest.fn() }));
 jest.mock('../../utils/notificaciones', () => ({
@@ -17,6 +17,18 @@ jest.mock('../../utils/notificaciones', () => ({
 }));
 jest.mock('react-router-dom', () => ({ useNavigate: () => mockNavigate }), { virtual: true });
 
+
+const result = {
+    created: true,
+    recovered: false,
+    cliente_id: 41,
+    display_name: 'Ana Pérez',
+    masked_email: 'a***@test.com',
+    masked_phone: null,
+    cliente_activo: true,
+    web_access_status: 'PENDING_CLAIM',
+    operation_id: 'operation-41'
+};
 
 const renderNewClient = (permissions = ['usuarios.create_walkin_client']) => {
     useSession.mockReturnValue({
@@ -26,8 +38,8 @@ const renderNewClient = (permissions = ['usuarios.create_walkin_client']) => {
             permissions,
             capabilities: {},
             profiles: {
-                cliente: {exists: false},
-                personal: {exists: false}
+                cliente: { exists: false },
+                personal: { exists: false }
             },
             error: null
         },
@@ -39,8 +51,7 @@ const renderNewClient = (permissions = ['usuarios.create_walkin_client']) => {
 const fillForm = () => {
     fireEvent.change(screen.getByLabelText('Nombre *'), { target: { value: 'Ana' } });
     fireEvent.change(screen.getByLabelText('Apellido *'), { target: { value: 'Pérez' } });
-    fireEvent.change(screen.getByLabelText('Email *'), { target: { value: 'ana@test.com' } });
-    fireEvent.change(screen.getByLabelText('Contraseña temporal *'), { target: { value: 'Temporal!Cliente2026' } });
+    fireEvent.change(screen.getByLabelText('Email (opcional)'), { target: { value: 'ana@test.com' } });
     fireEvent.change(screen.getByLabelText('Motivo *'), { target: { value: 'Alta presencial' } });
 };
 
@@ -48,34 +59,39 @@ const fillForm = () => {
 describe('NuevoCliente independiente', () => {
     beforeEach(() => {
         jest.clearAllMocks();
-        localStorage.setItem('access_token', 'create-token');
-        axios.post.mockResolvedValue({ data: { created: true } });
+        sessionStorage.clear();
+        axios.post.mockResolvedValue({ data: result });
     });
 
-    test('create_walkin_client sin view_clients crea y vuelve a Operaciones', async () => {
+    test('crea sin contraseña, muestra PENDING_CLAIM y recién finaliza a Operaciones', async () => {
         renderNewClient();
         fillForm();
-        fireEvent.click(screen.getByRole('button', { name: 'Crear cliente' }));
+        expect(screen.queryByLabelText(/Contraseña/)).not.toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: 'Confirmar alta' }));
 
         await waitFor(() => expect(axios.post).toHaveBeenCalledWith(
-            'http://127.0.0.1:8000/api/usuarios/admin/clientes/crear/',
-            expect.objectContaining({ email: 'ana@test.com' }),
-            { headers: { Authorization: 'Bearer create-token' } }
+            '/api/usuarios/asistido/clientes/alta-rapida/',
+            expect.objectContaining({ email: 'ana@test.com', medio_alta: 'PRESENCIAL' }),
+            { headers: { 'Idempotency-Key': expect.any(String) } }
         ));
+        expect(await screen.findByText('PENDING_CLAIM')).toBeInTheDocument();
+        expect(screen.getByText(/incremento futuro/i)).toBeInTheDocument();
+        expect(mockNavigate).not.toHaveBeenCalled();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Finalizar' }));
         expect(mockNavigate).toHaveBeenCalledWith('/operaciones', { replace: true });
     });
 
-    test('con view_clients vuelve al listado después del alta', async () => {
+    test('con view_clients finaliza al listado después de mostrar el resultado', async () => {
         renderNewClient([
             'usuarios.create_walkin_client',
             'usuarios.view_clients'
         ]);
         fillForm();
-        fireEvent.click(screen.getByRole('button', { name: 'Crear cliente' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Confirmar alta' }));
+        await screen.findByText('Cliente creado');
+        fireEvent.click(screen.getByRole('button', { name: 'Finalizar' }));
 
-        await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith(
-            '/admin/clientes',
-            { replace: true }
-        ));
+        expect(mockNavigate).toHaveBeenCalledWith('/admin/clientes', { replace: true });
     });
 });
