@@ -144,7 +144,7 @@ tareas nuevas.
 ### [Generales](generales/)
 
 Análisis e impactos transversales sobre flujos, permisos, sesiones y acceso de
-Personal, además de la auditoría integral del proyecto. Contiene 18 documentos.
+Personal, además de la auditoría integral del proyecto. Contiene 20 documentos.
 
 `FLUJOS PROFESIONALES 0–5 = CERRADOS TÉCNICAMENTE`. Este trabajo complementario
 es posterior al cierre histórico de BH-062 y no modifica retroactivamente su
@@ -164,8 +164,12 @@ Documentos principales:
 - [Flujos profesionales, Incremento 4: interfaz profesional React](generales/IMPLEMENTACION_FLUJOS_PROFESIONALES_4_UI_REACT.md)
 - [Flujos profesionales, Incremento 5: compatibilidad presencial](generales/IMPLEMENTACION_FLUJOS_PROFESIONALES_5_COMPATIBILIDAD_PRESENCIAL.md)
 - [Auditoría independiente de flujos profesionales, Incrementos 0–5](generales/AUDITORIA_FLUJOS_PROFESIONALES_INCREMENTOS_0_5.md)
+- [Análisis conjunto BH-063/BH-064: Turnos y altas presenciales](generales/ANALISIS_BH063_BH064_TURNOS_Y_ALTAS_PRESENCIALES.md)
+- [BH-063/BH-064, Incremento 0: decisiones y contratos](generales/DECISIONES_Y_CONTRATOS_BH063_BH064.md)
 - [Roles y permisos](generales/ANALISIS_ROLES_PERMISOS.md)
 - [Gestión de acceso de Personal](generales/IMPACTO_GESTION_ACCESO_PERSONAL.md)
+
+`BH-063/BH-064 INCREMENTO 0 = CERRADO DOCUMENTALMENTE`.
 
 El cierre conserva como riesgos no resueltos R-01 a R-07 de la auditoría:
 
