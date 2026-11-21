@@ -154,7 +154,7 @@ describe('GestionClientes administrative creation', () => {
             );
         });
         expect(await screen.findByText('PENDING_CLAIM')).toBeInTheDocument();
-        fireEvent.click(screen.getByRole('button', { name: 'Finalizar' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Continuar' }));
         expect(screen.queryByRole('heading', { name: 'Alta rápida presencial' })).not.toBeInTheDocument();
         expect(axios.get.mock.calls.length).toBeGreaterThanOrEqual(2);
     });

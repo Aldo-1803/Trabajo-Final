@@ -86,7 +86,7 @@ jobs:
               gestion.tests.test_audit_middleware
           - block: B2
             name: diagnóstico, ficha y rutinas
-            expected: 216
+            expected: 232
             timeout: 20
             database: test_bohemia_hair_ci_b2
             labels: >-
@@ -99,6 +99,7 @@ jobs:
               gestion.tests.test_technical_records_increment2.TechnicalRecordIncrement2ApiTests
               gestion.tests.test_technical_booking_blockers
               gestion.tests.test_technical_booking_requests
+              gestion.tests.test_assisted_technical_booking.AssistedTechnicalBookingTests
               gestion.tests.test_technical_risk_evaluator
               gestion.tests.test_technical_risk_models
               gestion.tests.test_technical_risk_policy_api
@@ -305,6 +306,7 @@ jobs:
         gestion.tests.test_hair_profile_evaluations_increment1.HairProfileWriterConcurrencyTests
         gestion.tests.test_technical_records_increment2.TechnicalRecordConcurrencyTests
         usuarios.test_walkin_client_bh064.WalkInConcurrencyTests
+        gestion.tests.test_assisted_technical_booking.AssistedTechnicalBookingConcurrencyTests
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -362,7 +364,7 @@ jobs:
             echo
             echo '| Bloque | Tests esperados | Resultado | Duración | Referencia |'
             echo '|---|---:|---|---:|---|'
-            echo "| B7 | 72 | ${result} | ${duration} s | [run ${GITHUB_RUN_ID}](https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) / job ${GITHUB_JOB} |"
+            echo "| B7 | 74 | ${result} | ${duration} s | [run ${GITHUB_RUN_ID}](https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) / job ${GITHUB_JOB} |"
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Guardar log de fallo B7

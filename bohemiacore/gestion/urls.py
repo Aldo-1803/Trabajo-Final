@@ -20,6 +20,7 @@ from .views import (
 from .views_auditoria import AuditoriaViewSet, HistorialAuditoriaViewSet
 from .financial_case_views import PaymentReconciliationCaseViewSet
 from .stats_views import DashboardStatsViewSet
+from .assisted_technical_booking_views import AssistedTechnicalRequestViewSet
 
 
 
@@ -42,6 +43,11 @@ router.register(
     r'solicitudes-tecnicas',
     views.SolicitudTecnicaReservaViewSet,
     basename='solicitud-tecnica',
+)
+router.register(
+    r'solicitudes-tecnicas-asistidas',
+    AssistedTechnicalRequestViewSet,
+    basename='solicitud-tecnica-asistida',
 )
 router.register(r'slot-holds', views.SlotHoldViewSet, basename='slot-hold')
 router.register(

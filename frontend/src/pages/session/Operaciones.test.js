@@ -123,14 +123,14 @@ describe('Operaciones por permisos efectivos', () => {
         expect(axios.get).not.toHaveBeenCalled();
     });
 
-    test('create_turno_for_client muestra Nuevo turno solamente por permiso', () => {
+    test('create_turno_for_client muestra solicitud asistida solamente por permiso', () => {
         renderOperations({
             businessRole: 'ADMINISTRADOR',
             permissions: ['gestion.create_turno_for_client'],
             isStaff: false
         });
 
-        expect(screen.getByRole('link', { name: 'Nuevo turno' }))
+        expect(screen.getByRole('link', { name: 'Nueva solicitud asistida' }))
             .toHaveAttribute('href', '/admin/nuevo-turno');
         expect(screen.queryByText('Turnos de hoy')).not.toBeInTheDocument();
         expect(axios.get).not.toHaveBeenCalled();

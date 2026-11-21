@@ -273,7 +273,7 @@ const ClienteCreationForm = ({ onCreated, onCancel, compact = false }) => {
                     </p>
                 )}
                 <p className="rounded bg-white p-3 text-sm text-stone-700">
-                    El Cliente ya puede utilizarse como identidad comercial. La creación de Turnos asistidos se habilitará en un incremento futuro.
+                    El Cliente ya puede utilizarse como identidad comercial y continuar a una solicitud técnica asistida cuando el operador tenga permiso.
                 </p>
                 <div className="flex flex-wrap justify-end gap-2">
                     <button type="button" onClick={startAnother} className="rounded-lg border px-4 py-2 font-medium">
@@ -281,7 +281,7 @@ const ClienteCreationForm = ({ onCreated, onCancel, compact = false }) => {
                     </button>
                     {onCreated && (
                         <button type="button" onClick={() => onCreated(result)} className="rounded-lg bg-stone-700 px-4 py-2 font-bold text-white">
-                            Finalizar
+                            Continuar
                         </button>
                     )}
                 </div>

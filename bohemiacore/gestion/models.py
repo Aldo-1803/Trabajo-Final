@@ -3291,6 +3291,11 @@ class EvaluacionRiesgoTecnico(models.Model):
 
 
 class SolicitudTecnicaReserva(models.Model):
+    class MedioSolicitud(models.TextChoices):
+        WEB = 'WEB', 'Web'
+        TELEFONO = 'TELEFONO', 'Teléfono'
+        PRESENCIAL = 'PRESENCIAL', 'Presencial'
+
     class Estado(models.TextChoices):
         EVALUANDO = 'EVALUANDO', 'Evaluando'
         ADVERTENCIA_PENDIENTE = (
@@ -3346,6 +3351,19 @@ class SolicitudTecnicaReserva(models.Model):
         related_name='solicitud_tecnica_vigente',
     )
     fecha_recomendada = models.DateField(null=True, blank=True)
+    medio_solicitud = models.CharField(
+        max_length=15,
+        choices=MedioSolicitud.choices,
+        null=True,
+        blank=True,
+    )
+    operador_registrante = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='solicitudes_tecnicas_registradas',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -4464,6 +4482,222 @@ class AceptacionAdvertenciaTecnica(models.Model):
         related_name='advertencias_tecnicas_aceptadas',
     )
     accepted_at = models.DateTimeField(auto_now_add=True)
+
+
+class ImmutableAssistedConsentQuerySet(models.QuerySet):
+    immutable_error = 'Los consentimientos técnicos asistidos son inmutables.'
+
+    def update(self, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+    def delete(self):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_create(self, objs, *args, **kwargs):
+        raise ValidationError(
+            'La creación masiva de consentimientos asistidos no está permitida.'
+        )
+
+    def update_or_create(self, defaults=None, create_defaults=None, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+
+class ImmutableAssistedConsentManager(
+    models.Manager.from_queryset(ImmutableAssistedConsentQuerySet)
+):
+    pass
+
+
+class ConsentimientoAdvertenciaAsistido(models.Model):
+    class Decision(models.TextChoices):
+        ACEPTA = 'ACEPTA', 'Acepta'
+        RECHAZA = 'RECHAZA', 'Rechaza'
+        NO_OBTENIDO = 'NO_OBTENIDO', 'No obtenido'
+
+    solicitud = models.ForeignKey(
+        SolicitudTecnicaReserva,
+        on_delete=models.PROTECT,
+        related_name='consentimientos_asistidos',
+    )
+    evaluacion = models.OneToOneField(
+        EvaluacionRiesgoTecnico,
+        on_delete=models.PROTECT,
+        related_name='consentimiento_asistido',
+    )
+    cliente_informado = models.ForeignKey(
+        'usuarios.Cliente',
+        on_delete=models.PROTECT,
+        related_name='consentimientos_tecnicos_asistidos',
+    )
+    operador = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='consentimientos_tecnicos_asistidos_registrados',
+    )
+    medio_solicitud = models.CharField(
+        max_length=15,
+        choices=SolicitudTecnicaReserva.MedioSolicitud.choices,
+    )
+    outcome = models.CharField(
+        max_length=25,
+        choices=TechnicalRiskOutcome.choices,
+    )
+    policy_version = models.CharField(max_length=50)
+    warning_codes = models.JSONField(default=list)
+    warning_texts = models.JSONField(default=list)
+    decision = models.CharField(max_length=15, choices=Decision.choices)
+    motivo = models.CharField(max_length=500, blank=True)
+    decided_at = models.DateTimeField(default=timezone.now, editable=False)
+    objects = ImmutableAssistedConsentManager()
+
+    class Meta:
+        ordering = ['-decided_at']
+        base_manager_name = 'objects'
+        default_manager_name = 'objects'
+
+    def clean(self):
+        errors = {}
+        if self.solicitud_id and self.evaluacion_id:
+            if self.solicitud.evaluacion_vigente_id != self.evaluacion_id:
+                errors['evaluacion'] = 'La evaluación debe estar vigente.'
+        if self.solicitud_id and self.cliente_informado_id:
+            if self.solicitud.cliente_id != self.cliente_informado_id:
+                errors['cliente_informado'] = 'El Cliente no coincide.'
+        if self.outcome != TechnicalRiskOutcome.ADVERTENCIA:
+            errors['outcome'] = 'El consentimiento sólo aplica a ADVERTENCIA.'
+        if self.medio_solicitud not in {
+            SolicitudTecnicaReserva.MedioSolicitud.TELEFONO,
+            SolicitudTecnicaReserva.MedioSolicitud.PRESENCIAL,
+        }:
+            errors['medio_solicitud'] = 'El medio debe ser asistido.'
+        if self.decision != self.Decision.ACEPTA and not self.motivo.strip():
+            errors['motivo'] = 'La decisión requiere un motivo.'
+        if not isinstance(self.warning_codes, list):
+            errors['warning_codes'] = 'Debe ser una lista.'
+        if not isinstance(self.warning_texts, list):
+            errors['warning_texts'] = 'Debe ser una lista.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError(
+                'Un consentimiento técnico asistido persistido es inmutable.'
+            )
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError(
+            'Un consentimiento técnico asistido persistido no puede eliminarse.'
+        )
+
+
+class ImmutableAssistedOperationQuerySet(models.QuerySet):
+    immutable_error = 'Las operaciones técnicas asistidas son inmutables.'
+
+    def update(self, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+    def delete(self):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        raise ValidationError(self.immutable_error)
+
+    def bulk_create(self, objs, *args, **kwargs):
+        raise ValidationError(
+            'La creación masiva de operaciones asistidas no está permitida.'
+        )
+
+    def update_or_create(self, defaults=None, create_defaults=None, **kwargs):
+        raise ValidationError(self.immutable_error)
+
+
+class ImmutableAssistedOperationManager(
+    models.Manager.from_queryset(ImmutableAssistedOperationQuerySet)
+):
+    pass
+
+
+class SolicitudTecnicaAsistidaOperacion(models.Model):
+    class Command(models.TextChoices):
+        CREATE = 'CREATE', 'Crear solicitud asistida'
+        CONSENT = 'CONSENT', 'Registrar consentimiento asistido'
+
+    operation_id = models.UUIDField(unique=True, editable=False)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='operaciones_solicitud_tecnica_asistida',
+    )
+    command = models.CharField(max_length=15, choices=Command.choices)
+    idempotency_key_digest = models.CharField(max_length=64)
+    fingerprint = models.CharField(max_length=64)
+    solicitud = models.ForeignKey(
+        SolicitudTecnicaReserva,
+        on_delete=models.PROTECT,
+        related_name='operaciones_asistidas',
+    )
+    consentimiento = models.OneToOneField(
+        ConsentimientoAdvertenciaAsistido,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='operacion',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    objects = ImmutableAssistedOperationManager()
+
+    class Meta:
+        ordering = ['created_at', 'pk']
+        base_manager_name = 'objects'
+        default_manager_name = 'objects'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['command', 'idempotency_key_digest'],
+                name='unique_assisted_technical_command_key',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(command='CREATE', consentimiento__isnull=True)
+                    | models.Q(command='CONSENT', consentimiento__isnull=False)
+                ),
+                name='assisted_technical_operation_result',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['actor', '-created_at']),
+            models.Index(fields=['solicitud', 'command']),
+        ]
+
+    def clean(self):
+        errors = {}
+        if len(self.idempotency_key_digest) != 64:
+            errors['idempotency_key_digest'] = 'El digest no es válido.'
+        if len(self.fingerprint) != 64:
+            errors['fingerprint'] = 'El fingerprint no es válido.'
+        if self.consentimiento_id:
+            if self.consentimiento.solicitud_id != self.solicitud_id:
+                errors['consentimiento'] = 'El consentimiento no coincide.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError(
+                'Una operación técnica asistida persistida es inmutable.'
+            )
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError(
+            'Una operación técnica asistida persistida no puede eliminarse.'
+        )
 
 
 class ImmutableTechnicalReviewDecisionQuerySet(models.QuerySet):

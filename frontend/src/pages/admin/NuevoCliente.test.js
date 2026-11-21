@@ -75,10 +75,10 @@ describe('NuevoCliente independiente', () => {
             { headers: { 'Idempotency-Key': expect.any(String) } }
         ));
         expect(await screen.findByText('PENDING_CLAIM')).toBeInTheDocument();
-        expect(screen.getByText(/incremento futuro/i)).toBeInTheDocument();
+        expect(screen.getByText(/solicitud técnica asistida/i)).toBeInTheDocument();
         expect(mockNavigate).not.toHaveBeenCalled();
 
-        fireEvent.click(screen.getByRole('button', { name: 'Finalizar' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Continuar' }));
         expect(mockNavigate).toHaveBeenCalledWith('/operaciones', { replace: true });
     });
 
@@ -90,8 +90,24 @@ describe('NuevoCliente independiente', () => {
         fillForm();
         fireEvent.click(screen.getByRole('button', { name: 'Confirmar alta' }));
         await screen.findByText('Cliente creado');
-        fireEvent.click(screen.getByRole('button', { name: 'Finalizar' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Continuar' }));
 
         expect(mockNavigate).toHaveBeenCalledWith('/admin/clientes', { replace: true });
+    });
+
+    test('con permiso asistido continúa usando el cliente_id estable', async () => {
+        renderNewClient([
+            'usuarios.create_walkin_client',
+            'gestion.create_turno_for_client'
+        ]);
+        fillForm();
+        fireEvent.click(screen.getByRole('button', { name: 'Confirmar alta' }));
+        await screen.findByText('Cliente creado');
+        fireEvent.click(screen.getByRole('button', { name: 'Continuar' }));
+
+        expect(mockNavigate).toHaveBeenCalledWith(
+            '/admin/nuevo-turno',
+            { replace: true, state: { cliente: result } }
+        );
     });
 });

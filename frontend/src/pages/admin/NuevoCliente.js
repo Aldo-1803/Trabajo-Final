@@ -11,9 +11,17 @@ const NuevoCliente = () => {
     const navigate = useNavigate();
     const { session, hasPermission } = useSession();
     const canViewClients = hasPermission('usuarios.view_clients');
+    const canCreateTurno = hasPermission('gestion.create_turno_for_client');
     const returnPath = getLandingPath(session) || SESSION_ROUTES.OPERACIONES;
 
-    const onCreated = () => {
+    const onCreated = (result) => {
+        if (canCreateTurno) {
+            navigate(
+                ADMIN_ROUTES.NUEVO_TURNO,
+                { replace: true, state: { cliente: result } }
+            );
+            return;
+        }
         navigate(
             canViewClients ? ADMIN_ROUTES.CLIENTES : returnPath,
             { replace: true }

@@ -195,6 +195,8 @@ def create_technical_booking_request(
     personal_preferido=None,
     actor=None,
     policy_version=None,
+    medio_solicitud=SolicitudTecnicaReserva.MedioSolicitud.WEB,
+    operador_registrante=None,
 ):
     cliente = _validated_client(cliente)
     services = _validated_services(servicios)
@@ -209,6 +211,8 @@ def create_technical_booking_request(
         hora_preferida=hora_preferida,
         personal_preferido=personal_preferido,
         estado=SolicitudTecnicaReserva.Estado.EVALUANDO,
+        medio_solicitud=medio_solicitud,
+        operador_registrante=operador_registrante or actor,
     )
     _replace_services(solicitud, services)
     result, evaluation = _persist_attempt(

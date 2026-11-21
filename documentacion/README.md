@@ -144,7 +144,7 @@ tareas nuevas.
 ### [Generales](generales/)
 
 Análisis e impactos transversales sobre flujos, permisos, sesiones y acceso de
-Personal, además de la auditoría integral del proyecto. Contiene 21 documentos.
+Personal, además de la auditoría integral del proyecto. Contiene 22 documentos.
 
 `FLUJOS PROFESIONALES 0–5 = CERRADOS TÉCNICAMENTE`. Este trabajo complementario
 es posterior al cierre histórico de BH-062 y no modifica retroactivamente su
@@ -167,10 +167,16 @@ Documentos principales:
 - [Análisis conjunto BH-063/BH-064: Turnos y altas presenciales](generales/ANALISIS_BH063_BH064_TURNOS_Y_ALTAS_PRESENCIALES.md)
 - [BH-063/BH-064, Incremento 0: decisiones y contratos](generales/DECISIONES_Y_CONTRATOS_BH063_BH064.md)
 - [BH-064, Incremento 1: identidad presencial y alta rápida idempotente](generales/IMPLEMENTACION_BH064_1_IDENTIDAD_PRESENCIAL.md)
+- [BH-063, Incremento 2: solicitud asistida, riesgo y consentimiento](generales/IMPLEMENTACION_BH063_2_SOLICITUD_RIESGO_CONSENTIMIENTO.md)
 - [Roles y permisos](generales/ANALISIS_ROLES_PERMISOS.md)
 - [Gestión de acceso de Personal](generales/IMPACTO_GESTION_ACCESO_PERSONAL.md)
 
 `BH-063/BH-064 INCREMENTO 0 = CERRADO DOCUMENTALMENTE`.
+
+`BH-064 INCREMENTO 1 = VALIDADO Y PUBLICADO` y
+`BH-063 INCREMENTO 2 = VALIDADO`. El Incremento 2 integra la solicitud asistida
+multiservicio, el evaluador BH-057 y consentimiento asistido inmutable sin crear
+Hold, Pago ni Turno. Los Incrementos 3–5 continúan fuera de alcance.
 
 El cierre conserva como riesgos no resueltos R-01 a R-07 de la auditoría:
 

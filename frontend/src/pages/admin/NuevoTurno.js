@@ -1,247 +1,428 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
+import { Link, useLocation } from 'react-router-dom';
 
-import { notify } from '../../utils/notificaciones';
+import { useSession } from '../../context/SessionContext';
+import { ADMIN_ROUTES } from '../../routes/routes';
+import { classifyHttpError, getHttpErrorMessage } from '../../utils/httpErrors';
 
 
-const API_ROOT = 'http://127.0.0.1:8000/api/gestion';
+const REQUESTS_URL = '/api/gestion/solicitudes-tecnicas-asistidas/';
+const CLIENT_SELECTOR_URL = '/api/usuarios/asistido/clientes/selector/';
+const SERVICES_URL = '/api/gestion/servicios/';
+
+
+const newIdentity = () => {
+    if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+    return `00000000-0000-4000-8000-${Math.random().toString(16).slice(2).padEnd(12, '0').slice(0, 12)}`;
+};
+
+
+const newCommandIdentity = () => ({
+    operationId: newIdentity(),
+    idempotencyKey: newIdentity()
+});
+
+
+const normalizeCreatedClient = (client) => {
+    if (!client?.cliente_id) return null;
+    return {
+        cliente_id: client.cliente_id,
+        display_name: client.display_name || 'Cliente seleccionado',
+        active: client.cliente_activo !== false
+    };
+};
+
+
+const OutcomePanel = ({ result, onConsent, consentBusy }) => {
+    const [decision, setDecision] = useState('ACEPTA');
+    const [reason, setReason] = useState('');
+    const outcome = result.outcome_publico;
+    const consent = result.consentimiento;
+
+    return (
+        <section aria-label="Resultado técnico" className="space-y-4 rounded-xl border bg-white p-6 shadow">
+            <h2 className="text-xl font-bold text-stone-800">Resultado técnico: {outcome}</h2>
+            <p className="text-stone-700">{result.siguiente_accion?.detail}</p>
+
+            {outcome === 'APTO' && (
+                <p className="rounded bg-emerald-50 p-3 font-semibold text-emerald-900">
+                    Pendiente de selección de horario y confirmación.
+                </p>
+            )}
+
+            {outcome === 'ADVERTENCIA' && (
+                <div className="space-y-4">
+                    <div className="rounded bg-amber-50 p-4 text-amber-950">
+                        <h3 className="font-bold">Mensajes que deben comunicarse</h3>
+                        {(result.advertencias || []).map((message, index) => (
+                            <p key={`${index}-${message}`}>{message}</p>
+                        ))}
+                    </div>
+                    {consent ? (
+                        <p className="font-semibold" role="status">
+                            Consentimiento registrado: {consent.decision}.
+                        </p>
+                    ) : (
+                        <form
+                            className="space-y-3 rounded border p-4"
+                            onSubmit={(event) => {
+                                event.preventDefault();
+                                onConsent(decision, reason);
+                            }}
+                        >
+                            <label className="block font-medium">
+                                Decisión del Cliente informado
+                                <select
+                                    aria-label="Decisión de consentimiento"
+                                    value={decision}
+                                    onChange={(event) => setDecision(event.target.value)}
+                                    className="mt-1 block w-full rounded border p-2"
+                                    disabled={consentBusy}
+                                >
+                                    <option value="ACEPTA">Acepta</option>
+                                    <option value="RECHAZA">Rechaza</option>
+                                    <option value="NO_OBTENIDO">No obtenido</option>
+                                </select>
+                            </label>
+                            {decision !== 'ACEPTA' && (
+                                <label className="block font-medium">
+                                    Motivo
+                                    <textarea
+                                        aria-label="Motivo de consentimiento"
+                                        value={reason}
+                                        onChange={(event) => setReason(event.target.value)}
+                                        className="mt-1 block w-full rounded border p-2"
+                                        maxLength={500}
+                                        required
+                                    />
+                                </label>
+                            )}
+                            <button
+                                type="submit"
+                                disabled={consentBusy}
+                                className="rounded bg-stone-700 px-4 py-2 font-bold text-white disabled:opacity-50"
+                            >
+                                {consentBusy ? 'Registrando...' : 'Registrar consentimiento asistido'}
+                            </button>
+                        </form>
+                    )}
+                </div>
+            )}
+
+            {outcome === 'REQUIERE_REVISION' && (
+                <p className="rounded bg-sky-50 p-3 text-sky-950">
+                    Pendiente de decisión del Personal técnicamente autorizado. Este operador no puede aprobarla.
+                </p>
+            )}
+
+            {outcome === 'NO_APTO' && (
+                <p className="rounded bg-red-50 p-3 font-semibold text-red-900">
+                    NO APTO: la solicitud no puede continuar hacia la selección de horario.
+                </p>
+            )}
+
+            <p className="text-sm text-stone-600">{result.aviso_reserva}</p>
+        </section>
+    );
+};
 
 
 const NuevoTurno = () => {
-    const [servicios, setServicios] = useState([]);
-    const [clientes, setClientes] = useState([]);
-    const [servicioSeleccionado, setServicioSeleccionado] = useState('');
-    const [clienteSeleccionado, setClienteSeleccionado] = useState('');
-    const [fecha, setFecha] = useState('');
-    const [slots, setSlots] = useState([]);
-    const [slotSeleccionado, setSlotSeleccionado] = useState(null);
-    const [loading, setLoading] = useState(false);
-    const [guardando, setGuardando] = useState(false);
+    const location = useLocation();
+    const { hasPermission } = useSession();
+    const canCreateForClient = hasPermission('gestion.create_turno_for_client');
+    const initialClient = normalizeCreatedClient(location.state?.cliente);
+    const mounted = useRef(true);
+
+    const [services, setServices] = useState([]);
+    const [servicesLoading, setServicesLoading] = useState(false);
+    const [clientQuery, setClientQuery] = useState('');
+    const [clientResults, setClientResults] = useState([]);
+    const [clientSearching, setClientSearching] = useState(false);
+    const [selectedClient, setSelectedClient] = useState(initialClient);
+    const [selectedServices, setSelectedServices] = useState([]);
+    const [preferredDate, setPreferredDate] = useState('');
+    const [preferredTime, setPreferredTime] = useState('');
+    const [medium, setMedium] = useState('PRESENCIAL');
+    const [requestIdentity, setRequestIdentity] = useState(newCommandIdentity);
+    const [requestBusy, setRequestBusy] = useState(false);
+    const [result, setResult] = useState(null);
     const [error, setError] = useState('');
-    const [mensajeExito, setMensajeExito] = useState('');
+    const [errorKind, setErrorKind] = useState(null);
+    const [uncertainRequest, setUncertainRequest] = useState(null);
+    const [consentBusy, setConsentBusy] = useState(false);
+    const [consentIdentity, setConsentIdentity] = useState(newCommandIdentity);
+    const [uncertainConsent, setUncertainConsent] = useState(null);
 
     useEffect(() => {
-        const cargarSelectores = async () => {
-            const token = localStorage.getItem('access_token');
-            const headers = { Authorization: `Bearer ${token}` };
-            try {
-                const [serviciosResponse, clientesResponse] = await Promise.all([
-                    axios.get(`${API_ROOT}/servicios/`),
-                    axios.get(`${API_ROOT}/turnos/selector-clientes/`, { headers })
-                ]);
-                setServicios(serviciosResponse.data.results || serviciosResponse.data || []);
-                setClientes(clientesResponse.data || []);
-            } catch (requestError) {
-                console.error(requestError);
-                setError('No se pudieron cargar los datos necesarios para crear el Turno.');
-            }
+        mounted.current = true;
+        return () => {
+            mounted.current = false;
         };
-
-        cargarSelectores();
     }, []);
 
-    const consultarDisponibilidad = async () => {
-        if (!fecha || !servicioSeleccionado) {
-            notify.error('Seleccioná una fecha y un Servicio.');
+    useEffect(() => {
+        if (!canCreateForClient) return undefined;
+        let cancelled = false;
+        setServicesLoading(true);
+        axios.get(SERVICES_URL)
+            .then((response) => {
+                if (cancelled) return;
+                const values = response.data?.results || response.data || [];
+                setServices(values.filter((service) => service.activo !== false));
+            })
+            .catch((requestError) => {
+                if (!cancelled) setError(getHttpErrorMessage(requestError));
+            })
+            .finally(() => {
+                if (!cancelled) setServicesLoading(false);
+            });
+        return () => { cancelled = true; };
+    }, [canCreateForClient]);
+
+    const selectedServiceSet = useMemo(
+        () => new Set(selectedServices.map(Number)),
+        [selectedServices]
+    );
+
+    if (!canCreateForClient) {
+        return (
+            <main className="mx-auto max-w-3xl p-8">
+                <h1 className="text-2xl font-bold">Solicitud técnica asistida</h1>
+                <p role="alert">No tenés autorización para montar esta operación.</p>
+            </main>
+        );
+    }
+
+    const searchClients = async (event) => {
+        event.preventDefault();
+        const query = clientQuery.trim();
+        if (query.length < 2) {
+            setError('Ingresá al menos dos caracteres para buscar.');
             return;
         }
-
-        setLoading(true);
+        setClientSearching(true);
         setError('');
-        setSlots([]);
-        setSlotSeleccionado(null);
         try {
-            const token = localStorage.getItem('access_token');
-            const response = await axios.get(
-                `${API_ROOT}/turnos/consultar_disponibilidad/`,
-                {
-                    params: {
-                        fecha,
-                        servicio_id: servicioSeleccionado
-                    },
-                    headers: { Authorization: `Bearer ${token}` }
-                }
-            );
-            const selectedDay = (response.data.disponibilidad || [])
-                .find((day) => day.fecha === fecha);
-            const availableSlots = (selectedDay?.profesionales || []).flatMap(
-                (professional) => professional.slots.map((slot) => ({
-                    ...slot,
-                    profesional_nombre: professional.nombre
-                }))
-            );
-            setSlots(availableSlots);
+            const response = await axios.get(CLIENT_SELECTOR_URL, {
+                params: { q: query, page: 1, page_size: 10 }
+            });
+            setClientResults(response.data?.results || []);
         } catch (requestError) {
-            console.error(requestError);
-            setError(
-                requestError.response?.data?.error
-                || 'No se pudo consultar la disponibilidad.'
-            );
+            setClientResults([]);
+            setError(getHttpErrorMessage(requestError));
         } finally {
-            setLoading(false);
+            setClientSearching(false);
         }
     };
 
-    const confirmarTurno = async () => {
-        if (!clienteSeleccionado || !slotSeleccionado) {
-            notify.error('Seleccioná Cliente y horario.');
+    const toggleService = (serviceId) => {
+        setSelectedServices((current) => (
+            current.includes(serviceId)
+                ? current.filter((id) => id !== serviceId)
+                : [...current, serviceId]
+        ));
+        if (result) setResult(null);
+    };
+
+    const commandPayload = () => ({
+        operation_id: requestIdentity.operationId,
+        cliente_id: selectedClient?.cliente_id,
+        servicio_ids: selectedServices,
+        fecha_preferida: preferredDate,
+        hora_preferida: preferredTime,
+        medio_solicitud: medium
+    });
+
+    const submitRequest = async (payload = commandPayload(), identity = requestIdentity) => {
+        if (!payload.cliente_id || payload.servicio_ids.length === 0
+            || !payload.fecha_preferida || !payload.hora_preferida) {
+            setError('Seleccioná Cliente, uno o más Servicios, fecha y hora preferidas.');
+            setErrorKind('validation');
             return;
         }
-
-        setGuardando(true);
+        if (requestBusy) return;
+        setRequestBusy(true);
         setError('');
-        setMensajeExito('');
+        setErrorKind(null);
         try {
-            const token = localStorage.getItem('access_token');
-            const payload = {
-                cliente_id: Number(clienteSeleccionado),
-                servicio: Number(servicioSeleccionado),
-                profesional: slotSeleccionado.profesional_id,
-                fecha,
-                hora_inicio: slotSeleccionado.hora
-            };
-            const response = await axios.post(
-                `${API_ROOT}/turnos/crear-para-cliente/`,
-                payload,
-                { headers: { Authorization: `Bearer ${token}` } }
-            );
-
-            setMensajeExito(response.data?.mensaje || 'Turno solicitado correctamente.');
-            setClienteSeleccionado('');
-            setServicioSeleccionado('');
-            setFecha('');
-            setSlots([]);
-            setSlotSeleccionado(null);
+            const response = await axios.post(REQUESTS_URL, payload, {
+                headers: { 'Idempotency-Key': identity.idempotencyKey }
+            });
+            if (!mounted.current) return;
+            setResult(response.data);
+            setUncertainRequest(null);
         } catch (requestError) {
-            console.error(requestError);
-            const data = requestError.response?.data;
-            const fieldError = Object.values(data || {}).find(Array.isArray)?.[0];
-            setError(fieldError || data?.detail || 'No se pudo crear el Turno.');
+            if (!mounted.current) return;
+            const classified = classifyHttpError(requestError);
+            setErrorKind(classified.kind);
+            setError(getHttpErrorMessage(requestError));
+            if (classified.kind === 'network' || classified.timeout) {
+                setUncertainRequest({ payload, identity });
+            }
         } finally {
-            setGuardando(false);
+            if (mounted.current) setRequestBusy(false);
         }
+    };
+
+    const submitConsent = async (decision, reason, draft = null) => {
+        if (consentBusy || !result) return;
+        const activeDraft = draft || {
+            payload: {
+                operation_id: consentIdentity.operationId,
+                decision,
+                motivo: reason
+            },
+            identity: consentIdentity
+        };
+        setConsentBusy(true);
+        setError('');
+        setErrorKind(null);
+        try {
+            const response = await axios.post(
+                `${REQUESTS_URL}${result.id}/consentimiento/`,
+                activeDraft.payload,
+                { headers: { 'Idempotency-Key': activeDraft.identity.idempotencyKey } }
+            );
+            if (!mounted.current) return;
+            setResult(response.data);
+            setUncertainConsent(null);
+            setConsentIdentity(newCommandIdentity());
+        } catch (requestError) {
+            if (!mounted.current) return;
+            const classified = classifyHttpError(requestError);
+            setErrorKind(classified.kind);
+            setError(getHttpErrorMessage(requestError));
+            if (classified.kind === 'network' || classified.timeout) {
+                setUncertainConsent(activeDraft);
+            }
+        } finally {
+            if (mounted.current) setConsentBusy(false);
+        }
+    };
+
+    const startAnother = () => {
+        setResult(null);
+        setSelectedServices([]);
+        setPreferredDate('');
+        setPreferredTime('');
+        setRequestIdentity(newCommandIdentity());
+        setConsentIdentity(newCommandIdentity());
+        setUncertainRequest(null);
+        setUncertainConsent(null);
+        setError('');
     };
 
     return (
-        <main className="max-w-2xl mx-auto p-6 bg-white shadow-md rounded-lg mt-10">
-            <h1 className="text-2xl font-bold mb-2 text-gray-800">Nuevo Turno</h1>
-            <p className="mb-6 text-sm text-gray-500">
-                El Turno se registra como solicitado y queda pendiente de aprobación.
-            </p>
+        <main className="min-h-screen bg-stone-50 px-4 py-10">
+            <section className="mx-auto max-w-4xl space-y-6">
+                <div>
+                    <h1 className="text-3xl font-bold text-stone-800">Solicitud técnica asistida</h1>
+                    <p className="text-stone-600">Registra una intención; no reserva horario, no cobra y no crea un Turno.</p>
+                </div>
 
-            <div className="mb-4">
-                <label htmlFor="turno-cliente" className="block text-gray-700 font-medium mb-2">
-                    Cliente
-                </label>
-                <select
-                    id="turno-cliente"
-                    className="w-full border p-2 rounded"
-                    value={clienteSeleccionado}
-                    onChange={(event) => setClienteSeleccionado(event.target.value)}
-                >
-                    <option value="">-- Seleccioná un Cliente --</option>
-                    {clientes.map((cliente) => (
-                        <option key={cliente.id} value={cliente.id}>
-                            {[cliente.nombre, cliente.apellido].filter(Boolean).join(' ') || cliente.email}
-                            {cliente.email ? ` — ${cliente.email}` : ''}
-                        </option>
-                    ))}
-                </select>
-            </div>
-
-            <div className="mb-4">
-                <label htmlFor="turno-servicio" className="block text-gray-700 font-medium mb-2">
-                    Servicio
-                </label>
-                <select
-                    id="turno-servicio"
-                    className="w-full border p-2 rounded"
-                    value={servicioSeleccionado}
-                    onChange={(event) => {
-                        setServicioSeleccionado(event.target.value);
-                        setSlots([]);
-                        setSlotSeleccionado(null);
-                    }}
-                >
-                    <option value="">-- Seleccioná un Servicio --</option>
-                    {servicios.map((servicio) => (
-                        <option key={servicio.id} value={servicio.id}>
-                            {servicio.nombre} ({servicio.duracion_estimada || 60} min)
-                        </option>
-                    ))}
-                </select>
-            </div>
-
-            <div className="mb-4">
-                <label htmlFor="turno-fecha" className="block text-gray-700 font-medium mb-2">
-                    Fecha
-                </label>
-                <input
-                    id="turno-fecha"
-                    type="date"
-                    className="w-full border p-2 rounded"
-                    value={fecha}
-                    onChange={(event) => {
-                        setFecha(event.target.value);
-                        setSlots([]);
-                        setSlotSeleccionado(null);
-                    }}
-                />
-            </div>
-
-            <button
-                type="button"
-                onClick={consultarDisponibilidad}
-                disabled={loading}
-                className="w-full bg-rose-500 text-white py-2 px-4 rounded hover:bg-rose-600 disabled:bg-gray-300"
-            >
-                {loading ? 'Buscando horarios...' : 'Ver horarios disponibles'}
-            </button>
-
-            {error && <p role="alert" className="text-red-600 mt-4">{error}</p>}
-            {mensajeExito && <p className="text-green-700 mt-4 font-semibold">{mensajeExito}</p>}
-
-            {slots.length > 0 && (
-                <section className="mt-6" aria-labelledby="available-slots-title">
-                    <h2 id="available-slots-title" className="text-lg font-semibold mb-3">
-                        Horarios disponibles
-                    </h2>
-                    <div className="grid grid-cols-2 gap-3">
-                        {slots.map((slot) => {
-                            const key = `${slot.profesional_id}-${slot.hora}`;
-                            const selected = (
-                                slotSeleccionado?.profesional_id === slot.profesional_id
-                                && slotSeleccionado?.hora === slot.hora
-                            );
-                            return (
-                                <button
-                                    key={key}
-                                    type="button"
-                                    onClick={() => setSlotSeleccionado(slot)}
-                                    className={`py-2 px-3 rounded border ${
-                                        selected
-                                            ? 'bg-green-600 text-white'
-                                            : 'bg-gray-50 text-gray-800'
-                                    }`}
-                                >
-                                    {slot.hora} — {slot.profesional_nombre}
+                {!result && (
+                    <form
+                        className="space-y-6 rounded-xl bg-white p-6 shadow"
+                        onSubmit={(event) => {
+                            event.preventDefault();
+                            submitRequest();
+                        }}
+                    >
+                        <section className="space-y-3" aria-labelledby="client-title">
+                            <h2 id="client-title" className="text-lg font-bold">Cliente</h2>
+                            {selectedClient && (
+                                <p className="rounded bg-emerald-50 p-3">
+                                    Seleccionado: <strong>{selectedClient.display_name}</strong>
+                                    {' '}(ID {selectedClient.cliente_id})
+                                </p>
+                            )}
+                            <div className="flex flex-wrap gap-2">
+                                <input
+                                    aria-label="Buscar Cliente"
+                                    value={clientQuery}
+                                    onChange={(event) => setClientQuery(event.target.value)}
+                                    className="min-w-64 flex-1 rounded border p-2"
+                                    placeholder="Nombre, email o teléfono"
+                                />
+                                <button type="button" onClick={searchClients} disabled={clientSearching} className="rounded border px-4 py-2">
+                                    {clientSearching ? 'Buscando...' : 'Buscar'}
                                 </button>
-                            );
-                        })}
-                    </div>
-                </section>
-            )}
+                                <Link to={ADMIN_ROUTES.NUEVO_CLIENTE} className="rounded border px-4 py-2">
+                                    Alta rápida
+                                </Link>
+                            </div>
+                            {clientResults.length > 0 && (
+                                <ul aria-label="Resultados de Clientes" className="divide-y rounded border">
+                                    {clientResults.map((client) => (
+                                        <li key={client.cliente_id} className="flex items-center justify-between gap-3 p-3">
+                                            <span>{client.display_name} · {client.masked_email || client.masked_phone || 'Sin contacto visible'}</span>
+                                            <button type="button" onClick={() => setSelectedClient(client)} className="rounded bg-stone-700 px-3 py-1 text-white">
+                                                Seleccionar
+                                            </button>
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                        </section>
 
-            {slotSeleccionado && (
-                <button
-                    type="button"
-                    onClick={confirmarTurno}
-                    disabled={guardando}
-                    className="mt-6 w-full bg-green-600 text-white py-2 rounded hover:bg-green-700 disabled:bg-gray-300"
-                >
-                    {guardando ? 'Guardando...' : 'Crear Turno solicitado'}
-                </button>
-            )}
+                        <fieldset className="space-y-2">
+                            <legend className="text-lg font-bold">Servicios</legend>
+                            {servicesLoading && <p role="status">Cargando Servicios...</p>}
+                            {services.map((service) => (
+                                <label key={service.id} className="flex gap-2 rounded border p-3">
+                                    <input
+                                        type="checkbox"
+                                        aria-label={service.nombre}
+                                        checked={selectedServiceSet.has(service.id)}
+                                        onChange={() => toggleService(service.id)}
+                                    />
+                                    <span>{service.nombre}</span>
+                                </label>
+                            ))}
+                        </fieldset>
+
+                        <div className="grid gap-4 md:grid-cols-3">
+                            <label className="font-medium">Fecha preferida
+                                <input aria-label="Fecha preferida" type="date" value={preferredDate} onChange={(event) => setPreferredDate(event.target.value)} className="mt-1 block w-full rounded border p-2" required />
+                            </label>
+                            <label className="font-medium">Hora preferida
+                                <input aria-label="Hora preferida" type="time" value={preferredTime} onChange={(event) => setPreferredTime(event.target.value)} className="mt-1 block w-full rounded border p-2" required />
+                            </label>
+                            <label className="font-medium">Medio de solicitud
+                                <select aria-label="Medio de solicitud" value={medium} onChange={(event) => setMedium(event.target.value)} className="mt-1 block w-full rounded border p-2">
+                                    <option value="PRESENCIAL">Presencial</option>
+                                    <option value="TELEFONO">Teléfono</option>
+                                </select>
+                            </label>
+                        </div>
+
+                        <button type="submit" disabled={requestBusy} className="rounded bg-rose-700 px-5 py-3 font-bold text-white disabled:opacity-50">
+                            {requestBusy ? 'Evaluando...' : 'Registrar y evaluar solicitud'}
+                        </button>
+                    </form>
+                )}
+
+                {error && <p role="alert" data-error-kind={errorKind} className="rounded bg-red-50 p-3 text-red-800">{error}</p>}
+                {uncertainRequest && (
+                    <button type="button" onClick={() => submitRequest(uncertainRequest.payload, uncertainRequest.identity)} disabled={requestBusy} className="rounded border px-4 py-2 font-semibold">
+                        Reintentar solicitud con la misma clave
+                    </button>
+                )}
+                {uncertainConsent && (
+                    <button type="button" onClick={() => submitConsent(null, null, uncertainConsent)} disabled={consentBusy} className="rounded border px-4 py-2 font-semibold">
+                        Reintentar consentimiento con la misma clave
+                    </button>
+                )}
+
+                {result && (
+                    <>
+                        <OutcomePanel result={result} onConsent={submitConsent} consentBusy={consentBusy} />
+                        <button type="button" onClick={startAnother} className="rounded border px-4 py-2">Registrar otra solicitud</button>
+                    </>
+                )}
+            </section>
         </main>
     );
 };
