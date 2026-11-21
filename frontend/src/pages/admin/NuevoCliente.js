@@ -1,0 +1,48 @@
+import React from 'react';
+import { useNavigate } from 'react-router-dom';
+
+import ClienteCreationForm from '../../components/ClienteCreationForm';
+import { useSession } from '../../context/SessionContext';
+import { ADMIN_ROUTES, SESSION_ROUTES } from '../../routes/routes';
+import { getLandingPath } from '../../utils/sessionLanding';
+
+
+const NuevoCliente = () => {
+    const navigate = useNavigate();
+    const { session, hasPermission } = useSession();
+    const canViewClients = hasPermission('usuarios.view_clients');
+    const canCreateTurno = hasPermission('gestion.create_turno_for_client');
+    const returnPath = getLandingPath(session) || SESSION_ROUTES.OPERACIONES;
+
+    const onCreated = (result) => {
+        if (canCreateTurno) {
+            navigate(
+                ADMIN_ROUTES.NUEVO_TURNO,
+                { replace: true, state: { cliente: result } }
+            );
+            return;
+        }
+        navigate(
+            canViewClients ? ADMIN_ROUTES.CLIENTES : returnPath,
+            { replace: true }
+        );
+    };
+
+    return (
+        <main className="min-h-screen bg-stone-50 px-4 py-10">
+            <section className="mx-auto max-w-3xl rounded-xl bg-white p-6 shadow">
+                <h1 className="mb-2 text-2xl font-bold text-stone-700">Alta rápida presencial</h1>
+                <p className="mb-6 text-sm text-stone-500">
+                    Buscá primero una identidad existente. Las altas nuevas no solicitan contraseña y quedan pendientes de reclamo web.
+                </p>
+                <ClienteCreationForm
+                    onCreated={onCreated}
+                    onCancel={() => navigate(returnPath)}
+                />
+            </section>
+        </main>
+    );
+};
+
+
+export default NuevoCliente;

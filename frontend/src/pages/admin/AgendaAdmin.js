@@ -3,7 +3,62 @@ import axios from 'axios';
 import ConfiguracionAgendaMasiva from './ConfiguracionAgendaMasiva.js';
 import { notify } from '../../utils/notificaciones';
 
+// Colores
+const COLORS = {
+  bg_light: '#F5EBE0',
+  bg_white: '#FFFFFF',
+  primary_dark: '#817773',
+  primary_light: '#AB9A91',
+  accent_light: '#D5BDAF',
+  accent_very_light: '#E3D5CA',
+  success: '#6B9C7A',
+  error: '#C73E3E',
+};
+
+// Días de la semana
+const WEEK_DAYS = [
+  { label: 'Lunes', value: 0 },
+  { label: 'Martes', value: 1 },
+  { label: 'Miércoles', value: 2 },
+  { label: 'Jueves', value: 3 },
+  { label: 'Viernes', value: 4 },
+  { label: 'Sábado', value: 5 }
+];
+
+// Iconos SVG
+const IconEye = ({ className = 'w-4 h-4' }) => (
+  <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+  </svg>
+);
+
+const IconSunrise = ({ className = 'w-4 h-4' }) => (
+  <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m6.364 1.636l-.707.707M21 12h-1m-6.364 6.364l.707.707M12 21v1m-6.364-1.636l.707-.707M3 12h1m6.364-6.364l-.707.707M12 6a6 6 0 110 12 6 6 0 010-12z" />
+  </svg>
+);
+
+const IconSunset = ({ className = 'w-4 h-4' }) => (
+  <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m6.364 1.636l-.707.707M21 12h-1m-6.364 6.364l.707.707M12 21v1m-6.364-1.636l.707-.707M3 12h1m6.364-6.364l-.707.707M12 8a4 4 0 110 8 4 4 0 010-8z" />
+  </svg>
+);
+
+const IconUser = ({ className = 'w-4 h-4' }) => (
+  <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+  </svg>
+);
+
+const IconPackage = ({ className = 'w-4 h-4' }) => (
+  <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 015.646 5.646 9.001 9.001 0 0020.354 15.354z" />
+  </svg>
+);
+
 const AgendaAdmin = () => {
+    const agendaWriteActionsEnabled = false;
     // Estado del Calendario
     const [currentDate, setCurrentDate] = useState(new Date());
     
@@ -78,6 +133,7 @@ const AgendaAdmin = () => {
     };
 
     const guardarBloqueo = async () => {
+        setLoadingBloqueo(true);
         try {
             const token = localStorage.getItem('access_token');
             
@@ -115,12 +171,14 @@ const AgendaAdmin = () => {
                 
                 mensaje += `\nVe a la sección "Turnos" para resolverlos antes de bloquear.`;
 
-                notify.error('Conflictos detectados: ' + data.mensaje);
+                notify.error(mensaje);
                 // No cerramos el modal para que pueda corregir las fechas si quiere
             } else {
                 // Otros errores (400, 500)
                 notify.error('Error al guardar: ' + (error.response?.data?.error || 'Error desconocido'));
             }
+        } finally {
+            setLoadingBloqueo(false);
         }
     };
 
@@ -144,7 +202,7 @@ const AgendaAdmin = () => {
             textColor = "#C73E3E";
             contenido = <span className="text-xs font-bold block truncate" style={{color: textColor}}>{bloqueo.motivo}</span>;
         } else if (!horario) {
-            bgColor = "#F5EBE0";
+            bgColor = "#F5F5EB";
             borderColor = "#D5BDAF";
             cursor = "cursor-not-allowed";
             textColor = "#AB9A91";
@@ -166,7 +224,7 @@ const AgendaAdmin = () => {
                     borderLeft: `4px solid ${borderColor}`,
                     border: `1px solid ${borderColor}`
                 }}
-                onClick={() => !bloqueo && abrirModalBloqueo(dayNumber)}
+                onClick={() => agendaWriteActionsEnabled && !bloqueo && abrirModalBloqueo(dayNumber)}
             >
                 <span className="font-bold" style={{color: dayNumber === hoy.getDate() && currentDate.getMonth() === hoy.getMonth() ? '#817773' : textColor}}>
                     {dayNumber}
@@ -194,14 +252,14 @@ const AgendaAdmin = () => {
 
     if (loading) {
         return (
-            <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#F5EBE0' }}>
+            <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#F5F5EB' }}>
                 <div className="animate-spin rounded-full h-16 w-16 border-4" style={{ borderColor: '#E3D5CA', borderTopColor: '#817773' }}></div>
             </div>
         );
     }
 
     return (
-        <div className="min-h-screen p-6" style={{ backgroundColor: '#F5EBE0' }}>
+        <div className="min-h-screen p-6" style={{ backgroundColor: '#F5F5EB' }}>
             <div className="max-w-6xl mx-auto">
                 {/* HEADER */}
                 <div className="mb-8">
@@ -209,37 +267,114 @@ const AgendaAdmin = () => {
                     <p style={{ color: '#AB9A91' }}>Configura horarios laborales y bloqueos de disponibilidad</p>
                 </div>
 
-                {/* CONFIGURACIÓN MASIVA: integrado con backend */}
-                <div className="mb-6">
+                {/* CONFIGURACIÓN MASIVA: Botón para abrir modal */}
+                {agendaWriteActionsEnabled && <div className="mb-6">
                     <button
-                        onClick={() => setMostrarConfiguracion(prev => !prev)}
-                        className="px-4 py-2 rounded-lg font-bold transition"
+                        onClick={() => setMostrarConfiguracion(true)}
+                        className="px-4 py-2 rounded-lg font-bold transition transform hover:scale-105"
                         style={{ backgroundColor: '#D5BDAF', color: 'white' }}
                     >
-                        {mostrarConfiguracion ? 'Ocultar configuración masiva' : 'Configurar horarios masivos'}
+                         Configurar horarios
                     </button>
+                </div>}
+
+                {/* Vista Previa de Horarios Base */}
+                <div className="mb-6 rounded-xl p-4" style={{ backgroundColor: COLORS.bg_light, borderLeft: `5px solid ${COLORS.primary_light}` }}>
+                    <h3 className="text-lg font-bold mb-4 flex items-center gap-2" style={{ color: COLORS.primary_dark }}>
+                        <IconEye className="w-5 h-5" style={{ color: COLORS.primary_dark }} />
+                        Horarios Configurados
+                    </h3>
+                    
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+                        {WEEK_DAYS.map((dia) => {
+                            const horario = horariosBase.find(h => h.dia_semana === dia.value);
+                            const hayTrabajo = horario && horario.activo;
+                            
+                            return (
+                                <div
+                                    key={dia.value}
+                                    className="p-3 rounded-lg border-2 transition"
+                                    style={{
+                                        backgroundColor: hayTrabajo ? COLORS.bg_white : '#F0F0F0',
+                                        borderColor: hayTrabajo ? COLORS.success : COLORS.accent_very_light,
+                                        opacity: hayTrabajo ? 1 : 0.6
+                                    }}
+                                >
+                                    <div className="font-bold text-sm mb-2" style={{ color: COLORS.primary_dark }}>
+                                        {dia.label}
+                                    </div>
+                                    
+                                    {hayTrabajo ? (
+                                        <div className="space-y-2 text-xs">
+                                            <div className="flex items-center gap-1" style={{ color: COLORS.primary_light }}>
+                                                <IconSunrise className="w-3 h-3" />
+                                                <span className="font-bold">{horario.hora_inicio.slice(0, 5)}</span>
+                                            </div>
+                                            <div className="flex items-center gap-1" style={{ color: COLORS.primary_light }}>
+                                                <IconSunset className="w-3 h-3" />
+                                                <span className="font-bold">{horario.hora_fin.slice(0, 5)}</span>
+                                            </div>
+                                            
+                                            {horario.personal && (
+                                                <div className="flex items-start gap-1 pt-1 border-t" style={{ borderColor: COLORS.accent_very_light }}>
+                                                    <IconUser className="w-3 h-3 mt-0.5 flex-shrink-0" style={{ color: COLORS.success }} />
+                                                    <div className="leading-tight">
+                                                        <div className="font-bold" style={{ color: COLORS.success }}>
+                                                            {Array.isArray(horario.personal) 
+                                                                ? horario.personal.map(p => typeof p === 'string' ? p : p.nombre || p.name).join(', ')
+                                                                : horario.personal.nombre || horario.personal.name || horario.personal
+                                                            }
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {horario.servicios && (
+                                                <div className="flex items-start gap-1 pt-1 border-t" style={{ borderColor: COLORS.accent_very_light }}>
+                                                    <IconPackage className="w-3 h-3 mt-0.5 flex-shrink-0" style={{ color: COLORS.primary_light }} />
+                                                    <div className="leading-tight text-[10px]">
+                                                        <div style={{ color: COLORS.primary_light }}>
+                                                            {Array.isArray(horario.servicios)
+                                                                ? horario.servicios.map(s => typeof s === 'string' ? s : s.nombre || s.name).join(', ')
+                                                                : horario.servicios.nombre || horario.servicios.name || horario.servicios
+                                                            }
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <div style={{ color: '#999', fontSize: '11px', fontStyle: 'italic' }}>
+                                            Cerrado
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
                 </div>
 
-                {mostrarConfiguracion && (
-                    <div className="mb-6">
-                        <ConfiguracionAgendaMasiva fetchPersonal={async () => {
-                            try {
-                                const token = localStorage.getItem('access_token');
-                                const res = await axios.get('/api/gestion/personal/', { headers: { Authorization: `Bearer ${token}` } });
-                                // Normalizar datos: esperar {id, nombre} o {id, usuario}
-                                return res.data.map(p => ({ id: p.id, nombre: p.nombre || (p.usuario?.first_name ? `${p.usuario.first_name} ${p.usuario.last_name}` : p.email) }))
-                            } catch (e) {
-                                console.error('No se pudo cargar personal', e);
-                                return []
-                            }
-                        }} />
-                    </div>
-                )}
+                {/* Modal de Configuración */}
+                {agendaWriteActionsEnabled && <ConfiguracionAgendaMasiva
+                    isOpen={mostrarConfiguracion}
+                    onClose={() => setMostrarConfiguracion(false)}
+                    fetchPersonal={async () => {
+                        try {
+                            const token = localStorage.getItem('access_token');
+                            const res = await axios.get('http://127.0.0.1:8000/api/gestion/personal/', { headers: { Authorization: `Bearer ${token}` } });
+                            // Normalizar datos: esperar {id, nombre} o {id, usuario}
+                            return res.data.map(p => ({ id: p.id, nombre: p.nombre || (p.usuario?.first_name ? `${p.usuario.first_name} ${p.usuario.last_name}` : p.email) }))
+                        } catch (e) {
+                            console.error('No se pudo cargar personal', e);
+                            return []
+                        }
+                    }} 
+                />}
 
                 {/* ERROR ALERT */}
                 {error && (
                     <div className="mb-6 p-4 rounded-lg border-l-4" style={{ backgroundColor: '#FFE8E8', borderColor: '#C73E3E' }}>
-                        <p style={{ color: '#C73E3E' }} className="font-medium">⚠️ {error}</p>
+                        <p style={{ color: '#C73E3E' }} className="font-medium">{error}</p>
                     </div>
                 )}
 
@@ -299,7 +434,7 @@ const AgendaAdmin = () => {
                                 <span style={{ color: '#817773' }}>Día laboral</span>
                             </div>
                             <div className="flex items-center gap-2">
-                                <div className="w-6 h-6 rounded" style={{ backgroundColor: '#F5EBE0', border: '2px solid #AB9A91' }}></div>
+                                <div className="w-6 h-6 rounded" style={{ backgroundColor: '#F5F5EB', border: '2px solid #AB9A91' }}></div>
                                 <span style={{ color: '#817773' }}>Cerrado</span>
                             </div>
                             <div className="flex items-center gap-2">
@@ -312,7 +447,7 @@ const AgendaAdmin = () => {
             </div>
 
             {/* MODAL DE BLOQUEO */}
-            {mostrarModal && (
+            {agendaWriteActionsEnabled && mostrarModal && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
                     <div style={{ backgroundColor: 'white' }} className="rounded-xl p-8 max-w-md w-full mx-4 shadow-2xl">
                         <h2 className="text-2xl font-bold mb-6" style={{ color: '#817773' }}>🚫 Crear Bloqueo</h2>

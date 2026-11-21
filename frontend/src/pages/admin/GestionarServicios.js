@@ -2,8 +2,17 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { confirmarAccion, notify } from '../../utils/notificaciones';
+import { useSession } from '../../context/SessionContext';
+import { ADMIN_ROUTES } from '../../routes/routes';
+import { getAuthorizedReturnPath } from '../../utils/sessionLanding';
+import { getHttpErrorMessage } from '../../utils/httpErrors';
 
 const GestionarServicios = () => {
+    const { hasPermission, hasCapability, session } = useSession();
+    const canManagePrices = hasPermission('gestion.manage_prices');
+    const canManageFormulas = hasCapability('service_formula.manage');
+    const canEditService = canManagePrices || canManageFormulas;
+    const returnPath = getAuthorizedReturnPath(session, ADMIN_ROUTES.SERVICIOS);
     const [servicios, setServicios] = useState([]);
     const [categorias, setCategorias] = useState([]);
     
@@ -141,7 +150,9 @@ const GestionarServicios = () => {
             
         } catch (err) {
             console.error("Error cargando datos:", err);
-            setError("No se pudieron cargar los datos de configuración.");
+            setError(getHttpErrorMessage(err, {
+                unknown: 'No se pudieron cargar los datos de configuración.'
+            }));
         } finally {
             setLoading(false);
         }
@@ -170,6 +181,7 @@ const GestionarServicios = () => {
     };
 
     const handleEdit = (servicio) => {
+        if (!canEditService) return;
         setEditingId(servicio.id);
         const parsedFormula = stringToFormula(servicio.plantilla_formula || '');
         setFormData({
@@ -220,22 +232,28 @@ const GestionarServicios = () => {
 
     const handleSave = async (e) => {
         e.preventDefault();
+        if (!canEditService || (!editingId && !canManagePrices)) return;
         try {
             const token = localStorage.getItem('access_token');
             const config = { headers: { 'Authorization': `Bearer ${token}` } };
             
-            const payload = {
-                nombre: formData.nombre,
-                descripcion: formData.descripcion,
-                precio_base: formData.precio_base,
-                duracion_estimada: formData.duracion_estimada || null,
-                categoria: formData.categoria ? parseInt(formData.categoria) : null,
-                rutina_recomendada: formData.rutina_recomendada ? parseInt(formData.rutina_recomendada) : null,
-                impacto_porosidad: formData.impacto_porosidad ? parseInt(formData.impacto_porosidad) : null,
-                impacto_estado: formData.impacto_estado ? parseInt(formData.impacto_estado) : null,
-                plantilla_formula: formulaToString(formData.plantilla_formula),
-                activo: formData.activo
-            };
+            const payload = {};
+            if (canManagePrices) {
+                Object.assign(payload, {
+                    nombre: formData.nombre,
+                    descripcion: formData.descripcion,
+                    precio_base: formData.precio_base,
+                    duracion_estimada: formData.duracion_estimada || null,
+                    categoria: formData.categoria ? parseInt(formData.categoria) : null,
+                    rutina_recomendada: formData.rutina_recomendada ? parseInt(formData.rutina_recomendada) : null,
+                    impacto_porosidad: formData.impacto_porosidad ? parseInt(formData.impacto_porosidad) : null,
+                    impacto_estado: formData.impacto_estado ? parseInt(formData.impacto_estado) : null,
+                    activo: formData.activo
+                });
+            }
+            if (canManageFormulas) {
+                payload.plantilla_formula = formulaToString(formData.plantilla_formula);
+            }
 
             let servicioId = editingId;
 
@@ -244,20 +262,22 @@ const GestionarServicios = () => {
                 await axios.patch(`http://127.0.0.1:8000/api/gestion/servicios/${editingId}/`, payload, config);
                 
                 // Eliminar requisitos anteriores (opcional - no bloquea si falla)
-                try {
-                    const resRequisitos = await axios.get(`http://127.0.0.1:8000/api/gestion/requisitos-servicio/?servicio_id=${editingId}`, config);
-                    
-                    // Manejar respuesta con o sin paginación
-                    let requisitos = Array.isArray(resRequisitos.data) ? resRequisitos.data : (resRequisitos.data.results || []);
-                    
-                    if (requisitos.length > 0) {
-                        const promesasEliminar = requisitos.map(req =>
-                            axios.delete(`http://127.0.0.1:8000/api/gestion/requisitos-servicio/${req.id}/`, config)
-                        );
-                        await Promise.all(promesasEliminar);
+                if (canManagePrices) {
+                    try {
+                        const resRequisitos = await axios.get(`http://127.0.0.1:8000/api/gestion/requisitos-servicio/?servicio_id=${editingId}`, config);
+
+                        // Manejar respuesta con o sin paginación
+                        let requisitos = Array.isArray(resRequisitos.data) ? resRequisitos.data : (resRequisitos.data.results || []);
+
+                        if (requisitos.length > 0) {
+                            const promesasEliminar = requisitos.map(req =>
+                                axios.delete(`http://127.0.0.1:8000/api/gestion/requisitos-servicio/${req.id}/`, config)
+                            );
+                            await Promise.all(promesasEliminar);
+                        }
+                    } catch (err) {
+                        console.warn('Nota: No hay requisitos previos para eliminar');
                     }
-                } catch (err) {
-                    console.warn('Nota: No hay requisitos previos para eliminar');
                 }
                 
                 notify.success('Servicio actualizado correctamente');
@@ -269,7 +289,7 @@ const GestionarServicios = () => {
             }
 
             // Guardar requisitos de equipamiento (opcional - no bloquea si no hay o falla)
-            if (formData.requisitos_equipamiento && Array.isArray(formData.requisitos_equipamiento) && formData.requisitos_equipamiento.length > 0) {
+            if (canManagePrices && formData.requisitos_equipamiento && Array.isArray(formData.requisitos_equipamiento) && formData.requisitos_equipamiento.length > 0) {
                 const requisitosFiltrados = formData.requisitos_equipamiento
                     .filter(req => {
                         // Validar que tenga tipo_equipamiento válido
@@ -283,16 +303,25 @@ const GestionarServicios = () => {
                         cantidad_minima: Math.max(1, parseInt(req.cantidad_minima) || 1)
                     }));
                 
+                console.log('📦 Requisitos a guardar:', requisitosFiltrados);
+                
                 if (requisitosFiltrados.length > 0) {
                     try {
-                        const promesasRequisitos = requisitosFiltrados.map(reqPayload =>
-                            axios.post('http://127.0.0.1:8000/api/gestion/requisitos-servicio/', reqPayload, config)
-                        );
+                        const promesasRequisitos = requisitosFiltrados.map(reqPayload => {
+                            console.log('Enviando requisito:', reqPayload);
+                            return axios.post('http://127.0.0.1:8000/api/gestion/requisitos-servicio/', reqPayload, config);
+                        });
                         await Promise.all(promesasRequisitos);
-                        notify.success('Requisitos de equipamiento guardados');
+                        notify.success('✅ Requisitos de equipamiento guardados correctamente');
                     } catch (err) {
-                        console.warn('Algunos requisitos no se guardaron:', err.response?.data || err.message);
-                        // Continuar sin bloquear - el servicio ya se guardó
+                        const errorMsg = err.response?.data?.detail || 
+                                       err.response?.data?.non_field_errors?.[0] ||
+                                       err.response?.data?.tipo_equipamiento?.[0] ||
+                                       err.response?.data?.cantidad_minima?.[0] ||
+                                       err.message;
+                        console.error('Error al guardar requisitos:', err.response?.data || err.message);
+                        notify.error(`❌ Error al guardar equipamiento: ${errorMsg}`);
+                        throw err;
                     }
                 }
             }
@@ -302,11 +331,14 @@ const GestionarServicios = () => {
 
         } catch (error) {
             console.error(error);
-            notify.error(error.response?.data?.detail || 'No se pudo guardar el servicio');
+            notify.error(getHttpErrorMessage(error, {
+                unknown: 'No se pudo guardar el servicio.'
+            }));
         }
     };
 
     const handleDelete = async (servicioId) => {
+        if (!canManagePrices) return;
         const result = await confirmarAccion({ 
             title: "¿Desactivar servicio?",
             text: "Esta acción marcará el servicio como inactivo."
@@ -322,11 +354,14 @@ const GestionarServicios = () => {
             cargarDatos();
         } catch (error) {
             console.error(error);
-            notify.error('Error al desactivar el servicio');
+            notify.error(getHttpErrorMessage(error, {
+                unknown: 'No se pudo desactivar el servicio.'
+            }));
         }
     };
 
     const toggleActive = async (servicio) => {
+        if (!canManagePrices) return;
         try {
             const token = localStorage.getItem('access_token');
             await axios.patch(`http://127.0.0.1:8000/api/gestion/servicios/${servicio.id}/`, 
@@ -336,7 +371,9 @@ const GestionarServicios = () => {
             cargarDatos();
         } catch (error) {
             console.error(error);
-            notify.error('Error al cambiar el estado del servicio');
+            notify.error(getHttpErrorMessage(error, {
+                unknown: 'No se pudo cambiar el estado del servicio.'
+            }));
         }
     };
 
@@ -344,7 +381,7 @@ const GestionarServicios = () => {
     if (error) return <div className="p-8 text-center" style={{ color: '#C73E3E' }}>Error: {error}</div>;
 
     return (
-        <div className="p-8 min-h-screen" style={{ backgroundColor: '#F5EBE0' }}>
+        <div className="p-8 min-h-screen" style={{ backgroundColor: '#F5F5EB' }}>
             <div className="max-w-6xl mx-auto">
                 <div className="flex justify-between items-center mb-8">
                     <div>
@@ -352,7 +389,7 @@ const GestionarServicios = () => {
                         <p style={{ color: '#8B8682' }}>Define precios, rutinas automáticas e impacto en el cabello.</p>
                     </div>
                     <div className="flex gap-2">
-                        <button 
+                        {canManagePrices && <button
                             onClick={() => {
                                 resetForm();
                                 setShowModal(true);
@@ -363,10 +400,10 @@ const GestionarServicios = () => {
                             onMouseLeave={(e) => e.target.style.backgroundColor = '#AB9A91'}
                         >
                             + Nuevo Servicio
-                        </button>
-                        <button onClick={() => navigate('/admin-dashboard')} className="font-bold transition" style={{ color: '#817773' }} onMouseEnter={(e) => e.target.style.color = '#AB9A91'} onMouseLeave={(e) => e.target.style.color = '#817773'}>
+                        </button>}
+                        {returnPath && <button onClick={() => navigate(returnPath)} className="font-bold transition" style={{ color: '#817773' }} onMouseEnter={(e) => e.target.style.color = '#AB9A91'} onMouseLeave={(e) => e.target.style.color = '#817773'}>
                             ← Volver
-                        </button>
+                        </button>}
                     </div>
                 </div>
 
@@ -377,7 +414,9 @@ const GestionarServicios = () => {
                             {/* Header del Modal */}
                             <div className="flex justify-between items-center p-6 border-b" style={{ borderColor: '#D5D1CC' }}>
                                 <h3 className="text-2xl font-bold" style={{ color: '#817773' }}>
-                                    {editingId ? '✏️ Editar Servicio' : '➕ Crear Nuevo Servicio'}
+                                    {editingId
+                                        ? canManagePrices ? ' Editar Servicio' : ' Editar Fórmula'
+                                        : '+ Crear Nuevo Servicio'}
                                 </h3>
                                 <button
                                     onClick={() => resetForm()}
@@ -390,12 +429,18 @@ const GestionarServicios = () => {
                             {/* Contenido del Modal */}
                             <div className="p-6 max-h-[70vh] overflow-y-auto">
                                 <form onSubmit={handleSave} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {!canManagePrices && (
+                                <p className="md:col-span-2 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
+                                    El catálogo se muestra en modo lectura. Sólo podés modificar la fórmula técnica.
+                                </p>
+                            )}
                             {/* Nombre */}
                             <div>
                                 <label className="block text-sm font-bold mb-1" style={{ color: '#817773' }}>Nombre *</label>
                                 <input 
                                     type="text" 
                                     required
+                                    disabled={!canManagePrices}
                                     value={formData.nombre}
                                     onChange={e => setFormData({...formData, nombre: e.target.value})}
                                     className="w-full p-2 border rounded-lg focus:ring-2 outline-none"
@@ -408,6 +453,7 @@ const GestionarServicios = () => {
                             <div>
                                 <label className="block text-sm font-bold mb-1" style={{ color: '#817773' }}>Categoría</label>
                                 <select 
+                                    disabled={!canManagePrices}
                                     value={formData.categoria}
                                     onChange={e => setFormData({...formData, categoria: e.target.value})}
                                     className="w-full p-2 border rounded-lg"
@@ -427,6 +473,7 @@ const GestionarServicios = () => {
                                     type="number" 
                                     step="0.01"
                                     required
+                                    disabled={!canManagePrices}
                                     value={formData.precio_base}
                                     onChange={e => setFormData({...formData, precio_base: e.target.value})}
                                     className="w-full p-2 border rounded-lg focus:ring-2 outline-none"
@@ -440,6 +487,7 @@ const GestionarServicios = () => {
                                 <label className="block text-sm font-bold mb-1" style={{ color: '#817773' }}>Duración (minutos)</label>
                                 <input 
                                     type="number" 
+                                    disabled={!canManagePrices}
                                     value={formData.duracion_estimada}
                                     onChange={e => setFormData({...formData, duracion_estimada: e.target.value})}
                                     className="w-full p-2 border rounded-lg focus:ring-2 outline-none"
@@ -452,6 +500,7 @@ const GestionarServicios = () => {
                             <div className="md:col-span-2">
                                 <label className="block text-sm font-bold mb-1" style={{ color: '#817773' }}>Descripción</label>
                                 <textarea 
+                                    disabled={!canManagePrices}
                                     value={formData.descripcion}
                                     onChange={e => setFormData({...formData, descripcion: e.target.value})}
                                     className="w-full p-2 border rounded-lg h-20 focus:ring-2 outline-none"
@@ -461,7 +510,7 @@ const GestionarServicios = () => {
                             </div>
 
                             {/* Plantilla de Fórmula */}
-                            <div className="md:col-span-2">
+                            {canManageFormulas && <div className="md:col-span-2">
                                 <label className="block text-sm font-bold mb-3" style={{ color: '#817773' }}>Plantilla de Fórmula</label>
                                 
                                 {/* Rubios */}
@@ -688,10 +737,10 @@ const GestionarServicios = () => {
                                         </div>
                                     </div>
                                 </div>
-                            </div>
+                            </div>}
 
                             {/* Requisitos de Equipamiento */}
-                            <div className="md:col-span-2">
+                            {canManagePrices && <div className="md:col-span-2">
                                 <div className="p-4 border rounded-lg" style={{ backgroundColor: '#FFFBF5', borderColor: '#E3D5CA' }}>
                                     <div className="flex justify-between items-center mb-3">
                                         <h4 className="text-sm font-bold" style={{ color: '#817773' }}>🔧 Equipamiento Requerido</h4>
@@ -729,12 +778,22 @@ const GestionarServicios = () => {
                                                                     onChange={e => actualizarRequisito(idx, 'tipo_equipamiento', e.target.value)}
                                                                     className="w-full p-1 border rounded text-xs"
                                                                     style={{ borderColor: '#D5D1CC' }}
+                                                                    title="Solo aparecen tipos de equipamiento que tienen equipos activos cargados en el sistema"
                                                                 >
                                                                     <option value="">-- Seleccionar --</option>
-                                                                    {tiposEquipamiento.map(te => (
-                                                                        <option key={te.id} value={te.id}>{te.nombre}</option>
-                                                                    ))}
+                                                                    {tiposEquipamiento.length === 0 ? (
+                                                                        <option disabled>⚠️ Sin equipos disponibles</option>
+                                                                    ) : (
+                                                                        tiposEquipamiento.map(te => (
+                                                                            <option key={te.id} value={te.id}>{te.nombre}</option>
+                                                                        ))
+                                                                    )}
                                                                 </select>
+                                                                {tiposEquipamiento.length === 0 && (
+                                                                    <p style={{ fontSize: '0.75rem', color: '#E11D48', marginTop: '4px' }}>
+                                                                        💡 Carga equipos en Gestión de Equipamiento
+                                                                    </p>
+                                                                )}
                                                             </td>
                                                             <td className="p-2">
                                                                 <input 
@@ -773,16 +832,17 @@ const GestionarServicios = () => {
                                         </div>
                                     )}
                                 </div>
-                            </div>
+                            </div>}
 
                             {/* Rutina Automática */}
                             <div>
                                 <label className="block text-sm font-bold mb-1" style={{ color: '#817773' }}>Rutina Automática</label>
                                 <select 
+                                    disabled={!canManagePrices}
                                     value={formData.rutina_recomendada}
                                     onChange={e => setFormData({...formData, rutina_recomendada: e.target.value})}
                                     className="w-full p-2 border rounded-lg"
-                                    style={{ borderColor: '#D5D1CC', backgroundColor: '#F5EBE0', color: '#817773' }}
+                                    style={{ borderColor: '#D5D1CC', backgroundColor: '#F5F5EB', color: '#817773' }}
                                 >
                                     <option value="">-- Sin Rutina --</option>
                                     {rutinas.map(r => (
@@ -795,10 +855,11 @@ const GestionarServicios = () => {
                             <div>
                                 <label className="block text-sm font-bold mb-1" style={{ color: '#817773' }}>Impacto Porosidad</label>
                                 <select 
+                                    disabled={!canManagePrices}
                                     value={formData.impacto_porosidad}
                                     onChange={e => setFormData({...formData, impacto_porosidad: e.target.value})}
                                     className="w-full p-2 border rounded-lg"
-                                    style={{ borderColor: '#D5D1CC', backgroundColor: '#F5EBE0', color: '#817773' }}
+                                    style={{ borderColor: '#D5D1CC', backgroundColor: '#F5F5EB', color: '#817773' }}
                                 >
                                     <option value="">-- Sin Cambio --</option>
                                     {porosidades.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
@@ -809,10 +870,11 @@ const GestionarServicios = () => {
                             <div>
                                 <label className="block text-sm font-bold mb-1" style={{ color: '#817773' }}>Impacto Estado</label>
                                 <select 
+                                    disabled={!canManagePrices}
                                     value={formData.impacto_estado}
                                     onChange={e => setFormData({...formData, impacto_estado: e.target.value})}
                                     className="w-full p-2 border rounded-lg"
-                                    style={{ borderColor: '#D5D1CC', backgroundColor: '#F5EBE0', color: '#817773' }}
+                                    style={{ borderColor: '#D5D1CC', backgroundColor: '#F5F5EB', color: '#817773' }}
                                 >
                                     <option value="">-- Sin Cambio --</option>
                                     {estados.map(e => <option key={e.id} value={e.id}>{e.nombre}</option>)}
@@ -823,6 +885,7 @@ const GestionarServicios = () => {
                             <div className="flex items-center gap-2">
                                 <input 
                                     type="checkbox" 
+                                    disabled={!canManagePrices}
                                     checked={formData.activo}
                                     onChange={e => setFormData({...formData, activo: e.target.checked})}
                                     className="w-4 h-4"
@@ -898,7 +961,7 @@ const GestionarServicios = () => {
 
                                 {/* BOTONES DE ACCIÓN */}
                                 <div className="flex gap-2 w-full md:w-auto">
-                                    <button 
+                                    {canEditService && <button
                                         onClick={() => handleEdit(servicio)}
                                         className="flex-1 md:flex-none px-4 py-2 rounded-lg font-bold text-sm transition"
                                         style={{ backgroundColor: '#E3D5CA', color: '#817773' }}
@@ -906,8 +969,8 @@ const GestionarServicios = () => {
                                         onMouseLeave={(e) => e.target.style.backgroundColor = '#E3D5CA'}
                                     >
                                         Editar
-                                    </button>
-                                    <button 
+                                    </button>}
+                                    {canManagePrices && <button
                                         onClick={() => toggleActive(servicio)}
                                         className="flex-1 md:flex-none px-4 py-2 rounded-lg font-bold text-sm text-white transition"
                                         style={{ backgroundColor: servicio.activo ? '#AB9A91' : '#2E7D2E' }}
@@ -915,8 +978,8 @@ const GestionarServicios = () => {
                                         onMouseLeave={(e) => e.target.style.backgroundColor = servicio.activo ? '#AB9A91' : '#2E7D2E'}
                                     >
                                         {servicio.activo ? 'Desactivar' : 'Activar'}
-                                    </button>
-                                    <button 
+                                    </button>}
+                                    {canManagePrices && <button
                                         onClick={() => handleDelete(servicio.id)}
                                         className="flex-1 md:flex-none px-4 py-2 rounded-lg font-bold text-sm text-white transition"
                                         style={{ backgroundColor: '#AB9A91' }}
@@ -924,7 +987,7 @@ const GestionarServicios = () => {
                                         onMouseLeave={(e) => e.target.style.backgroundColor = '#AB9A91'}
                                     >
                                         Eliminar
-                                    </button>
+                                    </button>}
                                 </div>
                             </div>
                         ))

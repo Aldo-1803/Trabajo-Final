@@ -1,0 +1,99 @@
+@startuml
+title UC-11 Generación Automática de Rutina Inicial (DSS)
+
+actor Cliente
+participant ":Sistema"
+participant ":AlgoritmoMatching" as Algo
+
+'==================== PRECONDICIÓN ====================
+note over Cliente,":Sistema"
+Precondición: cliente completó el diagnóstico capilar (UC-05).
+Objetivo: asignar automáticamente la primera rutina personalizada.
+IRQ: Perfil Capilar y Diagnóstico, Rutina de Cuidado.
+**Proceso automatizado de backend.**
+end note
+
+'==================== SECUENCIA NORMAL =================
+Cliente -> ":Sistema": finalizarDiagnosticoCapilar()
+activate ":Sistema"
+":Sistema" -> ":Sistema": guardarDiagnostico(clienteId, respuestas[])
+":Sistema" --> Cliente: confirmarDiagnosticoGuardado()
+deactivate ":Sistema"
+
+'--- Proceso Backend Automático ---
+note over ":Sistema",Algo
+**Proceso Backend (trigger automático)**
+end note
+
+":Sistema" -> ":Sistema": dispararProcesoAsignacionRutina(clienteId)
+activate ":Sistema"
+":Sistema" -> ":Sistema": recuperarDiagnostico(clienteId)
+
+":Sistema" -> Algo: ejecutarAlgoritmoMatching(diagnostico)
+activate Algo
+note right of Algo
+**Algoritmo de Lógica de Negocio:**
+1. Obtener: tipoCabello, grosor, porosidad, 
+   cueroCabelludo, estadoCabello, objetivos[]
+2. Consultar PlantillasRutina activas
+3. Calcular scoring por coincidencia:
+   - Objetivo primario = peso 40%
+   - Estado cabello = peso 30%
+   - Porosidad = peso 20%
+   - Tipo + Grosor = peso 10%
+4. Seleccionar plantilla con mayor score
+5. Si empate, priorizar más reciente
+end note
+
+Algo -> Algo: calcularCompatibilidad(diagnostico, plantillas[])
+Algo --> ":Sistema": retornarPlantillaOptima(plantillaId)
+deactivate Algo
+
+alt plantilla encontrada
+  ":Sistema" -> ":Sistema": crearRutinaCliente(clienteId, plantillaId, version)\nestado = "ACTIVA"
+  ":Sistema" -> ":Sistema": copiarPasosPlantilla(plantillaId, rutinaClienteId)
+  ":Sistema" -> ":Sistema": crearNotificacion(clienteId, "rutinaDisponible")
+  ":Sistema" -> ":Sistema": enviarNotificacion(clienteId, "pushInApp")
+  deactivate ":Sistema"
+  
+  ":Sistema" --> Cliente: notificacionRutinaPersonalizada()
+
+else plantilla NO encontrada
+  ":Sistema" -> ":Sistema": asignarRutinaGenerica(clienteId, "iniciacion")
+  ":Sistema" -> ":Sistema": crearNotificacion(clienteId, "rutinaEnBreve")
+  ":Sistema" --> Cliente: notificacionRutinaIniciacion()
+  deactivate ":Sistema"
+  
+  note over ":Sistema"
+  **Excepción Paso 3:**
+  Si no hay coincidencia, se asigna rutina genérica
+  de "iniciación" o se notifica que se asignará
+  una rutina personalizada manualmente.
+  end note
+end
+
+'==================== POSTCONDICIÓN ====================
+note over Cliente,":Sistema"
+Postcondición (flujo exitoso):
+- Rutina personalizada creada y asignada al cliente.
+- Rutina vinculada a plantilla origen con versión registrada.
+- Cliente notificado que su rutina está disponible.
+end note
+
+'==================== RENDIMIENTO ======================
+note right of ":Sistema"
+Rendimiento (paso 4):
+Generación de rutina casi instantánea <= 300 ms.
+end note
+
+'==================== COMENTARIOS ======================
+note over ":Sistema"
+Tecnología:
+- Proceso backend puro (Django).
+- Se ejecuta una vez por cada cliente nuevo que completa diagnóstico.
+- Posible implementación con Django Signals (post_save de DiagnosticoCapilar).
+- Algoritmo implementado como método de servicio o celery task.
+- Notificación push in-app o email.
+- Versionado de rutinas para trazabilidad.
+end note
+@enduml

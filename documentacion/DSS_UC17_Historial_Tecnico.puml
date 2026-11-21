@@ -1,0 +1,93 @@
+@startuml
+title UC-17 Historial Técnico de Cliente (DSS)
+
+actor Profesional
+participant ":Sistema"
+
+'==================== PRECONDICIÓN ====================
+note over Profesional,":Sistema"
+Precondición:
+- Profesional ha iniciado sesión.
+- Turno existe con estado "ACEPTADO".
+- Turno tiene servicio asignado.
+Objetivo: registrar fórmula final, comentarios, fotos y estado del cabello.
+IRQ: Roles, Perfil Capilar, Servicios, Turnos, Historial Técnico.
+end note
+
+'==================== SECUENCIA NORMAL =================
+Profesional -> ":Sistema": seleccionarTurnoAceptado(turnoId)
+":Sistema" --> Profesional: mostrarDetalleTurno(turno, cliente, servicio)
+
+Profesional -> ":Sistema": elegirCargarFormulaHistorial()
+activate ":Sistema"
+":Sistema" -> ":Sistema": obtenerServicio(servicioId)
+":Sistema" -> ":Sistema": recuperarFormulaEstandar(servicioId)\nrecuperarDiagnosticoBase(clienteId)
+
+alt servicio químico con fórmula estándar
+  ":Sistema" --> Profesional: mostrarFormularioTecnico(formulaEstandar, diagnosticoBase)\ncamposQuimicos = true
+  deactivate ":Sistema"
+
+else servicio NO químico (ej. corte)
+  ":Sistema" --> Profesional: mostrarFormularioSimple()\ncamposQuimicos = false\nareaTextoLibre = true
+  deactivate ":Sistema"
+
+else servicio químico SIN fórmula previa
+  ":Sistema" --> Profesional: mostrarFormularioEnBlanco()\ncrearDesdeCero = true
+  deactivate ":Sistema"
+end
+
+Profesional -> ":Sistema": ajustarFormula(mezclaAjustada)\ncompletarEstadoFinalCabello(estado)
+":Sistema" --> Profesional: guardarCambiosTemporales()
+
+Profesional -> ":Sistema": añadirNotasTecnicas(notas)
+":Sistema" --> Profesional: guardarNotas()
+
+Profesional -> ":Sistema": capturarSubirFotografia(archivoFoto)
+activate ":Sistema"
+":Sistema" -> ":Sistema": validarArchivoImagen(archivoFoto)
+
+alt archivo válido
+  ":Sistema" -> ":Sistema": subirFotoServidor(archivoFoto)
+  ":Sistema" --> Profesional: confirmarFotoCargada(urlFoto)
+  deactivate ":Sistema"
+
+else error en carga
+  ":Sistema" --> Profesional: errorCargaImagen()\nopcion = "reintentar o guardar sin foto"
+  deactivate ":Sistema"
+end
+
+Profesional -> ":Sistema": presionarFinalizarGuardar()
+activate ":Sistema"
+":Sistema" -> ":Sistema": crearHistorialTecnico(turnoId, formulaFinal, notas, foto, estadoCabello)
+":Sistema" -> ":Sistema": cambiarEstadoTurno(turnoId, "FINALIZADO")
+":Sistema" -> ":Sistema": actualizarUltimoDiagnostico(clienteId, estadoCabello)
+":Sistema" --> Profesional: confirmarHistorialGuardado()
+deactivate ":Sistema"
+
+'==================== POSTCONDICIÓN ====================
+note over Profesional,":Sistema"
+Postcondición (flujo exitoso):
+- Turno cambia a estado "FINALIZADO".
+- Historial del cliente actualizado con fórmula final y foto.
+- Perfil capilar del cliente actualizado (ultimo_diagnostico).
+end note
+
+'==================== RENDIMIENTO ======================
+note right of ":Sistema"
+Rendimiento:
+No especificado en documentación original.
+Recomendación: 
+- Guardado de historial <= 500ms
+- Carga de foto <= 2s
+end note
+
+'==================== COMENTARIOS ======================
+note over ":Sistema"
+Tecnología:
+- Fórmula estándar definida previamente en catálogo de Servicios.
+- Al guardar HistorialTecnico, cambio automático de estado del Turno.
+- Profesional puede editar fórmula hasta 24 horas después de finalizado.
+- Almacenamiento de fotos en Django FileField o S3.
+- Diferenciación automática entre servicios químicos y no químicos.
+end note
+@enduml

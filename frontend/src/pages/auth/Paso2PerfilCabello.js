@@ -1,5 +1,6 @@
 // src/components/auth/Paso2PerfilCabello.js
 import React, { useState } from 'react';
+import { IconCheckCircle, IconInfo } from '../../components/common/Icons';
 
 // Componente de Ayuda Reutilizable (Tooltip)
 const InfoTooltip = ({ texto }) => {
@@ -11,7 +12,7 @@ const InfoTooltip = ({ texto }) => {
                 onMouseLeave={() => setVisible(false)}
                 className="cursor-pointer text-rose-500 font-bold hover:text-rose-700 text-lg"
             >
-                ℹ️
+                <IconInfo className="h-4 w-4" />
             </span>
             {visible && (
                 <div className="absolute z-10 w-56 p-3 mt-2 text-sm text-white bg-rose-600 rounded-lg shadow-xl">
@@ -29,31 +30,31 @@ function Paso2PerfilCabello({ formData, opciones, handleChange, prevStep, handle
             name: 'tipo_cabello', 
             label: 'Tipo de Cabello', 
             options: opciones.tipo_cabello || [], 
-            info: '✨ Ej: Lacio, Ondulado, Rizado, Afro. Define la textura natural de tu cabello.' 
+            info: 'Ej: Lacio, Ondulado, Rizado, Afro. Define la textura natural de tu cabello.' 
         },
         { 
             name: 'grosor_cabello', 
             label: 'Grosor del Cabello', 
             options: opciones.grosor_cabello || [], 
-            info: '📏 Ej: Fino, Medio, Grueso. Determina el diámetro de cada hebra.' 
+            info: 'Ej: Fino, Medio, Grueso. Determina el diámetro de cada hebra.' 
         },
         { 
             name: 'porosidad_cabello', 
             label: 'Porosidad', 
             options: opciones.porosidad_cabello || [], 
-            info: '💧 Baja (repele), Media (normal), Alta (absorbe rápido). Capacidad de absorber humedad.' 
+            info: 'Baja (repele), Media (normal), Alta (absorbe rápido). Capacidad de absorber humedad.' 
         },
         { 
             name: 'cuero_cabelludo', 
             label: 'Cuero Cabelludo', 
             options: opciones.cuero_cabelludo || [], 
-            info: '🧴 Ej: Seco, Normal, Graso. Refleja el estado de tu raíz.' 
+            info: 'Ej: Seco, Normal, Graso. Refleja el estado de tu raíz.' 
         },
         { 
             name: 'estado_general', 
             label: 'Estado General del Cabello', 
             options: opciones.estado_general || [], 
-            info: '💇 Cómo se siente tu cabello. Ej: Saludable, Seco, Muy Seco, Dañado.' 
+            info: 'Cómo se siente tu cabello. Ej: Saludable, Seco, Muy Seco, Dañado.' 
         },
     ];
 
@@ -62,7 +63,7 @@ function Paso2PerfilCabello({ formData, opciones, handleChange, prevStep, handle
             <h2 className="text-3xl font-bold mb-2 text-rose-900">Tu Perfil de Cabello</h2>
             <p className="text-rose-600 mb-8">
                 Esta información es clave para crear rutinas personalizadas. 
-                <span className="text-amber-600 font-medium"> Pasa el cursor sobre los íconos ℹ️ para más información.</span>
+                <span className="text-amber-600 font-medium"> Pasa el cursor sobre los íconos de info para más información.</span>
             </p>
             
             <div className="grid grid-cols-1 gap-6 mb-8">
@@ -112,7 +113,11 @@ function Paso2PerfilCabello({ formData, opciones, handleChange, prevStep, handle
                             : 'bg-gradient-to-r from-rose-400 to-orange-400 hover:from-rose-500 hover:to-orange-500 text-white hover:scale-105'
                     }`}
                 >
-                    {loading ? 'Registrando...' : '✓ Finalizar Registro'}
+                    {loading ? 'Registrando...' : (
+                        <span className="inline-flex items-center gap-2">
+                            <IconCheckCircle className="h-4 w-4" /> Finalizar Registro
+                        </span>
+                    )}
                 </button>
             </div>
         </div>

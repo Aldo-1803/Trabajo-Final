@@ -1,75 +1,113 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
-import { confirmarAccion, notify } from '../../utils/notificaciones';
+
+import TurnoSemanticActions from '../../components/TurnoSemanticActions';
+import { useSession } from '../../context/SessionContext';
+
+
+const TURNOS_URL = 'http://127.0.0.1:8000/api/gestion/turnos/';
+
 
 const GestionTurnos = () => {
-    const [turnos, setTurnos] = useState([]);
     const navigate = useNavigate();
-    const [filtroEstado, setFiltroEstado] = useState('solicitado'); // Tab activa por defecto
+    const { hasPermission } = useSession();
+    const [turnos, setTurnos] = useState([]);
+    const [filtroEstado, setFiltroEstado] = useState('solicitado');
+    const [busqueda, setBusqueda] = useState('');
+    const [filtroProfesional, setFiltroProfesional] = useState('');
+    const [filtroFecha, setFiltroFecha] = useState('');
     const [loading, setLoading] = useState(false);
-    const [procesandoId, setProcesandoId] = useState(null); // Para bloquear botones individualmente
+    const [error, setError] = useState('');
+    const [arrivalTurnoId, setArrivalTurnoId] = useState(null);
+    const [arrivalMessage, setArrivalMessage] = useState('');
 
-    // Cargar turnos cada vez que cambiamos de pestaña
-    useEffect(() => {
-        cargarTurnos();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [filtroEstado]);
+    const canRegisterArrival = hasPermission('gestion.register_arrival');
+    const canReprogramTurno = hasPermission('gestion.reprogram_any_turno');
+    const canCancelTurno = hasPermission('gestion.cancel_any_turno');
+    const hasTurnoActions = (
+        canRegisterArrival || canReprogramTurno || canCancelTurno
+    );
 
-    const cargarTurnos = async () => {
+    const cargarTurnos = useCallback(async () => {
         setLoading(true);
+        setError('');
+
         try {
-            // Usamos el filtro que creamos en el backend
             const token = localStorage.getItem('access_token');
-            const res = await axios.get(
-                `http://127.0.0.1:8000/api/gestion/turnos/?estado=${filtroEstado}`,
-                { headers: { 'Authorization': `Bearer ${token}` } }
+            const response = await axios.get(TURNOS_URL, {
+                params: {
+                    estado: filtroEstado || undefined,
+                    search: busqueda || undefined,
+                    profesional: filtroProfesional || undefined,
+                    fecha: filtroFecha || undefined
+                },
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            setTurnos(Array.isArray(response.data) ? response.data : []);
+        } catch (requestError) {
+            console.error('Error cargando turnos', requestError);
+            setTurnos([]);
+            setError(
+                requestError.response?.status === 403
+                    ? 'No tenés permisos para consultar la agenda global.'
+                    : 'No se pudo cargar la agenda.'
             );
-            setTurnos(res.data);
-        } catch (error) {
-            console.error("Error cargando turnos", error);
         } finally {
             setLoading(false);
         }
-    };
+    }, [filtroEstado, busqueda, filtroProfesional, filtroFecha]);
 
-    // Función genérica para cambiar el estado de un turno
-    const cambiarEstado = async (id, nuevoEstado) => {
-        const result = await confirmarAccion({
-            title: "¿Cambiar estado del turno?",
-            text: `Nuevo estado: ${nuevoEstado}`,
-            confirmButtonText: "Sí, cambiar"
-        });
-        if (!result.isConfirmed) return;
+    useEffect(() => {
+        cargarTurnos();
+    }, [cargarTurnos]);
 
-        setProcesandoId(id);
+    const registrarLlegada = async (turnoId) => {
+        setArrivalTurnoId(turnoId);
+        setArrivalMessage('');
+        setError('');
+
         try {
             const token = localStorage.getItem('access_token');
-            const response = await axios.patch(
-                `http://127.0.0.1:8000/api/gestion/turnos/${id}/`,
-                { estado: nuevoEstado },
-                { headers: { 'Authorization': `Bearer ${token}` } }
+            await axios.post(
+                `${TURNOS_URL}${turnoId}/registrar-llegada/`,
+                {},
+                { headers: { Authorization: `Bearer ${token}` } }
             );
-            console.log('Respuesta exitosa:', response.data);
-            // Recargamos la lista para quitar el turno de esta pestaña
-            cargarTurnos();
-            notify.success(`Turno actualizado a ${nuevoEstado}`);
-        } catch (error) {
-            console.error("Error completo:", error.response?.data || error);
-            const mensaje = error.response?.data?.estado?.[0] || 
-                           error.response?.data?.error || 
-                           error.response?.data?.detail ||
-                           JSON.stringify(error.response?.data) ||
-                           "Error al actualizar el turno";
-            notify.error(mensaje);
+            await cargarTurnos();
+            setArrivalMessage('Llegada registrada correctamente.');
+        } catch (requestError) {
+            console.error('Error registrando llegada', requestError);
+            setError(
+                requestError.response?.status === 409
+                    ? 'El Turno no admite registrar llegada en su estado actual.'
+                    : 'No se pudo registrar la llegada.'
+            );
         } finally {
-            setProcesandoId(null);
+            setArrivalTurnoId(null);
         }
     };
 
-    // Componente visual para las Tabs
+    const operationCompleted = async (message) => {
+        await cargarTurnos();
+        setError('');
+        setArrivalMessage(message);
+    };
+
+    const profesionales = Array.from(
+        new Map(
+            turnos
+                .filter((turno) => turno.profesional)
+                .map((turno) => [
+                    String(turno.profesional),
+                    turno.profesional_nombre || `Personal ${turno.profesional}`
+                ])
+        )
+    );
+
     const TabButton = ({ estado, label }) => (
         <button
+            type="button"
             onClick={() => setFiltroEstado(estado)}
             className={`px-4 py-2 font-medium rounded-t-lg border-b-2 transition-colors ${
                 filtroEstado === estado
@@ -82,28 +120,106 @@ const GestionTurnos = () => {
     );
 
     return (
-        <div className="max-w-6xl mx-auto p-6 mt-8">
+        <main className="max-w-6xl mx-auto p-6 mt-8">
             <div className="flex justify-between items-center mb-6">
-                <h1 className="text-3xl font-bold text-gray-800">Gestión de Turnos</h1>
-                <button 
-                    onClick={() => navigate('/admin-dashboard')}
+                <div>
+                    <h1 className="text-3xl font-bold text-gray-800">Gestión de Turnos</h1>
+                    <p className="mt-1 text-sm text-gray-500">
+                        Consulta de agenda y registro de llegada
+                    </p>
+                </div>
+                <button
+                    type="button"
+                    onClick={() => navigate('/operaciones')}
                     className="text-gray-500 hover:underline"
                 >
-                    ← Volver al Dashboard
+                    ← Volver a Operaciones
                 </button>
             </div>
 
-            {/* TABS DE NAVEGACIÓN */}
-            <div className="flex border-b border-gray-200 mb-6">
-                <TabButton estado="solicitado" label="Solicitudes (Análisis)" />
+            <div className="flex border-b border-gray-200 mb-6 overflow-x-auto">
+                <TabButton estado="solicitado" label="Solicitudes" />
                 <TabButton estado="esperando_sena" label="Esperando Seña" />
-                <TabButton estado="confirmado" label="Agenda Confirmada" />
+                <TabButton estado="confirmado" label="Confirmados" />
+                <TabButton estado="en_proceso" label="En proceso" />
                 <TabButton estado="realizado" label="Realizados" />
                 <TabButton estado="cancelado" label="Cancelados" />
             </div>
 
-            {/* TABLA DE TURNOS */}
-            <div className="bg-white shadow rounded-lg overflow-hidden">
+            <section className="bg-white shadow rounded-lg p-4 mb-6" aria-label="Filtros de agenda">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div>
+                        <label htmlFor="buscar-turno" className="block text-sm font-medium text-gray-700 mb-2">
+                            Buscar Cliente
+                        </label>
+                        <input
+                            id="buscar-turno"
+                            type="text"
+                            value={busqueda}
+                            onChange={(event) => setBusqueda(event.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                        />
+                    </div>
+
+                    <div>
+                        <label htmlFor="filtrar-profesional" className="block text-sm font-medium text-gray-700 mb-2">
+                            Personal
+                        </label>
+                        <select
+                            id="filtrar-profesional"
+                            value={filtroProfesional}
+                            onChange={(event) => setFiltroProfesional(event.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                        >
+                            <option value="">Todo el personal</option>
+                            {profesionales.map(([id, nombre]) => (
+                                <option key={id} value={id}>{nombre}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <div>
+                        <label htmlFor="filtrar-fecha" className="block text-sm font-medium text-gray-700 mb-2">
+                            Fecha
+                        </label>
+                        <input
+                            id="filtrar-fecha"
+                            type="date"
+                            value={filtroFecha}
+                            onChange={(event) => setFiltroFecha(event.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                        />
+                    </div>
+
+                    <div className="flex items-end">
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setBusqueda('');
+                                setFiltroProfesional('');
+                                setFiltroFecha('');
+                            }}
+                            className="w-full px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300"
+                        >
+                            Limpiar filtros
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            {error && (
+                <div role="alert" className="mb-6 rounded-lg bg-red-50 p-4 text-red-700">
+                    {error}
+                </div>
+            )}
+
+            {arrivalMessage && (
+                <div role="status" className="mb-6 rounded-lg bg-green-50 p-4 text-green-700">
+                    {arrivalMessage}
+                </div>
+            )}
+
+            <section className="bg-white shadow rounded-lg overflow-hidden" aria-label="Agenda global">
                 {loading ? (
                     <div className="p-8 text-center text-gray-500">Cargando turnos...</div>
                 ) : turnos.length === 0 ? (
@@ -112,104 +228,59 @@ const GestionTurnos = () => {
                     <table className="min-w-full divide-y divide-gray-200">
                         <thead className="bg-gray-50">
                             <tr>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Fecha/Hora</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cliente</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Servicio</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Comprobante</th>
-                                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Fecha/Hora</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cliente</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Servicio</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Personal</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Estado</th>
+                                {hasTurnoActions && (
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Acciones</th>
+                                )}
                             </tr>
                         </thead>
-                        <tbody className="bg-white divide-y divide-gray-200">
+                        <tbody className="divide-y divide-gray-200">
                             {turnos.map((turno) => (
                                 <tr key={turno.id}>
                                     <td className="px-6 py-4 whitespace-nowrap">
                                         <div className="text-sm font-bold text-gray-900">{turno.fecha}</div>
                                         <div className="text-sm text-gray-500">{turno.hora_inicio} hs</div>
                                     </td>
-                                    <td className="px-6 py-4 whitespace-nowrap">
-                                        <div className="text-sm font-medium text-gray-900">{turno.cliente_nombre || `ID: ${turno.cliente}`}</div>
-                                        <div className="text-xs text-blue-500 cursor-pointer hover:underline">Ver Perfil Capilar</div>
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap">
-                                        <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
-                                            {turno.servicio_nombre}
-                                        </span>
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap">
-                                        {turno.comprobante_pago ? (
-                                            <a 
-                                                href={turno.comprobante_pago} 
-                                                target="_blank" 
-                                                rel="noopener noreferrer"
-                                                className="text-blue-500 underline hover:text-blue-700"
-                                            >
-                                                Ver Comprobante
-                                            </a>
-                                        ) : <span className="text-gray-400 text-sm">Sin comprobante</span>}
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                        {/* BOTONES DE ACCIÓN SEGÚN EL ESTADO ACTUAL */}
-                                        
-                                        {filtroEstado === 'solicitado' && (
-                                            <div className="flex justify-end gap-2">
-                                                <button 
-                                                    onClick={() => cambiarEstado(turno.id, 'cancelado')}
-                                                    className="text-red-600 hover:text-red-900 border border-red-200 px-3 py-1 rounded hover:bg-red-50"
-                                                    disabled={procesandoId === turno.id}
+                                    <td className="px-6 py-4 text-sm text-gray-900">{turno.cliente_nombre}</td>
+                                    <td className="px-6 py-4 text-sm text-gray-700">{turno.servicio_nombre}</td>
+                                    <td className="px-6 py-4 text-sm text-gray-700">{turno.profesional_nombre || 'Sin asignar'}</td>
+                                    <td className="px-6 py-4 text-sm font-semibold text-gray-700">{turno.estado}</td>
+                                    {hasTurnoActions && (
+                                        <td className="px-6 py-4 text-sm">
+                                            {canRegisterArrival && turno.estado === 'confirmado' && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => registrarLlegada(turno.id)}
+                                                    disabled={arrivalTurnoId === turno.id}
+                                                    className="rounded-md bg-rose-700 px-3 py-2 font-semibold text-white disabled:opacity-60"
                                                 >
-                                                    Rechazar
+                                                    {arrivalTurnoId === turno.id
+                                                        ? 'Registrando...'
+                                                        : 'Registrar llegada'}
                                                 </button>
-                                                <button 
-                                                    onClick={() => cambiarEstado(turno.id, 'esperando_sena')}
-                                                    className="bg-rose-500 text-white px-3 py-1 rounded hover:bg-rose-600 shadow-sm"
-                                                    disabled={procesandoId === turno.id}
-                                                >
-                                                    Aprobar
-                                                </button>
-                                            </div>
-                                        )}
-
-                                        {filtroEstado === 'esperando_sena' && (
-                                            <div className="flex justify-end gap-2">
-                                                <button 
-                                                    onClick={() => cambiarEstado(turno.id, 'cancelado')}
-                                                    className="text-gray-500 hover:text-gray-700"
-                                                    disabled={procesandoId === turno.id}
-                                                >
-                                                    No pagó
-                                                </button>
-                                                <button 
-                                                    onClick={() => cambiarEstado(turno.id, 'confirmado')}
-                                                    className="bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700 shadow-sm"
-                                                    disabled={procesandoId === turno.id}
-                                                >
-                                                    Confirmar Pago
-                                                </button>
-                                            </div>
-                                        )}
-
-                                        {filtroEstado === 'confirmado' && (
-                                            <button 
-                                                onClick={() => cambiarEstado(turno.id, 'realizado')}
-                                                className="bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 shadow-sm"
-                                                disabled={procesandoId === turno.id}
-                                            >
-                                                Marcar como Realizado
-                                            </button>
-                                        )}
-
-                                        {filtroEstado === 'realizado' && (
-                                            <span className="text-green-600 text-xs italic font-semibold">✓ Completado</span>
-                                        )}
-                                    </td>
+                                            )}
+                                            <TurnoSemanticActions
+                                                turno={turno}
+                                                canReprogram={canReprogramTurno}
+                                                canCancel={canCancelTurno}
+                                                onCompleted={operationCompleted}
+                                                onError={setError}
+                                            />
+                                        </td>
+                                    )}
                                 </tr>
                             ))}
                         </tbody>
                     </table>
                 )}
-            </div>
-        </div>
+            </section>
+        </main>
     );
 };
+
 
 export default GestionTurnos;

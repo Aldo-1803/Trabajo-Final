@@ -1,0 +1,128 @@
+from django.utils import timezone
+from rest_framework import serializers
+
+from .models import (
+    ConsentimientoAdvertenciaAsistido,
+    Personal,
+    Servicio,
+    SolicitudTecnicaAsistidaOperacion,
+    SolicitudTecnicaReserva,
+)
+from .serializers import TechnicalBookingRequestPublicSerializer
+from .assisted_technical_booking_services import next_assisted_action
+
+
+class StrictCommandSerializer(serializers.Serializer):
+    def to_internal_value(self, data):
+        if hasattr(data, 'keys'):
+            unexpected = set(data.keys()) - set(self.fields)
+            if unexpected:
+                raise serializers.ValidationError({
+                    field: ['Este campo no está permitido.']
+                    for field in sorted(unexpected)
+                })
+        return super().to_internal_value(data)
+
+
+class AssistedTechnicalRequestCreateSerializer(StrictCommandSerializer):
+    operation_id = serializers.UUIDField()
+    cliente_id = serializers.IntegerField(min_value=1)
+    servicio_ids = serializers.PrimaryKeyRelatedField(
+        source='servicios',
+        queryset=Servicio.objects.filter(activo=True),
+        many=True,
+        allow_empty=False,
+    )
+    fecha_preferida = serializers.DateField()
+    hora_preferida = serializers.TimeField()
+    personal_preferido_id = serializers.PrimaryKeyRelatedField(
+        source='personal_preferido',
+        queryset=Personal.objects.filter(activo=True),
+        required=False,
+        allow_null=True,
+    )
+    medio_solicitud = serializers.ChoiceField(choices=(
+        SolicitudTecnicaReserva.MedioSolicitud.TELEFONO,
+        SolicitudTecnicaReserva.MedioSolicitud.PRESENCIAL,
+    ))
+
+    def validate_fecha_preferida(self, value):
+        if value < timezone.localdate():
+            raise serializers.ValidationError(
+                'La fecha preferida no puede estar en el pasado.'
+            )
+        return value
+
+    def validate_servicio_ids(self, value):
+        if len({service.pk for service in value}) != len(value):
+            raise serializers.ValidationError(
+                'No se permiten Servicios repetidos.'
+            )
+        return value
+
+
+class AssistedConsentCommandSerializer(StrictCommandSerializer):
+    operation_id = serializers.UUIDField()
+    decision = serializers.ChoiceField(
+        choices=ConsentimientoAdvertenciaAsistido.Decision.choices
+    )
+    motivo = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default='',
+        max_length=500,
+        trim_whitespace=True,
+    )
+
+
+class AssistedTechnicalRequestPublicSerializer(
+    TechnicalBookingRequestPublicSerializer
+):
+    cliente = serializers.SerializerMethodField()
+    medio_solicitud = serializers.CharField(read_only=True)
+    operation_id = serializers.SerializerMethodField()
+    consentimiento = serializers.SerializerMethodField()
+    siguiente_accion = serializers.SerializerMethodField()
+
+    class Meta(TechnicalBookingRequestPublicSerializer.Meta):
+        fields = TechnicalBookingRequestPublicSerializer.Meta.fields + (
+            'cliente',
+            'medio_solicitud',
+            'operation_id',
+            'consentimiento',
+            'siguiente_accion',
+        )
+        read_only_fields = fields
+
+    @staticmethod
+    def get_cliente(obj):
+        user = obj.cliente.usuario
+        return {
+            'id': obj.cliente_id,
+            'display_name': user.get_full_name().strip() or 'Cliente sin nombre',
+        }
+
+    @staticmethod
+    def get_operation_id(obj):
+        operation = obj.operaciones_asistidas.filter(
+            command=SolicitudTecnicaAsistidaOperacion.Command.CREATE
+        ).first()
+        return str(operation.operation_id) if operation else None
+
+    @staticmethod
+    def get_consentimiento(obj):
+        consent = obj.consentimientos_asistidos.filter(
+            evaluacion=obj.evaluacion_vigente
+        ).first()
+        if consent is None:
+            return None
+        return {
+            'decision': consent.decision,
+            'medio_solicitud': consent.medio_solicitud,
+            'mensajes_comunicados': list(consent.warning_texts),
+            'decided_at': consent.decided_at,
+        }
+
+    @staticmethod
+    def get_siguiente_accion(obj):
+        return next_assisted_action(obj)
