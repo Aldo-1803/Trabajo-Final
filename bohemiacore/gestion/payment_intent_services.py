@@ -419,8 +419,8 @@ def _options_for_terms(policy, total):
 
 
 @transaction.atomic
-def get_payment_intent_options(*, hold, actor):
-    """Cotiza B1 para un HOLD propio sin crear obligaciones ni registrar dinero."""
+def _get_payment_intent_options(*, hold, actor, scope_checker):
+    """Núcleo B1; el caller debe aportar un scope explícito."""
     if hold is None or getattr(hold, 'pk', None) is None:
         raise PaymentIntentNotFound()
     try:
@@ -441,10 +441,7 @@ def get_payment_intent_options(*, hold, actor):
         )
     except (SlotHold.DoesNotExist, SolicitudTecnicaReserva.DoesNotExist) as exc:
         raise PaymentIntentNotFound() from exc
-    if (
-        not getattr(actor, 'is_authenticated', False)
-        or getattr(actor, 'pk', None) != cliente.usuario_id
-    ):
+    if not scope_checker(locked_hold, cliente, actor):
         raise PaymentIntentNotFound()
 
     existing = next(
@@ -509,12 +506,31 @@ def get_payment_intent_options(*, hold, actor):
     )
 
 
+def get_payment_intent_options(*, hold, actor):
+    """Cotiza B1 para un HOLD propio sin crear obligaciones ni registrar dinero."""
+    return _get_payment_intent_options(
+        hold=hold,
+        actor=actor,
+        scope_checker=lambda _hold, cliente, current_actor: (
+            getattr(current_actor, 'is_authenticated', False)
+            and getattr(current_actor, 'pk', None) == cliente.usuario_id
+        ),
+    )
+
+
 def _same_create_payload(intent, *, hold_id, mode):
     return intent.slot_hold_id == hold_id and intent.mode == mode
 
 
 @transaction.atomic
-def create_payment_intent(*, hold, mode, idempotency_key, actor):
+def _create_payment_intent(
+    *,
+    hold,
+    mode,
+    idempotency_key,
+    actor,
+    scope_checker,
+):
     key = (idempotency_key or '').strip()
     if not key or len(key) > 128:
         raise PaymentIntentError(
@@ -549,10 +565,7 @@ def create_payment_intent(*, hold, mode, idempotency_key, actor):
         .select_related('usuario')
         .get(pk=locked_hold.cliente_id)
     )
-    if (
-        not getattr(actor, 'is_authenticated', False)
-        or getattr(actor, 'pk', None) != cliente.usuario_id
-    ):
+    if not scope_checker(locked_hold, cliente, actor):
         raise PaymentIntentNotFound()
 
     same_key = next(
@@ -669,6 +682,20 @@ def create_payment_intent(*, hold, mode, idempotency_key, actor):
             ) from exc
         raise
     return PaymentIntentCreateResult(intent=intent, created=True)
+
+
+def create_payment_intent(*, hold, mode, idempotency_key, actor):
+    """Canal web owner-only; el scope no es configurable por el caller."""
+    return _create_payment_intent(
+        hold=hold,
+        mode=mode,
+        idempotency_key=idempotency_key,
+        actor=actor,
+        scope_checker=lambda _hold, cliente, current_actor: (
+            getattr(current_actor, 'is_authenticated', False)
+            and getattr(current_actor, 'pk', None) == cliente.usuario_id
+        ),
+    )
 
 
 def _lock_intent_graph(*, public_id=None, intent_id=None):

@@ -71,7 +71,10 @@ const CajaPresencial = () => {
         || canReconcile
         || hasPermission('gestion.view_financial_reports');
 
-    const [search, setSearch] = useState('');
+    const initialSearch = useRef(
+        new URLSearchParams(window.location.search).get('search') || ''
+    );
+    const [search, setSearch] = useState(initialSearch.current);
     const [obligations, setObligations] = useState([]);
     const [selected, setSelected] = useState(null);
     const [payments, setPayments] = useState([]);
@@ -149,7 +152,7 @@ const CajaPresencial = () => {
     }, [applyFinancial]);
 
     useEffect(() => {
-        loadObligations();
+        loadObligations(initialSearch.current);
     }, [loadObligations]);
 
     const selectObligation = (intent) => {

@@ -5284,11 +5284,15 @@ class FichaTecnicaViewSet(viewsets.ModelViewSet):
         warnings = []
         finalization = FinalizacionTurno.objects.filter(turno=turno).first()
         if finalization is None:
-            if turno.estado != Turno.Estado.CONFIRMADO:
+            if turno.estado not in {
+                Turno.Estado.CONFIRMADO,
+                Turno.Estado.EN_PROCESO,
+            }:
                 blockers.append({
                     'code': 'INVALID_FINALIZATION_TRANSITION',
                     'detail': (
-                        'Sólo un Turno confirmado puede finalizarse.'
+                        'Sólo un Turno confirmado o con atención iniciada '
+                        'puede finalizarse.'
                     ),
                 })
             if not can_finalize:
@@ -5385,7 +5389,10 @@ class FichaTecnicaViewSet(viewsets.ModelViewSet):
                 'ready': bool(
                     finalization is None
                     and can_finalize
-                    and turno.estado == Turno.Estado.CONFIRMADO
+                    and turno.estado in {
+                        Turno.Estado.CONFIRMADO,
+                        Turno.Estado.EN_PROCESO,
+                    }
                     and not missing_required
                 ),
                 'already_finalized': finalization is not None,

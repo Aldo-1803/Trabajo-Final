@@ -465,6 +465,23 @@ describe('Trabajo técnico del Turno — recorrido profesional integrado', () =>
         await waitFor(() => expect(professionalWorkflowApi.finalizeTurno).toHaveBeenCalledWith(44, expect.stringContaining('turno-44:')));
     });
 
+    test('20b. atención iniciada conserva preflight y permite finalizar', async () => {
+        await renderWorkflow(baseContext({
+            turno_estado: 'en_proceso',
+            turno: {
+                ...baseContext().turno,
+                estado: 'en_proceso'
+            }
+        }));
+
+        fireEvent.click(openFinalization());
+
+        await waitFor(() => expect(
+            professionalWorkflowApi.finalizeTurno
+        ).toHaveBeenCalledWith(44, expect.stringContaining('turno-44:')));
+        expect(await screen.findByText('Turno REALIZADO')).toBeInTheDocument();
+    });
+
     test('21. doble clic mantiene una única operación en vuelo', async () => {
         let resolveFinalization;
         professionalWorkflowApi.finalizeTurno.mockImplementation(() => new Promise((resolve) => {

@@ -4630,6 +4630,7 @@ class SolicitudTecnicaAsistidaOperacion(models.Model):
         CONSENT = 'CONSENT', 'Registrar consentimiento asistido'
         HOLD = 'HOLD', 'Crear hold asistido'
         RELEASE = 'RELEASE', 'Liberar hold asistido'
+        INTENT = 'INTENT', 'Preparar PaymentIntent asistido'
 
     operation_id = models.UUIDField(unique=True, editable=False)
     actor = models.ForeignKey(
@@ -4659,6 +4660,13 @@ class SolicitudTecnicaAsistidaOperacion(models.Model):
         blank=True,
         related_name='operaciones_asistidas',
     )
+    payment_intent = models.ForeignKey(
+        PaymentIntent,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='operaciones_asistidas',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     objects = ImmutableAssistedOperationManager()
 
@@ -4677,16 +4685,25 @@ class SolicitudTecnicaAsistidaOperacion(models.Model):
                         command='CREATE',
                         consentimiento__isnull=True,
                         hold__isnull=True,
+                        payment_intent__isnull=True,
                     )
                     | models.Q(
                         command='CONSENT',
                         consentimiento__isnull=False,
                         hold__isnull=True,
+                        payment_intent__isnull=True,
                     )
                     | models.Q(
                         command__in=['HOLD', 'RELEASE'],
                         consentimiento__isnull=True,
                         hold__isnull=False,
+                        payment_intent__isnull=True,
+                    )
+                    | models.Q(
+                        command='INTENT',
+                        consentimiento__isnull=True,
+                        hold__isnull=False,
+                        payment_intent__isnull=False,
                     )
                 ),
                 name='assisted_technical_operation_result',
@@ -4708,6 +4725,11 @@ class SolicitudTecnicaAsistidaOperacion(models.Model):
                 errors['consentimiento'] = 'El consentimiento no coincide.'
         if self.hold_id and self.hold.solicitud_id != self.solicitud_id:
             errors['hold'] = 'El hold no coincide con la solicitud.'
+        if self.payment_intent_id:
+            if self.payment_intent.solicitud_id != self.solicitud_id:
+                errors['payment_intent'] = 'El Intent no coincide con la solicitud.'
+            if self.hold_id != self.payment_intent.slot_hold_id:
+                errors['payment_intent'] = 'El Intent no coincide con el hold.'
         if errors:
             raise ValidationError(errors)
 

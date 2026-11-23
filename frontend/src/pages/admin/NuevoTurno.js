@@ -274,10 +274,129 @@ const AssistedHoldPanel = ({
 };
 
 
+const financialStateLabel = (intent) => {
+    if (intent?.confirmed_turno_id) {
+        return `Turno confirmado #${intent.confirmed_turno_id}`;
+    }
+    const state = intent?.tracking?.state;
+    return ({
+        READY_FOR_CHECKOUT: 'Pago pendiente',
+        PAYMENT_PENDING: 'Pago pendiente de acreditación',
+        PAYMENT_VERIFICATION: 'Pago pendiente de verificación',
+        ADMIN_REVIEW: 'Pago pendiente de conciliación',
+        CHECKOUT_UNCERTAIN: 'Resultado financiero incierto; recuperar estado',
+        CHECKOUT_ERROR: 'No se pudo iniciar el pago',
+        PAID_WITHOUT_BOOKING: 'Pago conciliado con caso de recuperación abierto',
+        HOLD_EXPIRED: 'Hold vencido; el pago no puede confirmar este Turno',
+        PAYMENT_REJECTED: 'Pago rechazado',
+        CANCELLED: 'Obligación cancelada',
+        CONFIRMED: `Turno confirmado #${intent.confirmed_turno_id}`
+    }[state] || 'Pago pendiente');
+};
+
+
+const AssistedPaymentPanel = ({
+    canPrepare,
+    hold,
+    secondsRemaining,
+    options,
+    selectedMode,
+    onModeChange,
+    intent,
+    busy,
+    onLoadOptions,
+    onPrepare,
+    onRefresh,
+    uncertain,
+    onRetry
+}) => {
+    const holdActive = hold?.effective_state === 'ACTIVE' && secondsRemaining > 0;
+
+    if (!hold) return null;
+    return (
+        <section aria-label="Confirmación financiera asistida" className="space-y-4 rounded-xl border bg-white p-6 shadow">
+            <div>
+                <h2 className="text-xl font-bold text-stone-800">Confirmación financiera</h2>
+                <p className="text-stone-700">
+                    El servidor determina policy, importe, conciliación y confirmación. Preparar el Intent no registra un Pago.
+                </p>
+            </div>
+
+            {!canPrepare && (
+                <p role="status" className="rounded bg-amber-50 p-3 text-amber-950">
+                    Se requiere además el permiso efectivo para registrar Pagos. El hold no está confirmado.
+                </p>
+            )}
+
+            {canPrepare && !holdActive && !intent && (
+                <p role="status" className="rounded bg-amber-50 p-3 text-amber-950">
+                    Hold vencido o no activo. No se puede preparar una obligación financiera.
+                </p>
+            )}
+
+            {canPrepare && holdActive && !options && !intent && (
+                <button type="button" onClick={onLoadOptions} disabled={busy} className="rounded border px-4 py-2 font-semibold disabled:opacity-50">
+                    {busy ? 'Consultando...' : 'Consultar condiciones de pago'}
+                </button>
+            )}
+
+            {canPrepare && options && !intent && (
+                <div className="space-y-3 rounded bg-stone-50 p-4">
+                    <p>Total: <strong>{options.currency} {options.total_amount}</strong></p>
+                    <p>Policy: {options.policy_version} · vence {formatDateTime(options.expires_at)}</p>
+                    <label className="block font-medium">
+                        Modalidad autorizada
+                        <select aria-label="Modalidad de pago" value={selectedMode} onChange={(event) => onModeChange(event.target.value)} className="mt-1 block w-full rounded border p-2">
+                            {(options.modes || []).map((mode) => (
+                                <option key={mode.mode} value={mode.mode}>
+                                    {mode.mode === 'FULL' ? 'Pago total' : 'Seña'} — {options.currency} {mode.required_amount}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
+                    <button type="button" onClick={() => onPrepare()} disabled={busy || !selectedMode} className="rounded bg-rose-700 px-4 py-2 font-bold text-white disabled:opacity-50">
+                        {busy ? 'Preparando...' : 'Preparar obligación financiera'}
+                    </button>
+                </div>
+            )}
+
+            {canPrepare && uncertain && (
+                <button type="button" onClick={onRetry} disabled={busy} className="rounded border px-4 py-2 font-semibold disabled:opacity-50">
+                    Recuperar Intent con la misma clave
+                </button>
+            )}
+
+            {canPrepare && intent && (
+                <div className={`space-y-3 rounded p-4 ${intent.confirmed_turno_id ? 'bg-emerald-50' : 'bg-sky-50'}`}>
+                    <h3 className="font-bold" role="status">{financialStateLabel(intent)}</h3>
+                    <p>Referencia financiera: {intent.public_id}</p>
+                    <p>Umbral: {intent.currency} {intent.required_amount}</p>
+                    <p>Conciliado: {intent.currency} {intent.paid_reconciled}</p>
+                    <p>Pendiente para confirmar: {intent.currency} {intent.confirmation_due}</p>
+                    <p>Vence: {formatDateTime(intent.expires_at)}</p>
+                    <div className="flex flex-wrap gap-2">
+                        <button type="button" onClick={onRefresh} disabled={busy} className="rounded border px-4 py-2 disabled:opacity-50">
+                            {busy ? 'Recuperando...' : 'Actualizar estado financiero'}
+                        </button>
+                        {!intent.confirmed_turno_id && intent.tracking?.state !== 'HOLD_EXPIRED' && (
+                            <Link to={`${ADMIN_ROUTES.CAJA}?search=${intent.public_id}`} className="rounded bg-stone-700 px-4 py-2 font-semibold text-white">
+                                Continuar en Caja
+                            </Link>
+                        )}
+                    </div>
+                </div>
+            )}
+        </section>
+    );
+};
+
+
 const NuevoTurno = () => {
     const location = useLocation();
     const { hasPermission } = useSession();
     const canCreateForClient = hasPermission('gestion.create_turno_for_client');
+    const canPreparePayment = canCreateForClient
+        && hasPermission('gestion.register_payment');
     const initialClient = normalizeCreatedClient(location.state?.cliente);
     const mounted = useRef(true);
 
@@ -315,6 +434,13 @@ const NuevoTurno = () => {
     const releaseBusyRef = useRef(false);
     const [releaseIdentity, setReleaseIdentity] = useState(newCommandIdentity);
     const [uncertainRelease, setUncertainRelease] = useState(null);
+    const [paymentOptions, setPaymentOptions] = useState(null);
+    const [selectedPaymentMode, setSelectedPaymentMode] = useState('');
+    const [paymentIntent, setPaymentIntent] = useState(null);
+    const [paymentBusy, setPaymentBusy] = useState(false);
+    const paymentBusyRef = useRef(false);
+    const [paymentIdentity, setPaymentIdentity] = useState(newCommandIdentity);
+    const [uncertainPayment, setUncertainPayment] = useState(null);
 
     useEffect(() => {
         mounted.current = true;
@@ -584,6 +710,10 @@ const NuevoTurno = () => {
             );
             if (!mounted.current) return;
             setHold(response.data);
+            setPaymentOptions(null);
+            setSelectedPaymentMode('');
+            setPaymentIntent(null);
+            setUncertainPayment(null);
             setUncertainHold(null);
             setHoldIdentity(newCommandIdentity());
         } catch (requestError) {
@@ -634,6 +764,10 @@ const NuevoTurno = () => {
             );
             if (!mounted.current) return;
             setHold(response.data);
+            setPaymentOptions(null);
+            setSelectedPaymentMode('');
+            setPaymentIntent(null);
+            setUncertainPayment(null);
             setUncertainRelease(null);
             setReleaseIdentity(newCommandIdentity());
         } catch (requestError) {
@@ -645,6 +779,88 @@ const NuevoTurno = () => {
         } finally {
             releaseBusyRef.current = false;
             if (mounted.current) setReleaseBusy(false);
+        }
+    };
+
+    const loadPaymentOptions = async () => {
+        if (!result || !hold || !canPreparePayment || paymentBusyRef.current) return;
+        paymentBusyRef.current = true;
+        setPaymentBusy(true);
+        clearWorkflowError();
+        try {
+            const response = await axios.get(
+                requestUrl(result.id, 'pago/opciones'),
+                { params: { hold_public_id: hold.public_id } }
+            );
+            if (!mounted.current) return;
+            setPaymentOptions(response.data);
+            const existing = response.data.existing_intent;
+            if (existing) {
+                setPaymentIntent(existing);
+            } else {
+                setSelectedPaymentMode(response.data.modes?.[0]?.mode || '');
+            }
+        } catch (requestError) {
+            if (mounted.current) recordWorkflowError(requestError);
+        } finally {
+            paymentBusyRef.current = false;
+            if (mounted.current) setPaymentBusy(false);
+        }
+    };
+
+    const preparePaymentIntent = async (draft = null) => {
+        if (!result || !hold || !canPreparePayment || paymentBusyRef.current) return;
+        const activeDraft = draft || {
+            payload: {
+                operation_id: paymentIdentity.operationId,
+                hold_public_id: hold.public_id,
+                mode: selectedPaymentMode
+            },
+            identity: paymentIdentity
+        };
+        if (!activeDraft.payload.mode) {
+            setError('Seleccioná una modalidad autorizada.');
+            setErrorKind('validation');
+            return;
+        }
+        paymentBusyRef.current = true;
+        setPaymentBusy(true);
+        clearWorkflowError();
+        try {
+            const response = await axios.post(
+                requestUrl(result.id, 'pago/intent'),
+                activeDraft.payload,
+                { headers: { 'Idempotency-Key': activeDraft.identity.idempotencyKey } }
+            );
+            if (!mounted.current) return;
+            setPaymentIntent(response.data);
+            setUncertainPayment(null);
+            setPaymentIdentity(newCommandIdentity());
+        } catch (requestError) {
+            if (!mounted.current) return;
+            const classified = recordWorkflowError(requestError);
+            if (classified.kind === 'network' || classified.timeout) {
+                setUncertainPayment(activeDraft);
+            }
+        } finally {
+            paymentBusyRef.current = false;
+            if (mounted.current) setPaymentBusy(false);
+        }
+    };
+
+    const refreshPaymentIntent = async () => {
+        if (!result || !canPreparePayment || paymentBusyRef.current) return;
+        paymentBusyRef.current = true;
+        setPaymentBusy(true);
+        clearWorkflowError();
+        try {
+            const response = await axios.get(requestUrl(result.id, 'pago/intent'));
+            if (mounted.current) setPaymentIntent(response.data);
+        } catch (requestError) {
+            if (mounted.current) recordWorkflowError(requestError);
+        } finally {
+            paymentBusyRef.current = false;
+            if (mounted.current) setPaymentBusy(false);
         }
     };
 
@@ -666,6 +882,11 @@ const NuevoTurno = () => {
         setUncertainHold(null);
         setReleaseIdentity(newCommandIdentity());
         setUncertainRelease(null);
+        setPaymentOptions(null);
+        setSelectedPaymentMode('');
+        setPaymentIntent(null);
+        setPaymentIdentity(newCommandIdentity());
+        setUncertainPayment(null);
         setError('');
     };
 
@@ -799,6 +1020,23 @@ const NuevoTurno = () => {
                                 uncertainRelease={uncertainRelease}
                                 onRetryHold={() => createHold(uncertainHold)}
                                 onRetryRelease={() => releaseHold(uncertainRelease)}
+                            />
+                        )}
+                        {result.estado === 'APROBADA_TECNICAMENTE' && (
+                            <AssistedPaymentPanel
+                                canPrepare={canPreparePayment}
+                                hold={hold}
+                                secondsRemaining={secondsRemaining}
+                                options={paymentOptions}
+                                selectedMode={selectedPaymentMode}
+                                onModeChange={setSelectedPaymentMode}
+                                intent={paymentIntent}
+                                busy={paymentBusy}
+                                onLoadOptions={loadPaymentOptions}
+                                onPrepare={preparePaymentIntent}
+                                onRefresh={refreshPaymentIntent}
+                                uncertain={uncertainPayment}
+                                onRetry={() => preparePaymentIntent(uncertainPayment)}
                             />
                         )}
                         <button type="button" onClick={startAnother} className="rounded border px-4 py-2">Registrar otra solicitud</button>

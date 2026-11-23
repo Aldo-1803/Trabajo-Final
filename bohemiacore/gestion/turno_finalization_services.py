@@ -166,9 +166,12 @@ def finalize_turno(*, actor, turno_id, idempotency_key=''):
             code='IDEMPOTENCY_KEY_REUSED',
         )
 
-    if turno.estado != Turno.Estado.CONFIRMADO:
+    if turno.estado not in {
+        Turno.Estado.CONFIRMADO,
+        Turno.Estado.EN_PROCESO,
+    }:
         raise TurnoFinalizationConflict(
-            'Sólo un Turno confirmado puede finalizarse.',
+            'Sólo un Turno confirmado o con atención iniciada puede finalizarse.',
             code='INVALID_FINALIZATION_TRANSITION',
         )
 

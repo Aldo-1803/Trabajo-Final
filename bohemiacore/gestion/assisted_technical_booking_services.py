@@ -212,6 +212,7 @@ def _existing_operation(*, command, key_digest, operation_id, actor, fingerprint
             'solicitud__cliente__usuario',
             'consentimiento',
             'hold__personal',
+            'payment_intent__slot_hold',
         )
         .filter(command=command, idempotency_key_digest=key_digest)
         .first()

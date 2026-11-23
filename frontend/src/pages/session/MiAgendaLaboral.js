@@ -56,8 +56,8 @@ const MiAgendaLaboral = () => {
         } catch (requestError) {
             setError(
                 requestError.response?.status === 409
-                    ? 'El Turno no admite registrar llegada en su estado actual.'
-                    : 'No se pudo registrar la llegada.'
+                    ? 'El Turno no admite iniciar atención en su estado actual.'
+                    : 'No se pudo iniciar la atención.'
             );
         } finally {
             setArrivalTurnoId(null);
@@ -92,7 +92,7 @@ const MiAgendaLaboral = () => {
                                     <div className="flex flex-col items-end gap-2">
                                         {canRegisterArrival && turno.estado === 'confirmado' && (
                                             <button type="button" onClick={() => registerArrival(turno.id)} disabled={arrivalTurnoId === turno.id} className="rounded-lg bg-rose-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60">
-                                                {arrivalTurnoId === turno.id ? 'Registrando...' : 'Registrar llegada'}
+                                                {arrivalTurnoId === turno.id ? 'Iniciando...' : 'Iniciar atención'}
                                             </button>
                                         )}
                                         <TurnoSemanticActions turno={turno} canReprogram={canReprogram} canCancel={canCancel} onCompleted={loadAgenda} onError={setError} />

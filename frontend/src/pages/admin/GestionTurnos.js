@@ -75,13 +75,13 @@ const GestionTurnos = () => {
                 { headers: { Authorization: `Bearer ${token}` } }
             );
             await cargarTurnos();
-            setArrivalMessage('Llegada registrada correctamente.');
+            setArrivalMessage('Atención iniciada correctamente.');
         } catch (requestError) {
             console.error('Error registrando llegada', requestError);
             setError(
                 requestError.response?.status === 409
-                    ? 'El Turno no admite registrar llegada en su estado actual.'
-                    : 'No se pudo registrar la llegada.'
+                    ? 'El Turno no admite iniciar atención en su estado actual.'
+                    : 'No se pudo iniciar la atención.'
             );
         } finally {
             setArrivalTurnoId(null);
@@ -125,7 +125,7 @@ const GestionTurnos = () => {
                 <div>
                     <h1 className="text-3xl font-bold text-gray-800">Gestión de Turnos</h1>
                     <p className="mt-1 text-sm text-gray-500">
-                        Consulta de agenda y registro de llegada
+                        Consulta de agenda e inicio de atención
                     </p>
                 </div>
                 <button
@@ -259,8 +259,8 @@ const GestionTurnos = () => {
                                                     className="rounded-md bg-rose-700 px-3 py-2 font-semibold text-white disabled:opacity-60"
                                                 >
                                                     {arrivalTurnoId === turno.id
-                                                        ? 'Registrando...'
-                                                        : 'Registrar llegada'}
+                                                        ? 'Iniciando...'
+                                                        : 'Iniciar atención'}
                                                 </button>
                                             )}
                                             <TurnoSemanticActions

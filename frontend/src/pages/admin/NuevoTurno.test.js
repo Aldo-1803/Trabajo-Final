@@ -55,6 +55,35 @@ const activeHold = {
     hold_notice: 'Este hold no equivale a un Turno confirmado.',
     next_action: { code: 'HOLD_ACTIVE_PENDING_PAYMENT', can_confirm_turno: false }
 };
+const paymentOptions = {
+    slot_hold_public_id: activeHold.public_id,
+    policy_version: 'BH063-I4-T1',
+    total_amount: '1500.00',
+    currency: 'ARS',
+    expires_at: '2026-12-10T10:15:00-03:00',
+    modes: [
+        { mode: 'DEPOSIT', required_amount: '300.00' },
+        { mode: 'FULL', required_amount: '1500.00' }
+    ],
+    existing_intent: null
+};
+const pendingIntent = {
+    public_id: 'bb0fdce0-d70b-4a3a-9719-a7fa2cb40a4a',
+    operation_id: '38fdb0c1-2a2f-4cbd-b26e-1dbec8bf7c53',
+    slot_hold_public_id: activeHold.public_id,
+    policy_version: 'BH063-I4-T1',
+    mode: 'DEPOSIT',
+    required_amount: '300.00',
+    total_amount_snapshot: '1500.00',
+    currency: 'ARS',
+    paid_reconciled: '0.00',
+    confirmation_due: '300.00',
+    financial_threshold_reached: false,
+    confirmed_turno_id: null,
+    effective_status: 'CREATED',
+    expires_at: '2026-12-10T10:15:00-03:00',
+    tracking: { state: 'READY_FOR_CHECKOUT', requires_polling: false }
+};
 const baseResult = (outcome, overrides = {}) => ({
     id: 91,
     estado: outcome === 'APTO'
@@ -84,11 +113,18 @@ const baseResult = (outcome, overrides = {}) => ({
 });
 
 
-const renderPage = ({ permission = true, routeState = null } = {}) => {
+const renderPage = ({
+    permission = true,
+    paymentPermission = false,
+    routeState = null
+} = {}) => {
     mockLocationState = routeState;
     useSession.mockReturnValue({
         hasPermission: (value) => (
-            permission && value === 'gestion.create_turno_for_client'
+            permission && (
+                value === 'gestion.create_turno_for_client'
+                || paymentPermission && value === 'gestion.register_payment'
+            )
         )
     });
     return render(<NuevoTurno />);
@@ -480,5 +516,257 @@ describe('Solicitud técnica asistida', () => {
         expect(screen.getByRole('alert')).toHaveTextContent(/No tenés autorización/);
         expect(screen.queryByRole('button', { name: 'Consultar disponibilidad' })).not.toBeInTheDocument();
         expect(axios.get).toHaveBeenCalledTimes(callsBeforeRevocation);
+    });
+
+    test('autoridad compuesta prepara Intent sin enviar monto, policy ni estado', async () => {
+        axios.get.mockImplementation((url) => {
+            if (url === '/api/gestion/servicios/') return Promise.resolve({ data: services });
+            if (url.endsWith('/disponibilidad/')) return Promise.resolve({ data: availability });
+            if (url.endsWith('/pago/opciones/')) return Promise.resolve({ data: paymentOptions });
+            return Promise.reject(new Error(`Unexpected URL: ${url}`));
+        });
+        axios.post.mockImplementation((url) => {
+            if (url === '/api/gestion/solicitudes-tecnicas-asistidas/') {
+                return Promise.resolve({ data: baseResult('APTO') });
+            }
+            if (url.endsWith('/hold/')) return Promise.resolve({ data: activeHold });
+            if (url.endsWith('/pago/intent/')) return Promise.resolve({ data: pendingIntent });
+            return Promise.reject(new Error(`Unexpected URL: ${url}`));
+        });
+        renderPage({
+            paymentPermission: true,
+            routeState: { cliente: {
+                cliente_id: 11, display_name: 'Laura Gómez', cliente_activo: true
+            } }
+        });
+        await submitApprovedRequest();
+        await chooseAvailableSlot();
+        fireEvent.click(screen.getByRole('button', { name: 'Crear hold temporal' }));
+        await screen.findByText('Hold activo');
+        fireEvent.click(screen.getByRole('button', { name: 'Consultar condiciones de pago' }));
+        expect(await screen.findByText(/Policy: BH063-I4-T1/)).toBeInTheDocument();
+        const prepare = screen.getByRole('button', {
+            name: 'Preparar obligación financiera'
+        });
+        fireEvent.click(prepare);
+        fireEvent.click(prepare);
+        expect(await screen.findByText('Pago pendiente')).toBeInTheDocument();
+        const intentCalls = axios.post.mock.calls.filter(
+            ([url]) => url.endsWith('/pago/intent/')
+        );
+        expect(intentCalls).toHaveLength(1);
+        expect(intentCalls[0][1]).toEqual({
+            operation_id: expect.any(String),
+            hold_public_id: activeHold.public_id,
+            mode: 'DEPOSIT'
+        });
+        expect(intentCalls[0][1]).not.toHaveProperty('amount');
+        expect(intentCalls[0][1]).not.toHaveProperty('policy_version');
+        expect(intentCalls[0][1]).not.toHaveProperty('status');
+        expect(screen.getByRole('link', { name: 'Continuar en Caja' }))
+            .toHaveAttribute('href', `/admin/caja?search=${pendingIntent.public_id}`);
+        expect(screen.queryByText(/Turno confirmado #/)).not.toBeInTheDocument();
+    });
+
+    test('timeout al preparar conserva identidad y recupera con la misma clave', async () => {
+        const timeout = Object.assign(new Error('timeout'), { code: 'ECONNABORTED' });
+        axios.get.mockImplementation((url) => {
+            if (url === '/api/gestion/servicios/') return Promise.resolve({ data: services });
+            if (url.endsWith('/disponibilidad/')) return Promise.resolve({ data: availability });
+            if (url.endsWith('/pago/opciones/')) return Promise.resolve({ data: paymentOptions });
+            return Promise.reject(new Error(`Unexpected URL: ${url}`));
+        });
+        axios.post
+            .mockResolvedValueOnce({ data: baseResult('APTO') })
+            .mockResolvedValueOnce({ data: activeHold })
+            .mockRejectedValueOnce(timeout)
+            .mockResolvedValueOnce({ data: { ...pendingIntent, recovered: true } });
+        renderPage({
+            paymentPermission: true,
+            routeState: { cliente: {
+                cliente_id: 11, display_name: 'Laura Gómez', cliente_activo: true
+            } }
+        });
+        await submitApprovedRequest();
+        await chooseAvailableSlot();
+        fireEvent.click(screen.getByRole('button', { name: 'Crear hold temporal' }));
+        await screen.findByText('Hold activo');
+        fireEvent.click(screen.getByRole('button', { name: 'Consultar condiciones de pago' }));
+        await screen.findByText(/Policy: BH063-I4-T1/);
+        fireEvent.click(screen.getByRole('button', { name: 'Preparar obligación financiera' }));
+        const retry = await screen.findByRole('button', {
+            name: 'Recuperar Intent con la misma clave'
+        });
+        const first = axios.post.mock.calls.find(([url]) => url.endsWith('/pago/intent/'));
+        fireEvent.click(retry);
+        await screen.findByText('Pago pendiente');
+        const intentCalls = axios.post.mock.calls.filter(
+            ([url]) => url.endsWith('/pago/intent/')
+        );
+        expect(intentCalls).toHaveLength(2);
+        expect(intentCalls[1][1]).toEqual(first[1]);
+        expect(intentCalls[1][2]).toEqual(first[2]);
+    });
+
+    test('recupera estado confirmado y sólo entonces muestra referencia de Turno', async () => {
+        axios.get.mockImplementation((url) => {
+            if (url === '/api/gestion/servicios/') return Promise.resolve({ data: services });
+            if (url.endsWith('/disponibilidad/')) return Promise.resolve({ data: availability });
+            if (url.endsWith('/pago/opciones/')) return Promise.resolve({ data: paymentOptions });
+            if (url.endsWith('/pago/intent/')) return Promise.resolve({ data: {
+                ...pendingIntent,
+                paid_reconciled: '300.00',
+                confirmation_due: '0.00',
+                financial_threshold_reached: true,
+                confirmed_turno_id: 721,
+                effective_status: 'APPROVED',
+                tracking: { state: 'CONFIRMED', requires_polling: false }
+            } });
+            return Promise.reject(new Error(`Unexpected URL: ${url}`));
+        });
+        axios.post
+            .mockResolvedValueOnce({ data: baseResult('APTO') })
+            .mockResolvedValueOnce({ data: activeHold })
+            .mockResolvedValueOnce({ data: pendingIntent });
+        renderPage({
+            paymentPermission: true,
+            routeState: { cliente: {
+                cliente_id: 11, display_name: 'Laura Gómez', cliente_activo: true
+            } }
+        });
+        await submitApprovedRequest();
+        await chooseAvailableSlot();
+        fireEvent.click(screen.getByRole('button', { name: 'Crear hold temporal' }));
+        await screen.findByText('Hold activo');
+        fireEvent.click(screen.getByRole('button', { name: 'Consultar condiciones de pago' }));
+        await screen.findByText(/Policy: BH063-I4-T1/);
+        fireEvent.click(screen.getByRole('button', { name: 'Preparar obligación financiera' }));
+        await screen.findByText('Pago pendiente');
+        expect(screen.queryByText('Turno confirmado #721')).not.toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: 'Actualizar estado financiero' }));
+        expect(await screen.findByText('Turno confirmado #721')).toBeInTheDocument();
+        expect(screen.queryByRole('link', { name: 'Continuar en Caja' }))
+            .not.toBeInTheDocument();
+    });
+
+    test('sin register_payment no consulta ni expone datos financieros', async () => {
+        axios.get.mockImplementation((url) => {
+            if (url === '/api/gestion/servicios/') return Promise.resolve({ data: services });
+            if (url.endsWith('/disponibilidad/')) return Promise.resolve({ data: availability });
+            return Promise.reject(new Error(`Unexpected URL: ${url}`));
+        });
+        axios.post.mockImplementation((url) => {
+            if (url === '/api/gestion/solicitudes-tecnicas-asistidas/') {
+                return Promise.resolve({ data: baseResult('APTO') });
+            }
+            if (url.endsWith('/hold/')) return Promise.resolve({ data: activeHold });
+            return Promise.reject(new Error(`Unexpected URL: ${url}`));
+        });
+        renderPage({ routeState: { cliente: {
+            cliente_id: 11, display_name: 'Laura Gómez', cliente_activo: true
+        } } });
+        await submitApprovedRequest();
+        await chooseAvailableSlot();
+        fireEvent.click(screen.getByRole('button', { name: 'Crear hold temporal' }));
+        expect(await screen.findByText(/Se requiere además el permiso efectivo/))
+            .toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Consultar condiciones de pago' }))
+            .not.toBeInTheDocument();
+        expect(axios.get.mock.calls.some(([url]) => url.includes('/pago/'))).toBe(false);
+    });
+
+    test.each([401, 403, 409])(
+        'preparación financiera maneja %s sin inventar confirmación',
+        async (httpStatus) => {
+            axios.get.mockImplementation((url) => {
+                if (url === '/api/gestion/servicios/') return Promise.resolve({ data: services });
+                if (url.endsWith('/disponibilidad/')) return Promise.resolve({ data: availability });
+                if (url.endsWith('/pago/opciones/')) return Promise.resolve({ data: paymentOptions });
+                return Promise.reject(new Error(`Unexpected URL: ${url}`));
+            });
+            axios.post.mockImplementation((url) => {
+                if (url === '/api/gestion/solicitudes-tecnicas-asistidas/') {
+                    return Promise.resolve({ data: baseResult('APTO') });
+                }
+                if (url.endsWith('/hold/')) return Promise.resolve({ data: activeHold });
+                if (url.endsWith('/pago/intent/')) return Promise.reject({
+                    response: { status: httpStatus, data: { error: {
+                        code: `SAFE_FINANCIAL_${httpStatus}`,
+                        detail: `Estado financiero seguro ${httpStatus}`
+                    } } }
+                });
+                return Promise.reject(new Error(`Unexpected URL: ${url}`));
+            });
+            renderPage({
+                paymentPermission: true,
+                routeState: { cliente: {
+                    cliente_id: 11,
+                    display_name: 'Laura Gómez',
+                    cliente_activo: true
+                } }
+            });
+            await submitApprovedRequest();
+            await chooseAvailableSlot();
+            fireEvent.click(screen.getByRole('button', { name: 'Crear hold temporal' }));
+            await screen.findByText('Hold activo');
+            fireEvent.click(screen.getByRole('button', { name: 'Consultar condiciones de pago' }));
+            await screen.findByText(/Policy: BH063-I4-T1/);
+            fireEvent.click(screen.getByRole('button', {
+                name: 'Preparar obligación financiera'
+            }));
+            expect(await screen.findByRole('alert')).toHaveTextContent({
+                401: 'Tu sesión finalizó',
+                403: 'No tenés autorización',
+                409: 'Estado financiero seguro 409'
+            }[httpStatus]);
+            expect(screen.queryByText(/Turno confirmado #/)).not.toBeInTheDocument();
+            expect(screen.queryByRole('link', { name: 'Continuar en Caja' }))
+                .not.toBeInTheDocument();
+        }
+    );
+
+    test('revocar register_payment oculta la proyección financiera ya cargada', async () => {
+        axios.get.mockImplementation((url) => {
+            if (url === '/api/gestion/servicios/') return Promise.resolve({ data: services });
+            if (url.endsWith('/disponibilidad/')) return Promise.resolve({ data: availability });
+            if (url.endsWith('/pago/opciones/')) return Promise.resolve({ data: paymentOptions });
+            return Promise.reject(new Error(`Unexpected URL: ${url}`));
+        });
+        axios.post.mockImplementation((url) => {
+            if (url === '/api/gestion/solicitudes-tecnicas-asistidas/') {
+                return Promise.resolve({ data: baseResult('APTO') });
+            }
+            if (url.endsWith('/hold/')) return Promise.resolve({ data: activeHold });
+            if (url.endsWith('/pago/intent/')) return Promise.resolve({ data: pendingIntent });
+            return Promise.reject(new Error(`Unexpected URL: ${url}`));
+        });
+        const view = renderPage({
+            paymentPermission: true,
+            routeState: { cliente: {
+                cliente_id: 11, display_name: 'Laura Gómez', cliente_activo: true
+            } }
+        });
+        await submitApprovedRequest();
+        await chooseAvailableSlot();
+        fireEvent.click(screen.getByRole('button', { name: 'Crear hold temporal' }));
+        await screen.findByText('Hold activo');
+        fireEvent.click(screen.getByRole('button', { name: 'Consultar condiciones de pago' }));
+        await screen.findByText(/Policy: BH063-I4-T1/);
+        fireEvent.click(screen.getByRole('button', { name: 'Preparar obligación financiera' }));
+        await screen.findByText('Pago pendiente');
+        expect(screen.getByText(new RegExp(pendingIntent.public_id)))
+            .toBeInTheDocument();
+
+        useSession.mockReturnValue({
+            hasPermission: (value) => value === 'gestion.create_turno_for_client'
+        });
+        view.rerender(<NuevoTurno />);
+
+        expect(screen.getByText(/Se requiere además el permiso efectivo/))
+            .toBeInTheDocument();
+        expect(screen.queryByText(new RegExp(pendingIntent.public_id)))
+            .not.toBeInTheDocument();
+        expect(screen.queryByRole('link', { name: 'Continuar en Caja' }))
+            .not.toBeInTheDocument();
     });
 });

@@ -127,7 +127,25 @@ class TurnoFinalizationApiTests(APITestCase):
         self.assertEqual(finalization.estado_anterior, Turno.Estado.CONFIRMADO)
         self.assertEqual(finalization.idempotency_key, 'confirmed-finalization')
 
-    def test_only_confirmed_turno_can_be_finalized(self):
+    def test_started_turno_is_finalized_with_origin_state_persisted(self):
+        turno = self.create_turno(state=Turno.Estado.EN_PROCESO)
+
+        response = self.client.post(
+            self.url(turno),
+            {},
+            format='json',
+            HTTP_IDEMPOTENCY_KEY='started-finalization',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['changed'])
+        turno.refresh_from_db()
+        self.assertEqual(turno.estado, Turno.Estado.REALIZADO)
+        finalization = FinalizacionTurno.objects.get(turno=turno)
+        self.assertEqual(finalization.estado_anterior, Turno.Estado.EN_PROCESO)
+        self.assertEqual(finalization.estado_final, Turno.Estado.REALIZADO)
+
+    def test_only_confirmed_or_started_turno_can_be_finalized(self):
         invalid_states = (
             Turno.Estado.SOLICITADO,
             Turno.Estado.ESPERANDO_SENA,
@@ -135,7 +153,6 @@ class TurnoFinalizationApiTests(APITestCase):
             Turno.Estado.CANCELADO,
             Turno.Estado.AUSENTE,
             Turno.Estado.PENDIENTE,
-            Turno.Estado.EN_PROCESO,
             Turno.Estado.REALIZADO,
         )
 

@@ -416,12 +416,20 @@ def create_confirmed_turno_from_locked_hold(
 
     try:
         with transaction.atomic():
+            source = (
+                Turno.CanalOrigen.PRESENCIAL
+                if solicitud.medio_solicitud in {
+                    SolicitudTecnicaReserva.MedioSolicitud.TELEFONO,
+                    SolicitudTecnicaReserva.MedioSolicitud.PRESENCIAL,
+                }
+                else Turno.CanalOrigen.WEB
+            )
             turno = TurnoCreationService._create_from_locked_resources(
                 cliente=resources.cliente,
                 profesional=resources.personal,
                 fecha=local_start.date(),
                 hora_inicio=local_start.time().replace(tzinfo=None),
-                source=Turno.CanalOrigen.WEB,
+                source=source,
                 estado=Turno.Estado.CONFIRMADO,
                 detail_drafts=tuple(
                     TurnoDetailDraft(

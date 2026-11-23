@@ -182,7 +182,7 @@ describe('Operaciones por permisos efectivos', () => {
             ]
         });
 
-        expect(await screen.findByRole('button', { name: 'Registrar llegada' }))
+        expect(await screen.findByRole('button', { name: 'Iniciar atención' }))
             .toBeInTheDocument();
     });
 
@@ -192,7 +192,7 @@ describe('Operaciones por permisos efectivos', () => {
         renderOperations({ permissions: ['gestion.view_global_agenda'] });
 
         expect(await screen.findByText('Ana Pérez')).toBeInTheDocument();
-        expect(screen.queryByRole('button', { name: 'Registrar llegada' }))
+        expect(screen.queryByRole('button', { name: 'Iniciar atención' }))
             .not.toBeInTheDocument();
     });
 
@@ -200,7 +200,7 @@ describe('Operaciones por permisos efectivos', () => {
         renderOperations({ permissions: ['gestion.register_arrival'] });
 
         expect(screen.queryByText('Turnos de hoy')).not.toBeInTheDocument();
-        expect(screen.queryByRole('button', { name: 'Registrar llegada' }))
+        expect(screen.queryByRole('button', { name: 'Iniciar atención' }))
             .not.toBeInTheDocument();
         expect(axios.get).not.toHaveBeenCalled();
     });
@@ -223,7 +223,7 @@ describe('Operaciones por permisos efectivos', () => {
             'http://127.0.0.1:8000/api/gestion/turnos/mi-agenda-laboral/',
             { headers: { Authorization: 'Bearer test-token' } }
         );
-        expect(await screen.findByRole('button', { name: 'Registrar llegada' }))
+        expect(await screen.findByRole('button', { name: 'Iniciar atención' }))
             .toBeInTheDocument();
         expect(screen.queryByRole('link', { name: 'Ver agenda' })).not.toBeInTheDocument();
     });
@@ -269,7 +269,7 @@ describe('Operaciones por permisos efectivos', () => {
             });
 
             expect(await screen.findByText('Ana Pérez')).toBeInTheDocument();
-            expect(screen.queryByRole('button', { name: 'Registrar llegada' }))
+            expect(screen.queryByRole('button', { name: 'Iniciar atención' }))
                 .not.toBeInTheDocument();
         }
     );
@@ -290,7 +290,7 @@ describe('Operaciones por permisos efectivos', () => {
             ]
         });
 
-        fireEvent.click(await screen.findByRole('button', { name: 'Registrar llegada' }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Iniciar atención' }));
 
         await waitFor(() => expect(axios.post).toHaveBeenCalledWith(
             'http://127.0.0.1:8000/api/gestion/turnos/10/registrar-llegada/',
@@ -299,7 +299,7 @@ describe('Operaciones por permisos efectivos', () => {
         ));
         await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(2));
         expect(await screen.findByText('Estado: en_proceso')).toBeInTheDocument();
-        expect(screen.getByText('Llegada registrada correctamente.')).toBeInTheDocument();
+        expect(screen.getByText('Atención iniciada correctamente.')).toBeInTheDocument();
         expect(axios.patch).not.toHaveBeenCalled();
     });
 
@@ -318,10 +318,10 @@ describe('Operaciones por permisos efectivos', () => {
             ]
         });
 
-        fireEvent.click(await screen.findByRole('button', { name: 'Registrar llegada' }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Iniciar atención' }));
 
         expect(await screen.findByRole('alert')).toHaveTextContent(
-            'El Turno no admite registrar llegada en su estado actual.'
+            'El Turno no admite iniciar atención en su estado actual.'
         );
         expect(screen.getByText('Estado: confirmado')).toBeInTheDocument();
         expect(axios.get).toHaveBeenCalledTimes(1);

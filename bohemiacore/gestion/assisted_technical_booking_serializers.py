@@ -3,12 +3,14 @@ from rest_framework import serializers
 
 from .models import (
     ConsentimientoAdvertenciaAsistido,
+    PaymentIntent,
     Personal,
     Servicio,
     SolicitudTecnicaAsistidaOperacion,
     SolicitudTecnicaReserva,
 )
 from .serializers import (
+    PaymentIntentPublicSerializer,
     SlotHoldPublicSerializer,
     TechnicalBookingRequestPublicSerializer,
 )
@@ -92,6 +94,27 @@ class AssistedSlotHoldReleaseSerializer(StrictCommandSerializer):
 
 class AssistedNextSlotQuerySerializer(StrictCommandSerializer):
     personal_id = serializers.IntegerField(min_value=1, required=False)
+
+
+class AssistedPaymentOptionsQuerySerializer(StrictCommandSerializer):
+    hold_public_id = serializers.UUIDField()
+
+
+class AssistedPaymentIntentCreateSerializer(StrictCommandSerializer):
+    operation_id = serializers.UUIDField()
+    hold_public_id = serializers.UUIDField()
+    mode = serializers.ChoiceField(choices=PaymentIntent.Mode.choices)
+
+
+class AssistedPaymentIntentPublicSerializer(PaymentIntentPublicSerializer):
+    operation_id = serializers.SerializerMethodField()
+
+    class Meta(PaymentIntentPublicSerializer.Meta):
+        fields = PaymentIntentPublicSerializer.Meta.fields + ('operation_id',)
+        read_only_fields = fields
+
+    def get_operation_id(self, _obj):
+        return self.context.get('operation_id')
 
 
 class AssistedSlotHoldPublicSerializer(SlotHoldPublicSerializer):

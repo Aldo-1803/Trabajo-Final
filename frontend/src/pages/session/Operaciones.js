@@ -97,13 +97,13 @@ const Operaciones = () => {
                 { headers: { Authorization: `Bearer ${token}` } }
             );
             await cargarTurnosHoy();
-            setArrivalMessage('Llegada registrada correctamente.');
+            setArrivalMessage('Atención iniciada correctamente.');
         } catch (requestError) {
             console.error('Error registrando llegada', requestError);
             setArrivalError(
                 requestError.response?.status === 409
-                    ? 'El Turno no admite registrar llegada en su estado actual.'
-                    : 'No se pudo registrar la llegada.'
+                    ? 'El Turno no admite iniciar atención en su estado actual.'
+                    : 'No se pudo iniciar la atención.'
             );
         } finally {
             setArrivalTurnoId(null);
@@ -187,8 +187,8 @@ const Operaciones = () => {
                                                             className="rounded-lg bg-rose-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
                                                         >
                                                             {arrivalTurnoId === turno.id
-                                                                ? 'Registrando...'
-                                                                : 'Registrar llegada'}
+                                                                ? 'Iniciando...'
+                                                                : 'Iniciar atención'}
                                                         </button>
                                                     )}
                                                     <TurnoSemanticActions

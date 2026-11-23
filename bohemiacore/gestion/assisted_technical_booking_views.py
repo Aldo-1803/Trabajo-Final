@@ -6,11 +6,19 @@ from rest_framework.response import Response
 from .assisted_technical_booking_serializers import (
     AssistedConsentCommandSerializer,
     AssistedNextSlotQuerySerializer,
+    AssistedPaymentIntentCreateSerializer,
+    AssistedPaymentIntentPublicSerializer,
+    AssistedPaymentOptionsQuerySerializer,
     AssistedSlotHoldCreateSerializer,
     AssistedSlotHoldPublicSerializer,
     AssistedSlotHoldReleaseSerializer,
     AssistedTechnicalRequestCreateSerializer,
     AssistedTechnicalRequestPublicSerializer,
+)
+from .assisted_payment_services import (
+    assisted_payment_intent_for_actor,
+    assisted_payment_options,
+    prepare_assisted_payment_intent,
 )
 from .assisted_technical_booking_services import (
     AssistedTechnicalBookingConflict,
@@ -109,6 +117,16 @@ class AssistedTechnicalRequestViewSet(viewsets.GenericViewSet):
     def _serialize_hold(hold, *, operation_id=None):
         return dict(AssistedSlotHoldPublicSerializer(
             hold,
+            context={
+                'database_now': database_now(),
+                'operation_id': operation_id,
+            },
+        ).data)
+
+    @staticmethod
+    def _serialize_intent(intent, *, operation_id=None):
+        return dict(AssistedPaymentIntentPublicSerializer(
+            intent,
             context={
                 'database_now': database_now(),
                 'operation_id': operation_id,
@@ -325,3 +343,99 @@ class AssistedTechnicalRequestViewSet(viewsets.GenericViewSet):
             'expiration_materialized': result.expiration_materialized,
         })
         return Response(data)
+
+    @action(
+        detail=True,
+        methods=['get'],
+        url_path='pago/opciones',
+        url_name='opciones-pago',
+    )
+    def opciones_pago(self, request, pk=None):
+        serializer = AssistedPaymentOptionsQuerySerializer(
+            data=request.query_params
+        )
+        if not serializer.is_valid():
+            return self._invalid_payload(
+                'La consulta financiera asistida es inválida.',
+                serializer.errors,
+            )
+        result, error = self._execute_domain_command(lambda: (
+            assisted_payment_options(
+                solicitud_id=pk,
+                actor=request.user,
+                **serializer.validated_data,
+            )
+        ))
+        if error:
+            return error
+        return Response({
+            'slot_hold_public_id': str(result.hold.public_id),
+            'policy_version': result.policy_version,
+            'total_amount': str(result.total_amount),
+            'currency': result.currency,
+            'expires_at': result.expires_at.isoformat(),
+            'modes': [
+                {
+                    'mode': option.mode,
+                    'required_amount': str(option.required_amount),
+                }
+                for option in result.modes
+            ],
+            'existing_intent': (
+                self._serialize_intent(result.existing_intent)
+                if result.existing_intent is not None
+                else None
+            ),
+        })
+
+    @action(
+        detail=True,
+        methods=['get', 'post'],
+        url_path='pago/intent',
+        url_name='intent-pago',
+    )
+    def intent_pago(self, request, pk=None):
+        if request.method == 'GET':
+            result, error = self._execute_domain_command(lambda: (
+                assisted_payment_intent_for_actor(
+                    solicitud_id=pk,
+                    actor=request.user,
+                )
+            ))
+            if error:
+                return error
+            intent, operation_id = result
+            return Response(self._serialize_intent(
+                intent,
+                operation_id=operation_id,
+            ))
+
+        serializer = AssistedPaymentIntentCreateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return self._invalid_payload(
+                'El payload de Intent asistido es inválido.',
+                serializer.errors,
+            )
+        result, error = self._execute_domain_command(lambda: (
+            prepare_assisted_payment_intent(
+                solicitud_id=pk,
+                actor=request.user,
+                idempotency_key=request.headers.get('Idempotency-Key'),
+                **serializer.validated_data,
+            )
+        ))
+        if error:
+            return error
+        data = self._serialize_intent(
+            result.intent,
+            operation_id=result.operation_id,
+        )
+        data['recovered'] = result.recovered
+        return Response(
+            data,
+            status=(
+                status.HTTP_200_OK
+                if result.recovered
+                else status.HTTP_201_CREATED
+            ),
+        )

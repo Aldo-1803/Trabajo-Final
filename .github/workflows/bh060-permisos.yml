@@ -86,7 +86,7 @@ jobs:
               gestion.tests.test_audit_middleware
           - block: B2
             name: diagnóstico, ficha y rutinas
-            expected: 232
+            expected: 233
             timeout: 20
             database: test_bohemia_hair_ci_b2
             labels: >-
@@ -106,13 +106,14 @@ jobs:
               gestion.tests.test_technical_risk_profiles
           - block: B3
             name: agenda, turnos y CU-27
-            expected: 210
+            expected: 224
             timeout: 25
             database: test_bohemia_hair_ci_b3
             labels: >-
               gestion.tests.test_booking_frontend_api
               gestion.tests.test_legacy_agenda_permissions_bh060_2.LegacyAgendaPermissionTests
               gestion.tests.test_slot_holds
+              gestion.tests.test_assisted_slot_holds.AssistedSlotHoldTests
               gestion.tests.test_slot_hold_consumption
               gestion.tests.test_turno_arrival_api
               gestion.tests.test_turno_creation_api
@@ -145,11 +146,12 @@ jobs:
               gestion.tests.test_residual_authorization_closure_bh060_f1.ResidualAuthorizationClosureBh060F1Tests.test_upload_cleans_saved_file_when_storage_url_fails
           - block: B5
             name: Caja, pagos e incidencias
-            expected: 170
+            expected: 177
             timeout: 35
             database: test_bohemia_hair_ci_b5
             labels: >-
               gestion.tests.test_manual_payments
+              gestion.tests.test_assisted_payments.AssistedPaymentTests
               gestion.tests.test_payment_confirmation
               gestion.tests.test_payment_intents
               gestion.tests.test_payment_providers
@@ -307,6 +309,8 @@ jobs:
         gestion.tests.test_technical_records_increment2.TechnicalRecordConcurrencyTests
         usuarios.test_walkin_client_bh064.WalkInConcurrencyTests
         gestion.tests.test_assisted_technical_booking.AssistedTechnicalBookingConcurrencyTests
+        gestion.tests.test_assisted_slot_holds.AssistedSlotHoldConcurrencyTests
+        gestion.tests.test_assisted_payments.AssistedPaymentConcurrencyTests
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -364,7 +368,7 @@ jobs:
             echo
             echo '| Bloque | Tests esperados | Resultado | Duración | Referencia |'
             echo '|---|---:|---|---:|---|'
-            echo "| B7 | 74 | ${result} | ${duration} s | [run ${GITHUB_RUN_ID}](https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) / job ${GITHUB_JOB} |"
+            echo "| B7 | 78 | ${result} | ${duration} s | [run ${GITHUB_RUN_ID}](https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) / job ${GITHUB_JOB} |"
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Guardar log de fallo B7
@@ -448,7 +452,7 @@ jobs:
             echo
             echo '| Bloque | Tests esperados | Jest | Build | Duración | Referencia |'
             echo '|---|---:|---|---|---:|---|'
-            echo "| Frontend | 449 | ${tests} | ${build} | ${duration} s | [run ${GITHUB_RUN_ID}](https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) / job ${GITHUB_JOB} |"
+            echo "| Frontend | 480 | ${tests} | ${build} | ${duration} s | [run ${GITHUB_RUN_ID}](https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) / job ${GITHUB_JOB} |"
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Guardar logs de fallo frontend

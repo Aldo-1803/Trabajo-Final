@@ -1,8 +1,8 @@
-# BH-063/BH-064 — Implementación consolidada, Incrementos 1–3
+# BH-063/BH-064 — Implementación consolidada, Incrementos 1–4
 
 **Fecha:** 2026-11-23
 
-**Baseline del Incremento 3:** `23e1e0d27578908ea6097cf1d900b461e2c52ef8`
+**Baseline publicado al iniciar el Incremento 4:** `df9335c939d2bd525cb6e5913f5cd9a8efed7f25`
 
 **Contratos:** [Decisiones D-01 a D-07](DECISIONES_Y_CONTRATOS_BH063_BH064.md)
 
@@ -164,10 +164,154 @@ temporales locales.
 - Las migraciones 0041–0045 siguen pendientes sólo en la base local de
   desarrollo; las bases PostgreSQL de prueba aplicaron la cadena completa.
 
-## 11. Próximo incremento
+## 11. Handoff del Incremento 3
 
-El Incremento 4 deberá diseñar `PaymentIntent` asistido y políticas financieras
-para tercero. No forma parte de este cambio. La confirmación, creación de Turno,
-Pago y transición de estados continúan fuera de alcance.
+Al cerrar el Incremento 3, el Incremento 4 debía diseñar `PaymentIntent` asistido
+y políticas financieras para tercero. La confirmación, creación de Turno, Pago
+y transición de estados todavía estaban fuera de aquel alcance.
 
 `BH-063 INCREMENTO 3 = VALIDADO`
+
+## 12. Incremento 4 — Confirmación financiera asistida y estados
+
+### 12.1 Contratos y autoridad efectiva
+
+La preparación financiera para tercero exige la intersección estricta de
+`gestion.create_turno_for_client` y `gestion.register_payment`. La primera
+capacidad aporta el scope de solicitud asistida y la segunda la autoridad para
+crear una obligación financiera. Esta composición no modifica
+`bh061-role-capabilities-v1`, no agrega grants y no autoriza conciliación:
+
+- registrar efectivo o evidencia conserva `gestion.register_payment`;
+- aceptar o rechazar evidencia conserva `gestion.confirm_deposit`;
+- provider conserva el actor de sistema o permiso publicado;
+- confirmar el Turno no es un comando libre: sigue siendo consecuencia interna
+  de B2/B3 al alcanzar el umbral con Pagos `RECONCILED` en moneda válida.
+
+El operador nunca se autentica como el Cliente. Los wrappers web de
+`payment_intent_services.py` permanecen owner-only; los núcleos privados exigen
+un `scope_checker` explícito. El scope asistido requiere solicitud
+`PRESENCIAL`/`TELEFONO`, operador originador, ledger `HOLD`, Cliente y hold
+coincidentes, y revalida ambos permisos desde base de datos dentro de la
+transacción.
+
+### 12.2 Intent, Pago, hold y Turno
+
+API añadida bajo
+`/api/gestion/solicitudes-tecnicas-asistidas/{solicitud_id}/`:
+
+| Método | Ruta | Contrato |
+|---|---|---|
+| `GET` | `pago/opciones/` | Cotiza desde la `PaymentPolicy` publicada, precios bajo lock y expiración del hold |
+| `POST` | `pago/intent/` | Prepara o recupera el Intent con `operation_id` e `Idempotency-Key` |
+| `GET` | `pago/intent/` | Recupera la proyección financiera y el Turno sólo si ya existe |
+
+El frontend sólo envía hold y modalidad. Total, umbral, moneda, versión de
+policy, snapshots, estado de Pago y estado de Turno son autoritativos del
+backend. Preparar el Intent no crea `Pago` ni `Turno`.
+
+Efectivo, transferencia, tarjeta externa, provider y conciliación continúan en
+los servicios BH-058 existentes. Efectivo real se registra `RECONCILED`; una
+transferencia queda `PENDING_RECONCILIATION`. Sólo la suma suficiente de Pagos
+`RECONCILED` permite que B3 apruebe el Intent y consuma el hold. Pago tardío no
+recrea hold ni Turno y conserva los casos de reconciliación existentes.
+
+`create_confirmed_turno_from_locked_hold()` sigue siendo interno y se invoca
+únicamente después de la autorización financiera. Mantiene locks, revalidación
+de solicitud/evaluación/Personal/capacidad/equipamiento, consumo único,
+multiservicio ordenado e idempotencia. Para una solicitud asistida, el histórico
+`canal_origen` es `PRESENCIAL`; `medio_solicitud` y operador originador se
+conservan causalmente en solicitud, ledger y auditoría. El canal owner-only
+permanece `WEB`.
+
+### 12.3 Idempotencia, recuperación y auditoría
+
+`SolicitudTecnicaAsistidaOperacion` incorpora el comando `INTENT` y un FK
+nullable `PROTECT` a `PaymentIntent`. El check de coherencia exige hold e Intent
+sólo para ese comando. El modelo valida además que solicitud, hold e Intent
+pertenezcan al mismo agregado.
+
+Advisory locks ordenados serializan `operation_id` y digest de
+`Idempotency-Key`; el Intent usa una clave interna derivada que nunca expone la
+clave original. Un retry idéntico recupera el mismo resultado, mientras que una
+clave o identidad reutilizada con payload incompatible responde 409. Ledger,
+Intent, líneas y auditoría se confirman o revierten juntos. La revocación de
+permiso se vuelve a comprobar después de adquirir los locks financieros.
+
+La auditoría registra IDs causales, actor, policy, modalidad, importes y
+expiración, sin comprobantes ni snapshots técnicos sensibles.
+
+### 12.4 Estados y finalización profesional
+
+La creación financiera terminal conserva `Turno.CONFIRMADO`; no existe payload
+de estado ni creación directa `EN_PROCESO`. El endpoint técnico histórico
+`registrar-llegada` conserva compatibilidad, pero React lo presenta como
+**Iniciar atención**, coherente con `CONFIRMADO → EN_PROCESO`.
+
+El único servicio `finalize_turno()` admite ahora:
+
+- `CONFIRMADO → REALIZADO`;
+- `EN_PROCESO → REALIZADO`.
+
+No cambian cuenta/Personal activos, `gestion.finalize_service`, ownership del
+profesional asignado, `atomic`, `select_for_update`, fichas obligatorias,
+fingerprint, ledger de efectos, auditoría ni rollback. `FinalizacionTurno`
+persiste en `estado_anterior` el origen real. Otros estados responden 409 y las
+reglas financieras, de cancelación y reprogramación no se alteran.
+
+### 12.5 React mínimo
+
+`NuevoTurno.js` muestra por separado aprobación técnica, hold, condiciones de
+policy, Intent, monto conciliado, saldo para confirmar, expiración y estado de
+recuperación. La superficie financiera sólo se monta con ambos permisos
+efectivos; al revocar `register_payment` se oculta incluso una proyección ya
+cargada. Los timeout conservan payload e identidad para retry y el Turno sólo se
+muestra cuando `confirmed_turno_id` existe.
+
+“Continuar en Caja” reutiliza `CajaPresencial` con búsqueda por la referencia
+del Intent; no agrega un mecanismo de cobro. El recorrido profesional conserva
+la finalización cuando el contexto está `EN_PROCESO` y el preflight autoritativo
+está listo.
+
+### 12.6 Migración, pruebas y riesgos
+
+`gestion/migrations/0047_assisted_payment_intent_increment4.py` agrega el FK,
+amplía el enum de comando y reemplaza el check de coherencia. No migra datos ni
+modifica permisos.
+
+Focales implementadas cubren policy/snapshots, composición de autoridad,
+scope, revocación bajo lock, ausencia de Pagos ficticios, efectivo parcial y
+suficiente, transferencia pendiente/conciliada, sobrepago y duplicados por las
+suites BH-058, hold vencido, multiservicio, canal, recuperación, rollback,
+confirmación única, carrera PostgreSQL y finalización desde ambos orígenes.
+React cubre doble submit, timeout, 401/403/409, Caja, confirmación real,
+revocación y ocultamiento de datos.
+
+Riesgos residuales: el countdown del navegador sigue siendo informativo; un
+hold puede vencer o perder capacidad entre lecturas; una acreditación tardía
+puede abrir un caso financiero sin booking. Esos casos requieren recuperación
+BH-058 y nunca justifican resucitar capacidad. El wizard completo, mejoras de
+operación masiva y cualquier excepción D-08 permanecen fuera del Incremento 4.
+
+La regresión final única sobre PostgreSQL y React produjo:
+
+| Ejecución | Pruebas únicas | Resultado |
+|---|---:|---:|
+| Backend B1 | 443 | OK |
+| Backend B2 | 233 | OK |
+| Backend B3 | 224 | OK |
+| Backend B4 | 79 | OK |
+| Backend B5 | 177 | OK |
+| Backend B6 | 43 | OK |
+| Backend B7, concurrencia PostgreSQL | 78 | OK |
+| Frontend Jest completo | 480 | OK |
+| Build React estándar | — | OK con warnings legacy fuera del alcance |
+| Django checks / drift de migraciones / SQL 0047 / `git diff --check` | — | OK |
+
+Antes de la regresión se ejecutaron focales repetidas para desarrollar y
+corregir el incremento: backend financiero/finalización (37) y React financiero
+/profesional (56), además de las suites visibles de agenda/Caja. No se suman a
+los totales únicos anteriores. Los logs completos se conservaron únicamente en
+el directorio temporal local.
+
+`BH-063 INCREMENTO 4 = VALIDADO`

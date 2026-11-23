@@ -95,13 +95,20 @@ class ProfessionalWorkflowContextIncrement4Tests(APITestCase):
         )
         return user, personal
 
-    def create_turno(self, *, personal=None, client=None, minute=0):
+    def create_turno(
+        self,
+        *,
+        personal=None,
+        client=None,
+        minute=0,
+        state=Turno.Estado.CONFIRMADO,
+    ):
         return Turno.objects.create(
             cliente=client or self.client_profile,
             profesional=personal or self.personal,
             fecha=timezone.localdate() + timedelta(days=1),
             hora_inicio=time(10, minute),
-            estado=Turno.Estado.CONFIRMADO,
+            estado=state,
         )
 
     @staticmethod
@@ -299,6 +306,23 @@ class ProfessionalWorkflowContextIncrement4Tests(APITestCase):
         self.assertTrue(
             response.data['preflight']['technical_records'][0]['complete']
         )
+
+    def test_started_turno_keeps_professional_finalization_preflight_ready(self):
+        PerfilTecnicoServicio.objects.filter(servicio=self.service).update(
+            requisito_ficha=PerfilTecnicoServicio.RequisitoFicha.NO_REQUERIDA,
+            modo_formula_ficha=PerfilTecnicoServicio.ModoFormulaFicha.NO_APLICA,
+            campos_requeridos_ficha=[],
+        )
+        self.turno.estado = Turno.Estado.EN_PROCESO
+        self.turno.save(update_fields=['estado'])
+
+        response = self.get_context()
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['turno']['estado'], Turno.Estado.EN_PROCESO)
+        self.assertTrue(response.data['access']['can_finalize'])
+        self.assertTrue(response.data['preflight']['ready'])
+        self.assertEqual(response.data['preflight']['blockers'], [])
 
     def test_pending_policy_is_warning_not_invented_blocker(self):
         PerfilTecnicoServicio.objects.filter(servicio=self.service).delete()

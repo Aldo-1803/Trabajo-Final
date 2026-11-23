@@ -60,7 +60,7 @@ describe('MiAgendaLaboral', () => {
         axios.post.mockResolvedValue({ data: { changed: true } });
         renderAgenda(['gestion.register_arrival']);
 
-        fireEvent.click(await screen.findByRole('button', { name: 'Registrar llegada' }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Iniciar atención' }));
 
         await waitFor(() => expect(axios.post).toHaveBeenCalledWith(
             'http://127.0.0.1:8000/api/gestion/turnos/8/registrar-llegada/',
@@ -79,7 +79,7 @@ describe('MiAgendaLaboral', () => {
 
         expect(await screen.findByRole('button', { name: visible })).toBeInTheDocument();
         expect(screen.queryByRole('button', { name: hidden })).not.toBeInTheDocument();
-        expect(screen.queryByRole('button', { name: 'Registrar llegada' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Iniciar atención' })).not.toBeInTheDocument();
     });
 
     test('1. entrada desde agenda autorizada abre el trabajo técnico asignado', async () => {

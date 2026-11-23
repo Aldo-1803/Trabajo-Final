@@ -69,18 +69,18 @@ describe('GestionTurnos', () => {
         });
     });
 
-    test('muestra Registrar llegada solo con permiso y estado confirmado', async () => {
+    test('muestra Iniciar atención solo con permiso y estado confirmado', async () => {
         useSession.mockReturnValue({
             hasPermission: (permission) => permission === 'gestion.register_arrival'
         });
 
         render(<GestionTurnos />);
 
-        expect(await screen.findByRole('button', { name: 'Registrar llegada' }))
+        expect(await screen.findByRole('button', { name: 'Iniciar atención' }))
             .toBeInTheDocument();
     });
 
-    test('no muestra Registrar llegada con view_global_agenda solamente', async () => {
+    test('no muestra Iniciar atención con view_global_agenda solamente', async () => {
         useSession.mockReturnValue({
             hasPermission: (permission) => permission === 'gestion.view_global_agenda'
         });
@@ -88,11 +88,11 @@ describe('GestionTurnos', () => {
         render(<GestionTurnos />);
 
         await screen.findByText('Ana Pérez');
-        expect(screen.queryByRole('button', { name: 'Registrar llegada' }))
+        expect(screen.queryByRole('button', { name: 'Iniciar atención' }))
             .not.toBeInTheDocument();
     });
 
-    test('no muestra Registrar llegada en estados no válidos', async () => {
+    test('no muestra Iniciar atención en estados no válidos', async () => {
         useSession.mockReturnValue({ hasPermission: () => true });
         axios.get.mockResolvedValue({
             data: [{
@@ -107,7 +107,7 @@ describe('GestionTurnos', () => {
         render(<GestionTurnos />);
 
         await screen.findByText('Ana Pérez');
-        expect(screen.queryByRole('button', { name: 'Registrar llegada' }))
+        expect(screen.queryByRole('button', { name: 'Iniciar atención' }))
             .not.toBeInTheDocument();
     });
 
@@ -117,7 +117,7 @@ describe('GestionTurnos', () => {
 
         render(<GestionTurnos />);
 
-        fireEvent.click(await screen.findByRole('button', { name: 'Registrar llegada' }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Iniciar atención' }));
 
         await waitFor(() => expect(axios.post).toHaveBeenCalledWith(
             'http://127.0.0.1:8000/api/gestion/turnos/10/registrar-llegada/',
@@ -125,7 +125,7 @@ describe('GestionTurnos', () => {
             { headers: { Authorization: 'Bearer test-token' } }
         ));
         await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(2));
-        expect(screen.getByText('Llegada registrada correctamente.')).toBeInTheDocument();
+        expect(screen.getByText('Atención iniciada correctamente.')).toBeInTheDocument();
         expect(axios.patch).not.toHaveBeenCalled();
     });
 
@@ -136,10 +136,10 @@ describe('GestionTurnos', () => {
         });
 
         render(<GestionTurnos />);
-        fireEvent.click(await screen.findByRole('button', { name: 'Registrar llegada' }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Iniciar atención' }));
 
         expect(await screen.findByRole('alert')).toHaveTextContent(
-            'El Turno no admite registrar llegada en su estado actual.'
+            'El Turno no admite iniciar atención en su estado actual.'
         );
         expect(axios.get).toHaveBeenCalledTimes(1);
     });
@@ -162,7 +162,7 @@ describe('GestionTurnos', () => {
                 .toBeInTheDocument();
             expect(screen.queryByRole('button', { name: hiddenAction }))
                 .not.toBeInTheDocument();
-            expect(screen.queryByRole('button', { name: 'Registrar llegada' }))
+            expect(screen.queryByRole('button', { name: 'Iniciar atención' }))
                 .not.toBeInTheDocument();
         }
     );
