@@ -533,6 +533,7 @@ class TurnoAvailabilityService:
         servicios=None,
         skill_policy=None,
         cliente=None,
+        now=None,
     ):
         slots = []
         duracion = duracion_minutos or servicio.duracion_estimada or 60
@@ -557,6 +558,7 @@ class TurnoAvailabilityService:
                 servicios=servicios,
                 skill_policy=policy,
                 cliente=cliente,
+                now=now,
             ):
                 slots.append({
                     'hora': hora_inicio.strftime('%H:%M'),

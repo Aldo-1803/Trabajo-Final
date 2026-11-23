@@ -207,13 +207,14 @@ def _idempotent_existing(*, key, solicitud_id, personal_id, starts_at):
 
 
 @transaction.atomic
-def create_slot_hold(
+def _create_slot_hold(
     *,
     solicitud_id,
     personal_id,
     starts_at,
     idempotency_key,
     actor,
+    scope_checker,
 ):
     key = (idempotency_key or '').strip()
     if not key or len(key) > 128:
@@ -237,7 +238,7 @@ def create_slot_hold(
     except SolicitudTecnicaReserva.DoesNotExist as exc:
         raise SlotHoldNotFound() from exc
 
-    if solicitud.cliente.usuario_id != getattr(actor, 'pk', None):
+    if not scope_checker(solicitud, actor):
         raise SlotHoldNotFound()
     if solicitud.estado != SolicitudTecnicaReserva.Estado.APROBADA_TECNICAMENTE:
         raise SlotHoldConflict(
@@ -441,25 +442,54 @@ def create_slot_hold(
     return SlotHoldCreateResult(hold=hold, created=True)
 
 
+def create_slot_hold(
+    *,
+    solicitud_id,
+    personal_id,
+    starts_at,
+    idempotency_key,
+    actor,
+):
+    """Canal web owner-only; el scope no es configurable por el caller."""
+    return _create_slot_hold(
+        solicitud_id=solicitud_id,
+        personal_id=personal_id,
+        starts_at=starts_at,
+        idempotency_key=idempotency_key,
+        actor=actor,
+        scope_checker=lambda solicitud, current_actor: (
+            solicitud.cliente.usuario_id
+            == getattr(current_actor, 'pk', None)
+        ),
+    )
+
+
 @transaction.atomic
-def release_slot_hold(*, public_id, actor):
+def _release_slot_hold(
+    *,
+    public_id,
+    actor,
+    scope_checker,
+    release_reason,
+    operation_key=None,
+):
     try:
-        target = SlotHold.objects.only('solicitud_id').get(
-            public_id=public_id,
-            cliente__usuario=actor,
-        )
+        target = SlotHold.objects.only(
+            'pk', 'solicitud_id', 'cliente_id', 'created_by_id'
+        ).get(public_id=public_id)
     except SlotHold.DoesNotExist as exc:
         raise SlotHoldNotFound() from exc
+    if not scope_checker(target, actor):
+        raise SlotHoldNotFound()
     SolicitudTecnicaReserva.objects.select_for_update().get(
         pk=target.solicitud_id
     )
     try:
-        hold = SlotHold.objects.select_for_update().get(
-            public_id=public_id,
-            cliente__usuario=actor,
-        )
+        hold = SlotHold.objects.select_for_update().get(public_id=public_id)
     except SlotHold.DoesNotExist as exc:
         raise SlotHoldNotFound() from exc
+    if not scope_checker(hold, actor):
+        raise SlotHoldNotFound()
 
     if PaymentIntent.objects.select_for_update().filter(
         slot_hold=hold,
@@ -497,7 +527,7 @@ def release_slot_hold(*, public_id, actor):
 
     hold.state = SlotHold.State.RELEASED
     hold.released_at = now
-    hold.release_reason = SlotHold.ReleaseReason.CLIENT_CANCELLED
+    hold.release_reason = release_reason
     hold.save(update_fields=['state', 'released_at', 'release_reason'])
     _audit(
         hold=hold,
@@ -505,12 +535,25 @@ def release_slot_hold(*, public_id, actor):
         event=SLOT_HOLD_RELEASED,
         previous_state=previous,
         reason=hold.release_reason,
+        operation_key=operation_key,
     )
     return SlotHoldTransitionResult(
         hold=hold,
         changed=True,
         previous_state=previous,
         current_state=hold.state,
+    )
+
+
+def release_slot_hold(*, public_id, actor):
+    """Canal web owner-only; conserva causalidad CLIENT_CANCELLED."""
+    return _release_slot_hold(
+        public_id=public_id,
+        actor=actor,
+        scope_checker=lambda hold, current_actor: (
+            hold.cliente.usuario_id == getattr(current_actor, 'pk', None)
+        ),
+        release_reason=SlotHold.ReleaseReason.CLIENT_CANCELLED,
     )
 
 

@@ -168,15 +168,16 @@ Documentos principales:
 - [BH-063/BH-064, Incremento 0: decisiones y contratos](generales/DECISIONES_Y_CONTRATOS_BH063_BH064.md)
 - [BH-064, Incremento 1: identidad presencial y alta rápida idempotente](generales/IMPLEMENTACION_BH064_1_IDENTIDAD_PRESENCIAL.md)
 - [BH-063, Incremento 2: solicitud asistida, riesgo y consentimiento](generales/IMPLEMENTACION_BH063_2_SOLICITUD_RIESGO_CONSENTIMIENTO.md)
+- [BH-063/BH-064, implementación consolidada de Incrementos 1–3](generales/IMPLEMENTACION_BH063_BH064_CONSOLIDADA.md)
 - [Roles y permisos](generales/ANALISIS_ROLES_PERMISOS.md)
 - [Gestión de acceso de Personal](generales/IMPACTO_GESTION_ACCESO_PERSONAL.md)
 
 `BH-063/BH-064 INCREMENTO 0 = CERRADO DOCUMENTALMENTE`.
 
 `BH-064 INCREMENTO 1 = VALIDADO Y PUBLICADO` y
-`BH-063 INCREMENTO 2 = VALIDADO`. El Incremento 2 integra la solicitud asistida
-multiservicio, el evaluador BH-057 y consentimiento asistido inmutable sin crear
-Hold, Pago ni Turno. Los Incrementos 3–5 continúan fuera de alcance.
+`BH-063 INCREMENTO 3 = VALIDADO`. Los Incrementos 2–3 integran solicitud
+asistida multiservicio, BH-057, consentimiento, disponibilidad y `SlotHold`
+temporal sin crear Pago ni Turno. Los Incrementos 4–5 continúan fuera de alcance.
 
 El cierre conserva como riesgos no resueltos R-01 a R-07 de la auditoría:
 

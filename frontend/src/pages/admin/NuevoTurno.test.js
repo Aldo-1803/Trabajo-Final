@@ -27,6 +27,34 @@ const services = [
     { id: 7, nombre: 'Color', activo: true },
     { id: 8, nombre: 'Nutrición', activo: true }
 ];
+const availability = {
+    solicitud_id: 91,
+    fecha: '2026-12-10',
+    duration_minutes: 90,
+    interval_minutes: 30,
+    hold_ttl_minutes: 15,
+    authoritative: false,
+    profesionales: [{
+        id: 4,
+        display_name: 'Ada Lovelace',
+        slots: [{
+            starts_at: '2026-12-10T10:30:00-03:00',
+            ends_at: '2026-12-10T12:00:00-03:00'
+        }]
+    }]
+};
+const activeHold = {
+    public_id: '5f3b92c4-b158-4f64-8eed-889b4c9a5fe1',
+    starts_at: '2026-12-10T10:30:00-03:00',
+    ends_at: '2026-12-10T12:00:00-03:00',
+    expires_at: '2026-12-10T10:15:00-03:00',
+    persisted_state: 'ACTIVE',
+    effective_state: 'ACTIVE',
+    countdown: { seconds_remaining: 125, server_now: '2026-12-10T10:12:55-03:00' },
+    personal: { id: 4, nombre: 'Ada', apellido: 'Lovelace' },
+    hold_notice: 'Este hold no equivale a un Turno confirmado.',
+    next_action: { code: 'HOLD_ACTIVE_PENDING_PAYMENT', can_confirm_turno: false }
+};
 const baseResult = (outcome, overrides = {}) => ({
     id: 91,
     estado: outcome === 'APTO'
@@ -87,6 +115,25 @@ const selectRequestData = async ({ useSearch = true } = {}) => {
     });
     fireEvent.change(screen.getByLabelText('Medio de solicitud'), {
         target: { value: 'TELEFONO' }
+    });
+};
+
+
+const submitApprovedRequest = async () => {
+    await selectRequestData({ useSearch: false });
+    fireEvent.click(screen.getByRole('button', {
+        name: 'Registrar y evaluar solicitud'
+    }));
+    await screen.findByRole('button', { name: 'Consultar disponibilidad' });
+};
+
+
+const chooseAvailableSlot = async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Consultar disponibilidad' }));
+    const professional = await screen.findByLabelText('Profesional disponible');
+    fireEvent.change(professional, { target: { value: '4' } });
+    fireEvent.change(screen.getByLabelText('Intervalo disponible'), {
+        target: { value: availability.profesionales[0].slots[0].starts_at }
     });
 };
 
@@ -278,4 +325,160 @@ describe('Solicitud técnica asistida', () => {
             expect(alert).not.toHaveTextContent(/diagnóstico|formula|historial/i);
         }
     );
+
+    test('consulta disponibilidad, selecciona profesional y crea un hold sin confirmación ni pago', async () => {
+        axios.get.mockImplementation((url) => {
+            if (url === '/api/gestion/servicios/') return Promise.resolve({ data: services });
+            if (url.endsWith('/disponibilidad/')) return Promise.resolve({ data: availability });
+            return Promise.reject(new Error(`Unexpected URL: ${url}`));
+        });
+        axios.post.mockImplementation((url) => {
+            if (url === '/api/gestion/solicitudes-tecnicas-asistidas/') {
+                return Promise.resolve({ data: baseResult('APTO') });
+            }
+            if (url.endsWith('/hold/')) return Promise.resolve({ data: activeHold });
+            return Promise.reject(new Error(`Unexpected URL: ${url}`));
+        });
+        renderPage({ routeState: { cliente: {
+            cliente_id: 11, display_name: 'Laura Gómez', cliente_activo: true
+        } } });
+        await submitApprovedRequest();
+        await chooseAvailableSlot();
+        const create = screen.getByRole('button', { name: 'Crear hold temporal' });
+        fireEvent.click(create);
+        fireEvent.click(create);
+
+        expect(await screen.findByText('Hold activo')).toBeInTheDocument();
+        const holdCalls = axios.post.mock.calls.filter(([url]) => url.endsWith('/hold/'));
+        expect(holdCalls).toHaveLength(1);
+        expect(holdCalls[0][0]).toBe(
+            '/api/gestion/solicitudes-tecnicas-asistidas/91/hold/'
+        );
+        expect(holdCalls[0][1]).toEqual({
+            operation_id: expect.any(String),
+            personal_id: 4,
+            starts_at: '2026-12-10T10:30:00-03:00'
+        });
+        expect(holdCalls[0][2]).toEqual({
+            headers: { 'Idempotency-Key': expect.any(String) }
+        });
+        expect(screen.getByText(/no equivale a un Turno confirmado/i)).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /confirmar|pagar/i })).not.toBeInTheDocument();
+    });
+
+    test('atención inmediata selecciona el primer intervalo devuelto por el servidor', async () => {
+        axios.get.mockImplementation((url, config) => {
+            if (url === '/api/gestion/servicios/') return Promise.resolve({ data: services });
+            if (url.endsWith('/proximo-intervalo/')) {
+                expect(config).toBeUndefined();
+                return Promise.resolve({ data: {
+                    solicitud_id: 91,
+                    slot: {
+                        personal: { id: 4, display_name: 'Ada Lovelace' },
+                        ...availability.profesionales[0].slots[0]
+                    }
+                } });
+            }
+            return Promise.reject(new Error(`Unexpected URL: ${url}`));
+        });
+        renderPage({ routeState: { cliente: {
+            cliente_id: 11, display_name: 'Laura Gómez', cliente_activo: true
+        } } });
+        await submitApprovedRequest();
+        fireEvent.click(screen.getByRole('button', { name: 'Buscar atención inmediata' }));
+        expect(await screen.findByDisplayValue('Ada Lovelace')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Crear hold temporal' })).toBeEnabled();
+    });
+
+    test('hold vencido se muestra claramente y puede actualizarse sin confirmar disponibilidad', async () => {
+        axios.get.mockImplementation((url) => {
+            if (url === '/api/gestion/servicios/') return Promise.resolve({ data: services });
+            if (url.endsWith('/hold/')) return Promise.resolve({ data: {
+                ...activeHold,
+                effective_state: 'EXPIRED',
+                countdown: { ...activeHold.countdown, seconds_remaining: 0 }
+            } });
+            return Promise.reject(new Error(`Unexpected URL: ${url}`));
+        });
+        renderPage({ routeState: { cliente: {
+            cliente_id: 11, display_name: 'Laura Gómez', cliente_activo: true
+        } } });
+        await submitApprovedRequest();
+        // El estado se consulta explícitamente; nunca se infiere disponibilidad local.
+        axios.post.mockResolvedValueOnce({ data: activeHold });
+        axios.get.mockResolvedValueOnce({ data: availability });
+        await chooseAvailableSlot();
+        fireEvent.click(screen.getByRole('button', { name: 'Crear hold temporal' }));
+        await screen.findByText('Hold activo');
+        fireEvent.click(screen.getByRole('button', { name: 'Actualizar estado' }));
+        expect(await screen.findByText('Hold no activo')).toBeInTheDocument();
+        expect(screen.getByText(/Debe seleccionar un nuevo intervalo/)).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Liberar hold' })).not.toBeInTheDocument();
+    });
+
+    test('timeout de hold conserva payload y clave, y evita doble submit', async () => {
+        const timeout = Object.assign(new Error('timeout'), { code: 'ECONNABORTED' });
+        axios.get.mockImplementation((url) => {
+            if (url === '/api/gestion/servicios/') return Promise.resolve({ data: services });
+            if (url.endsWith('/disponibilidad/')) return Promise.resolve({ data: availability });
+            return Promise.reject(new Error(`Unexpected URL: ${url}`));
+        });
+        axios.post
+            .mockResolvedValueOnce({ data: baseResult('APTO') })
+            .mockRejectedValueOnce(timeout)
+            .mockResolvedValueOnce({ data: { ...activeHold, recovered: true } });
+        renderPage({ routeState: { cliente: {
+            cliente_id: 11, display_name: 'Laura Gómez', cliente_activo: true
+        } } });
+        await submitApprovedRequest();
+        await chooseAvailableSlot();
+        const create = screen.getByRole('button', { name: 'Crear hold temporal' });
+        fireEvent.click(create);
+        fireEvent.click(create);
+        const retry = await screen.findByRole('button', {
+            name: 'Reintentar hold con la misma clave'
+        });
+        const holdCallsBeforeRetry = axios.post.mock.calls.filter(
+            ([url]) => url.endsWith('/hold/')
+        );
+        expect(holdCallsBeforeRetry).toHaveLength(1);
+        fireEvent.click(retry);
+        await screen.findByText('Hold activo');
+        const holdCalls = axios.post.mock.calls.filter(([url]) => url.endsWith('/hold/'));
+        expect(holdCalls).toHaveLength(2);
+        expect(holdCalls[1][1]).toEqual(holdCalls[0][1]);
+        expect(holdCalls[1][2]).toEqual(holdCalls[0][2]);
+    });
+
+    test.each([401, 403, 409])('maneja %s en disponibilidad/hold sin exponer acciones futuras', async (httpStatus) => {
+        axios.get.mockImplementation((url) => {
+            if (url === '/api/gestion/servicios/') return Promise.resolve({ data: services });
+            if (url.endsWith('/disponibilidad/')) return Promise.reject({
+                response: { status: httpStatus, data: { error: {
+                    code: `SAFE_${httpStatus}`,
+                    detail: `Error seguro ${httpStatus}`
+                } } }
+            });
+            return Promise.reject(new Error(`Unexpected URL: ${url}`));
+        });
+        renderPage({ routeState: { cliente: {
+            cliente_id: 11, display_name: 'Laura Gómez', cliente_activo: true
+        } } });
+        await submitApprovedRequest();
+        fireEvent.click(screen.getByRole('button', { name: 'Consultar disponibilidad' }));
+        const alert = await screen.findByRole('alert');
+        expect(alert).not.toHaveTextContent(/diagnóstico|formula|snapshot/i);
+        expect(screen.queryByRole('button', { name: /confirmar|pagar/i })).not.toBeInTheDocument();
+    });
+
+    test('revocación de permiso desmonta acciones y no realiza nuevas consultas', async () => {
+        const view = renderPage();
+        await screen.findByLabelText('Color');
+        const callsBeforeRevocation = axios.get.mock.calls.length;
+        useSession.mockReturnValue({ hasPermission: () => false });
+        view.rerender(<NuevoTurno />);
+        expect(screen.getByRole('alert')).toHaveTextContent(/No tenés autorización/);
+        expect(screen.queryByRole('button', { name: 'Consultar disponibilidad' })).not.toBeInTheDocument();
+        expect(axios.get).toHaveBeenCalledTimes(callsBeforeRevocation);
+    });
 });

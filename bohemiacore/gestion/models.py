@@ -3412,6 +3412,7 @@ class SlotHold(models.Model):
 
     class ReleaseReason(models.TextChoices):
         CLIENT_CANCELLED = 'CLIENT_CANCELLED', 'Cancelado por el Cliente'
+        OPERATOR_CANCELLED = 'OPERATOR_CANCELLED', 'Cancelado por el operador'
         TTL_EXPIRED = 'TTL_EXPIRED', 'Vencimiento del tiempo de reserva'
         TECHNICAL_REQUEST_INVALIDATED = (
             'TECHNICAL_REQUEST_INVALIDATED',
@@ -4627,6 +4628,8 @@ class SolicitudTecnicaAsistidaOperacion(models.Model):
     class Command(models.TextChoices):
         CREATE = 'CREATE', 'Crear solicitud asistida'
         CONSENT = 'CONSENT', 'Registrar consentimiento asistido'
+        HOLD = 'HOLD', 'Crear hold asistido'
+        RELEASE = 'RELEASE', 'Liberar hold asistido'
 
     operation_id = models.UUIDField(unique=True, editable=False)
     actor = models.ForeignKey(
@@ -4649,6 +4652,13 @@ class SolicitudTecnicaAsistidaOperacion(models.Model):
         blank=True,
         related_name='operacion',
     )
+    hold = models.ForeignKey(
+        SlotHold,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='operaciones_asistidas',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     objects = ImmutableAssistedOperationManager()
 
@@ -4663,8 +4673,21 @@ class SolicitudTecnicaAsistidaOperacion(models.Model):
             ),
             models.CheckConstraint(
                 condition=(
-                    models.Q(command='CREATE', consentimiento__isnull=True)
-                    | models.Q(command='CONSENT', consentimiento__isnull=False)
+                    models.Q(
+                        command='CREATE',
+                        consentimiento__isnull=True,
+                        hold__isnull=True,
+                    )
+                    | models.Q(
+                        command='CONSENT',
+                        consentimiento__isnull=False,
+                        hold__isnull=True,
+                    )
+                    | models.Q(
+                        command__in=['HOLD', 'RELEASE'],
+                        consentimiento__isnull=True,
+                        hold__isnull=False,
+                    )
                 ),
                 name='assisted_technical_operation_result',
             ),
@@ -4683,6 +4706,8 @@ class SolicitudTecnicaAsistidaOperacion(models.Model):
         if self.consentimiento_id:
             if self.consentimiento.solicitud_id != self.solicitud_id:
                 errors['consentimiento'] = 'El consentimiento no coincide.'
+        if self.hold_id and self.hold.solicitud_id != self.solicitud_id:
+            errors['hold'] = 'El hold no coincide con la solicitud.'
         if errors:
             raise ValidationError(errors)
 

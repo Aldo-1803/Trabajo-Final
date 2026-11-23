@@ -5,6 +5,10 @@ from rest_framework.response import Response
 
 from .assisted_technical_booking_serializers import (
     AssistedConsentCommandSerializer,
+    AssistedNextSlotQuerySerializer,
+    AssistedSlotHoldCreateSerializer,
+    AssistedSlotHoldPublicSerializer,
+    AssistedSlotHoldReleaseSerializer,
     AssistedTechnicalRequestCreateSerializer,
     AssistedTechnicalRequestPublicSerializer,
 )
@@ -18,7 +22,16 @@ from .assisted_technical_booking_services import (
     next_assisted_action,
     register_assisted_warning_consent,
 )
+from .assisted_slot_hold_services import (
+    assisted_slot_availability,
+    assisted_slot_hold_for_actor,
+    create_assisted_slot_hold,
+    next_assisted_available_slot,
+    release_assisted_slot_hold,
+)
+from .models import SolicitudTecnicaAsistidaOperacion
 from .permissions import CanCreateTurnoForClient, IsActiveUser
+from .slot_hold_clock import database_now
 
 
 class AssistedTechnicalRequestViewSet(viewsets.GenericViewSet):
@@ -69,6 +82,38 @@ class AssistedTechnicalRequestViewSet(viewsets.GenericViewSet):
             solicitud_id=pk,
             actor=self.request.user,
         )
+
+    @classmethod
+    def _invalid_payload(cls, detail, errors):
+        return cls._error(
+            'INVALID_PAYLOAD',
+            detail,
+            status.HTTP_400_BAD_REQUEST,
+            fields=errors,
+        )
+
+    @classmethod
+    def _execute_domain_command(cls, command):
+        try:
+            return command(), None
+        except AssistedTechnicalBookingPermissionDenied as exc:
+            return None, cls._domain_error(exc, status.HTTP_403_FORBIDDEN)
+        except AssistedTechnicalBookingNotFound as exc:
+            return None, cls._domain_error(exc, status.HTTP_404_NOT_FOUND)
+        except AssistedTechnicalBookingConflict as exc:
+            return None, cls._domain_error(exc, status.HTTP_409_CONFLICT)
+        except AssistedTechnicalBookingError as exc:
+            return None, cls._domain_error(exc, status.HTTP_400_BAD_REQUEST)
+
+    @staticmethod
+    def _serialize_hold(hold, *, operation_id=None):
+        return dict(AssistedSlotHoldPublicSerializer(
+            hold,
+            context={
+                'database_now': database_now(),
+                'operation_id': operation_id,
+            },
+        ).data)
 
     def create(self, request):
         serializer = AssistedTechnicalRequestCreateSerializer(data=request.data)
@@ -162,3 +207,121 @@ class AssistedTechnicalRequestViewSet(viewsets.GenericViewSet):
             ),
             'siguiente_accion': next_assisted_action(solicitud),
         })
+
+    @action(detail=True, methods=['get'], url_path='disponibilidad')
+    def disponibilidad(self, request, pk=None):
+        result, error = self._execute_domain_command(lambda: (
+            assisted_slot_availability(
+                solicitud_id=pk,
+                actor=request.user,
+            )
+        ))
+        return error or Response(result)
+
+    @action(
+        detail=True,
+        methods=['get'],
+        url_path='proximo-intervalo',
+        url_name='proximo-intervalo',
+    )
+    def proximo_intervalo(self, request, pk=None):
+        serializer = AssistedNextSlotQuerySerializer(data=request.query_params)
+        if not serializer.is_valid():
+            return self._invalid_payload(
+                'La búsqueda de próximo intervalo es inválida.',
+                serializer.errors,
+            )
+        result, error = self._execute_domain_command(lambda: (
+            next_assisted_available_slot(
+                solicitud_id=pk,
+                actor=request.user,
+                **serializer.validated_data,
+            )
+        ))
+        return error or Response(result)
+
+    @action(detail=True, methods=['get', 'post'], url_path='hold')
+    def hold(self, request, pk=None):
+        if request.method == 'GET':
+            result, error = self._execute_domain_command(lambda: (
+                assisted_slot_hold_for_actor(
+                    solicitud_id=pk,
+                    actor=request.user,
+                )
+            ))
+            if error:
+                return error
+            operation = result.operaciones_asistidas.filter(
+                actor=request.user,
+                command=SolicitudTecnicaAsistidaOperacion.Command.HOLD,
+            ).order_by('-created_at', '-pk').first()
+            return Response(self._serialize_hold(
+                result,
+                operation_id=(
+                    str(operation.operation_id) if operation else None
+                ),
+            ))
+
+        serializer = AssistedSlotHoldCreateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return self._invalid_payload(
+                'El payload de hold asistido es inválido.',
+                serializer.errors,
+            )
+        result, error = self._execute_domain_command(lambda: (
+            create_assisted_slot_hold(
+                solicitud_id=pk,
+                actor=request.user,
+                idempotency_key=request.headers.get('Idempotency-Key'),
+                **serializer.validated_data,
+            )
+        ))
+        if error:
+            return error
+        data = self._serialize_hold(
+            result.hold,
+            operation_id=result.operation_id,
+        )
+        data['recovered'] = result.recovered
+        return Response(
+            data,
+            status=(
+                status.HTTP_200_OK
+                if result.recovered
+                else status.HTTP_201_CREATED
+            ),
+        )
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='hold/liberar',
+        url_name='liberar-hold',
+    )
+    def liberar_hold(self, request, pk=None):
+        serializer = AssistedSlotHoldReleaseSerializer(data=request.data)
+        if not serializer.is_valid():
+            return self._invalid_payload(
+                'El payload de liberación asistida es inválido.',
+                serializer.errors,
+            )
+        result, error = self._execute_domain_command(lambda: (
+            release_assisted_slot_hold(
+                solicitud_id=pk,
+                actor=request.user,
+                idempotency_key=request.headers.get('Idempotency-Key'),
+                **serializer.validated_data,
+            )
+        ))
+        if error:
+            return error
+        data = self._serialize_hold(
+            result.hold,
+            operation_id=result.operation_id,
+        )
+        data.update({
+            'recovered': result.recovered,
+            'changed': result.changed,
+            'expiration_materialized': result.expiration_materialized,
+        })
+        return Response(data)

@@ -8,8 +8,12 @@ from .models import (
     SolicitudTecnicaAsistidaOperacion,
     SolicitudTecnicaReserva,
 )
-from .serializers import TechnicalBookingRequestPublicSerializer
+from .serializers import (
+    SlotHoldPublicSerializer,
+    TechnicalBookingRequestPublicSerializer,
+)
 from .assisted_technical_booking_services import next_assisted_action
+from .assisted_slot_hold_services import assisted_hold_next_action
 
 
 class StrictCommandSerializer(serializers.Serializer):
@@ -73,6 +77,45 @@ class AssistedConsentCommandSerializer(StrictCommandSerializer):
         max_length=500,
         trim_whitespace=True,
     )
+
+
+class AssistedSlotHoldCreateSerializer(StrictCommandSerializer):
+    operation_id = serializers.UUIDField()
+    personal_id = serializers.IntegerField(min_value=1)
+    starts_at = serializers.DateTimeField()
+
+
+class AssistedSlotHoldReleaseSerializer(StrictCommandSerializer):
+    operation_id = serializers.UUIDField()
+    public_id = serializers.UUIDField()
+
+
+class AssistedNextSlotQuerySerializer(StrictCommandSerializer):
+    personal_id = serializers.IntegerField(min_value=1, required=False)
+
+
+class AssistedSlotHoldPublicSerializer(SlotHoldPublicSerializer):
+    operation_id = serializers.SerializerMethodField()
+    next_action = serializers.SerializerMethodField()
+    hold_notice = serializers.SerializerMethodField()
+
+    class Meta(SlotHoldPublicSerializer.Meta):
+        fields = SlotHoldPublicSerializer.Meta.fields + (
+            'operation_id',
+            'next_action',
+            'hold_notice',
+        )
+        read_only_fields = fields
+
+    def get_operation_id(self, _obj):
+        return self.context.get('operation_id')
+
+    def get_next_action(self, obj):
+        return assisted_hold_next_action(obj, now=self._now())
+
+    @staticmethod
+    def get_hold_notice(_obj):
+        return 'Este hold no equivale a un Turno confirmado.'
 
 
 class AssistedTechnicalRequestPublicSerializer(
