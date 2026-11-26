@@ -127,6 +127,23 @@ class AssistedPaymentFixtureMixin(AssistedSlotHoldFixtureMixin):
 
 
 class AssistedPaymentTests(AssistedPaymentFixtureMixin, TestCase):
+    def test_owner_web_cannot_read_release_or_prepare_assisted_hold(self):
+        owner = APIClient()
+        owner.force_authenticate(self.solicitud.cliente.usuario)
+        public_id = str(self.hold.public_id)
+        self.assertEqual(owner.get(reverse('slot-hold-detail', args=[public_id])).status_code, 404)
+        self.assertEqual(owner.post(reverse('slot-hold-release', args=[public_id])).status_code, 404)
+        self.assertEqual(owner.get(reverse('payment-intent-options'), {
+            'slot_hold_public_id': public_id,
+        }).status_code, 404)
+        self.assertEqual(owner.post(reverse('payment-intent-list'), {
+            'slot_hold_public_id': public_id, 'mode': 'DEPOSIT',
+        }, format='json', HTTP_IDEMPOTENCY_KEY='different-channel').status_code, 404)
+        self.hold.refresh_from_db()
+        self.assertEqual(self.hold.state, SlotHold.State.ACTIVE)
+        self.assertFalse(PaymentIntent.objects.exists())
+        self.assertEqual(self.prepare().status_code, 201)
+
     def recovery_url(self):
         root = SolicitudTecnicaAsistidaOperacion.objects.create(
             operation_id=uuid4(), actor=self.operator, solicitud=self.solicitud,

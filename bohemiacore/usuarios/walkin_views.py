@@ -24,11 +24,29 @@ from .walkin_client_services import (
     candidate_summary,
     create_walkin_client,
 )
+from .walkin_rate_limits import (
+    CLAIM_CONFIRM_SOURCE,
+    CLAIM_REQUEST_CONTACT,
+    CLAIM_REQUEST_SOURCE,
+    WALKIN_CREATE,
+    WALKIN_RECOVER,
+    WALKIN_SELECT,
+    request_source,
+    take_quota,
+)
 from .web_access_claim_services import (
     WebAccessClaimError,
     confirm_web_access_claim,
-    request_web_access_claim,
+    queue_web_access_claim,
 )
+
+
+def _rate_limited(quota):
+    return Response(
+        {'error': {'code': 'RATE_LIMITED', 'detail': 'Demasiadas solicitudes. Intentá de nuevo más tarde.'}},
+        status=status.HTTP_429_TOO_MANY_REQUESTS,
+        headers={'Retry-After': str(quota.seconds), 'Cache-Control': 'no-store'},
+    )
 
 
 class ClaimAwareTokenObtainPairView(TokenObtainPairView):
@@ -42,12 +60,15 @@ class WalkInClientCreateView(APIView):
         actor = request.user
         if not actor.is_active or not actor.has_perm(BusinessPermission.CREATE_WALKIN_CLIENT):
             return self._error('PERMISSION_DENIED', 'No tiene permisos para consultar altas.', 403)
+        if not take_quota(WALKIN_RECOVER, actor.pk):
+            return _rate_limited(WALKIN_RECOVER)
         try:
             operation_id = UUID(request.query_params.get('operation_id', ''))
         except ValueError:
             return self._error('INVALID_UUID', 'La referencia de alta es inválida.', 400)
         operation = WalkInClientOperation.objects.select_related('cliente__usuario').filter(
             actor=actor, operation_id=operation_id,
+            cliente__activo=True, cliente__usuario__is_active=True,
         ).first()
         if operation is None:
             return self._error('OPERATION_NOT_FOUND', 'No hay un alta disponible en este alcance.', 404)
@@ -59,6 +80,11 @@ class WalkInClientCreateView(APIView):
         }, headers={'Cache-Control': 'no-store'})
 
     def post(self, request):
+        actor = request.user
+        if not actor.is_active or not actor.has_perm(BusinessPermission.CREATE_WALKIN_CLIENT):
+            return self._error('PERMISSION_DENIED', 'No tiene permisos para registrar altas.', 403)
+        if not take_quota(WALKIN_CREATE, actor.pk):
+            return _rate_limited(WALKIN_CREATE)
         serializer = WalkInClientCreateCommandSerializer(data=request.data)
         if not serializer.is_valid():
             return self._error(
@@ -71,7 +97,7 @@ class WalkInClientCreateView(APIView):
             command = dict(serializer.validated_data)
             command['reason'] = command.pop('motivo')
             result = create_walkin_client(
-                actor=request.user,
+                actor=actor,
                 idempotency_key=request.headers.get('Idempotency-Key'),
                 **command,
             )
@@ -142,6 +168,8 @@ class WalkInClientSelectorView(APIView):
                     'detail': 'No tiene permisos para seleccionar Clientes.',
                 }
             }, status=status.HTTP_403_FORBIDDEN)
+        if not take_quota(WALKIN_SELECT, actor.pk):
+            return _rate_limited(WALKIN_SELECT)
         query = request.query_params.get('q', '').strip()
         client_ref = request.query_params.get('cliente_id')
         if client_ref is not None:
@@ -215,6 +243,9 @@ class WebAccessClaimRequestView(APIView):
     )
 
     def post(self, request):
+        if not take_quota(CLAIM_REQUEST_SOURCE, request_source(request)):
+            # Cuota de origen: independiente del email presentado.
+            return _rate_limited(CLAIM_REQUEST_SOURCE)
         serializer = WebAccessClaimRequestSerializer(data=request.data)
         if not serializer.is_valid():
             return Response({
@@ -224,14 +255,19 @@ class WebAccessClaimRequestView(APIView):
                     'fields': serializer.errors,
                 }
             }, status=status.HTTP_400_BAD_REQUEST)
-        request_web_access_claim(email=serializer.validated_data['email'])
-        return Response({'mensaje': self.generic_message}, status=status.HTTP_200_OK)
+        email = serializer.validated_data['email']
+        if take_quota(CLAIM_REQUEST_CONTACT, email.strip().casefold()):
+            queue_web_access_claim(email=email)
+        # La cuota por contacto y el resultado de entrega nunca son públicos.
+        return Response({'mensaje': self.generic_message}, headers={'Cache-Control': 'no-store'})
 
 
 class WebAccessClaimConfirmView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
+        if not take_quota(CLAIM_CONFIRM_SOURCE, request_source(request)):
+            return _rate_limited(CLAIM_CONFIRM_SOURCE)
         serializer = WebAccessClaimConfirmSerializer(data=request.data)
         if not serializer.is_valid():
             return Response({

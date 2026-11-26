@@ -246,6 +246,8 @@ def accept_technical_warning(*, solicitud_id, actor):
         raise TechnicalBookingRequestPermissionDenied(
             'Sólo el Cliente propietario puede aceptar la advertencia.'
         )
+    if not solicitud.has_web_origin(actor.pk):
+        raise TechnicalBookingRequestNotFound('La solicitud técnica no existe.')
     evaluation = solicitud.evaluacion_vigente
     if (
         solicitud.estado
@@ -320,6 +322,8 @@ def reevaluate_technical_booking_request(
         raise TechnicalBookingRequestPermissionDenied(
             'Sólo el Cliente propietario puede reevaluar la solicitud.'
         )
+    if not solicitud.has_web_origin(actor.pk):
+        raise TechnicalBookingRequestNotFound('La solicitud técnica no existe.')
     if solicitud.estado in {
         SolicitudTecnicaReserva.Estado.SUPERADA,
         SolicitudTecnicaReserva.Estado.VENCIDA,

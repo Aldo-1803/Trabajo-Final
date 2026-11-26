@@ -1,12 +1,13 @@
-from datetime import time, timedelta
 from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier
+from dataclasses import replace
+from datetime import time, timedelta
+from threading import Barrier, Event
 from unittest.mock import patch
 from uuid import uuid4
 
 from django.contrib.auth.models import Permission
 from django.core.exceptions import ValidationError
-from django.db import close_old_connections
+from django.db import close_old_connections, connections, transaction
 from django.test import TestCase, TransactionTestCase
 from django.urls import reverse
 from django.utils import timezone
@@ -18,6 +19,7 @@ from gestion.models import (
     Auditoria,
     ConsentimientoAdvertenciaAsistido,
     DiagnosticoCapilar,
+    EvaluacionSolicitudTecnica,
     Habilidad,
     Pago,
     PaymentIntent,
@@ -37,9 +39,19 @@ from gestion.assisted_technical_booking_services import (
     ASSISTED_CONSENT_RECORDED,
     ASSISTED_REQUEST_CREATED,
     AssistedTechnicalBookingConflict,
+    assisted_request_for_actor,
     create_assisted_technical_request,
+    register_assisted_warning_consent,
 )
-from gestion.technical_risk_evaluator import TechnicalRiskEvaluationResult
+from gestion.technical_booking_request_services import (
+    TechnicalBookingRequestNotFound,
+    accept_technical_warning,
+)
+from gestion.technical_risk_evaluator import (
+    TechnicalRiskEvaluationResult,
+    persist_technical_risk_evaluation,
+    supersede_technical_risk_evaluation,
+)
 from usuarios.models import Cliente, Usuario
 
 
@@ -160,7 +172,9 @@ class AssistedTechnicalBookingTests(TestCase):
         return response
 
     def consent(self, request_id, decision, *, reason='', key=None,
-                operation_id=None):
+                operation_id=None, evaluacion_id=None, **extra):
+        if evaluacion_id is None:
+            evaluacion_id = SolicitudTecnicaReserva.objects.get(pk=request_id).evaluacion_vigente_id
         return self.api.post(
             reverse(
                 'solicitud-tecnica-asistida-consentimiento',
@@ -170,6 +184,8 @@ class AssistedTechnicalBookingTests(TestCase):
                 'operation_id': operation_id or str(uuid4()),
                 'decision': decision,
                 'motivo': reason,
+                'evaluacion_id': evaluacion_id,
+                **extra,
             },
             format='json',
             HTTP_IDEMPOTENCY_KEY=key or f'consent-{uuid4()}',
@@ -447,7 +463,8 @@ class AssistedTechnicalBookingTests(TestCase):
         operation_id = str(uuid4())
         key = 'accept-assisted-warning'
         accepted = self.consent(
-            request_id, 'ACEPTA', key=key, operation_id=operation_id
+            request_id, 'ACEPTA', key=key, operation_id=operation_id,
+            evaluacion_id=created.data['evaluacion_id'],
         )
         repeated = self.consent(
             request_id, 'ACEPTA', key=key, operation_id=operation_id
@@ -461,6 +478,8 @@ class AssistedTechnicalBookingTests(TestCase):
             SolicitudTecnicaReserva.Estado.APROBADA_TECNICAMENTE,
         )
         evidence = ConsentimientoAdvertenciaAsistido.objects.get()
+        self.assertEqual(evidence.evaluacion_id, created.data['evaluacion_id'])
+        self.assertEqual(evidence.policy_version, self.policy.version)
         self.assertEqual(evidence.cliente_informado, self.cliente)
         self.assertEqual(evidence.operador, self.operator)
         self.assertEqual(evidence.warning_codes, ['SAFE_RULE'])
@@ -476,6 +495,56 @@ class AssistedTechnicalBookingTests(TestCase):
         evidence.motivo = 'Intento de cambio'
         with self.assertRaises(ValidationError):
             evidence.save()
+
+    def test_consent_requires_evaluation_and_rejects_client_supplied_snapshot(self):
+        created = self.create(TechnicalRiskOutcome.ADVERTENCIA)
+        endpoint = reverse('solicitud-tecnica-asistida-consentimiento', args=[created.data['id']])
+        self.assertEqual(self.api.post(endpoint, {
+            'operation_id': str(uuid4()), 'decision': 'ACEPTA',
+        }, format='json', HTTP_IDEMPOTENCY_KEY='no-evaluation').status_code, 400)
+        self.assertEqual(self.consent(
+            created.data['id'], 'ACEPTA', warning_texts=['Texto del request'],
+        ).status_code, 400)
+        self.assertFalse(ConsentimientoAdvertenciaAsistido.objects.exists())
+
+    def test_web_owner_cannot_approve_or_reevaluate_assisted_warning(self):
+        created = self.create(TechnicalRiskOutcome.ADVERTENCIA)
+        request_id = created.data['id']
+        owner = APIClient()
+        owner.force_authenticate(self.client_user)
+        for suffix in ('aceptar-advertencia', 'reevaluar', 'hold'):
+            response = owner.post(reverse(f'solicitud-tecnica-{suffix}', args=[request_id]), {}, format='json')
+            missing = owner.post(reverse(f'solicitud-tecnica-{suffix}', args=[request_id + 999]), {}, format='json')
+            self.assertEqual((response.status_code, response.data), (404, missing.data))
+        with self.assertRaises(TechnicalBookingRequestNotFound):
+            accept_technical_warning(solicitud_id=request_id, actor=self.client_user)
+        self.assertFalse(AceptacionAdvertenciaTecnica.objects.exists())
+        self.assertEqual(SolicitudTecnicaReserva.objects.get(pk=request_id).estado, 'ADVERTENCIA_PENDIENTE')
+        self.assertEqual(self.consent(request_id, 'ACEPTA').status_code, 200)
+        self.assertEqual(ConsentimientoAdvertenciaAsistido.objects.count(), 1)
+
+    def test_web_warning_only_owner_can_accept_and_retry(self):
+        owner = APIClient()
+        owner.force_authenticate(self.client_user)
+        with patch('gestion.technical_booking_request_services.evaluate_booking_risk',
+                   return_value=self.result(TechnicalRiskOutcome.ADVERTENCIA)):
+            created = owner.post(reverse('solicitud-tecnica-reservar'), {
+                'servicio_ids': [self.service.pk], 'fecha_preferida': self.date.isoformat(),
+                'hora_preferida': self.time.isoformat(),
+            }, format='json')
+        self.assertEqual(created.status_code, 201)
+        request_id = created.data['id']
+        path = reverse('solicitud-tecnica-aceptar-advertencia', args=[request_id])
+        self.assertEqual(self.api.post(path).status_code, 404)
+        self.assertEqual(self.consent(request_id, 'ACEPTA').status_code, 404)
+        SolicitudTecnicaReserva.objects.filter(pk=request_id).update(medio_solicitud=None)
+        self.assertEqual(owner.post(path).status_code, 404)
+        SolicitudTecnicaReserva.objects.filter(pk=request_id).update(medio_solicitud='WEB')
+        for _ in range(2):
+            response = owner.post(path)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.data['estado'], 'APROBADA_TECNICAMENTE')
+        self.assertEqual(AceptacionAdvertenciaTecnica.objects.count(), 1)
 
     def test_reject_and_not_obtained_do_not_authorize_continuation(self):
         for decision in ('RECHAZA', 'NO_OBTENIDO'):
@@ -729,3 +798,63 @@ class AssistedTechnicalBookingConcurrencyTests(TransactionTestCase):
         self.assertEqual(conflicts[0].code, 'IDEMPOTENCY_KEY_REUSED')
         self.assertEqual(SolicitudTecnicaReserva.objects.count(), 1)
         self.assertEqual(SolicitudTecnicaAsistidaOperacion.objects.count(), 1)
+
+    def test_reevaluation_wins_lock_and_stale_consent_does_not_accept_replacement(self):
+        original_result = AssistedTechnicalBookingTests.result(self, TechnicalRiskOutcome.ADVERTENCIA)
+        with patch('gestion.technical_booking_request_services.evaluate_booking_risk', return_value=original_result):
+            original = create_assisted_technical_request(
+                actor=self.operator, idempotency_key='race-request', operation_id=uuid4(),
+                cliente_id=self.cliente.pk, servicios=[self.service], fecha_preferida=self.date,
+                hora_preferida=time(11), medio_solicitud='TELEFONO',
+            ).solicitud
+        replacement = replace(original_result, result_snapshot={
+            **original_result.result_snapshot, 'mensajes_cliente': ['Advertencia distinta B'],
+        })
+        attempting = Event()
+        def signal_before_lock(*args, **kwargs):
+            attempting.set()
+            return assisted_request_for_actor(*args, **kwargs)
+
+        command = dict(
+            solicitud_id=original.pk, actor=self.operator, idempotency_key='consent-race',
+            operation_id=uuid4(), evaluacion_id=original.evaluacion_vigente_id, decision='ACEPTA',
+        )
+        def submit():
+            try:
+                return register_assisted_warning_consent(**command)
+            finally:
+                connections.close_all()
+
+        with ThreadPoolExecutor(max_workers=1) as executor, patch(
+            'gestion.assisted_technical_booking_services.assisted_request_for_actor', side_effect=signal_before_lock,
+        ):
+            with transaction.atomic():
+                locked = SolicitudTecnicaReserva.objects.select_for_update().get(pk=original.pk)
+                new = persist_technical_risk_evaluation(result=replacement, actor=self.operator)
+                supersede_technical_risk_evaluation(
+                    original_evaluation_id=original.evaluacion_vigente_id,
+                    replacement_evaluation_id=new.pk, actor=self.operator,
+                )
+                locked.intento += 1
+                EvaluacionSolicitudTecnica.objects.create(solicitud=locked, evaluacion=new, intento=locked.intento)
+                locked.evaluacion_vigente = new
+                locked.save(update_fields=['evaluacion_vigente', 'intento'])
+                future = executor.submit(submit)
+                self.assertTrue(attempting.wait(timeout=10))
+                self.assertFalse(future.done())
+            with self.assertRaises(AssistedTechnicalBookingConflict) as stale:
+                future.result(timeout=15)
+        self.assertEqual(stale.exception.code, 'STALE_TECHNICAL_EVALUATION')
+        self.assertFalse(ConsentimientoAdvertenciaAsistido.objects.exists())
+        self.assertFalse(Auditoria.objects.filter(valor_nuevo__event=ASSISTED_CONSENT_RECORDED).exists())
+
+        # Nueva decisión explícita sobre el snapshot B. Cambiar el ID en un
+        # retry de esa decisión jamás puede registrar o devolver evidencia A.
+        accepted = register_assisted_warning_consent(**{**command, 'evaluacion_id': new.pk})
+        self.assertEqual(accepted.consentimiento.warning_texts, ['Advertencia distinta B'])
+        self.assertEqual(accepted.consentimiento.evaluacion_id, new.pk)
+        self.assertTrue(register_assisted_warning_consent(**{**command, 'evaluacion_id': new.pk}).recovered)
+        with self.assertRaises(AssistedTechnicalBookingConflict) as different:
+            register_assisted_warning_consent(**command)
+        self.assertEqual(different.exception.code, 'IDEMPOTENCY_KEY_REUSED')
+        self.assertEqual(ConsentimientoAdvertenciaAsistido.objects.count(), 1)

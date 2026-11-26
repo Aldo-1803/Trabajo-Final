@@ -40,7 +40,7 @@ jobs:
         include:
           - block: B1
             name: roles, usuarios y Personal
-            expected: 443
+            expected: 448
             timeout: 30
             database: test_bohemia_hair_ci_b1
             labels: >-
@@ -86,7 +86,7 @@ jobs:
               gestion.tests.test_audit_middleware
           - block: B2
             name: diagnóstico, ficha y rutinas
-            expected: 233
+            expected: 238
             timeout: 20
             database: test_bohemia_hair_ci_b2
             labels: >-
@@ -146,7 +146,7 @@ jobs:
               gestion.tests.test_residual_authorization_closure_bh060_f1.ResidualAuthorizationClosureBh060F1Tests.test_upload_cleans_saved_file_when_storage_url_fails
           - block: B5
             name: Caja, pagos e incidencias
-            expected: 177
+            expected: 180
             timeout: 35
             database: test_bohemia_hair_ci_b5
             labels: >-
@@ -308,6 +308,7 @@ jobs:
         gestion.tests.test_hair_profile_evaluations_increment1.HairProfileWriterConcurrencyTests
         gestion.tests.test_technical_records_increment2.TechnicalRecordConcurrencyTests
         usuarios.test_walkin_client_bh064.WalkInConcurrencyTests
+        usuarios.test_walkin_client_bh064.WalkInRateConcurrencyTests
         gestion.tests.test_assisted_technical_booking.AssistedTechnicalBookingConcurrencyTests
         gestion.tests.test_assisted_slot_holds.AssistedSlotHoldConcurrencyTests
         gestion.tests.test_assisted_payments.AssistedPaymentConcurrencyTests

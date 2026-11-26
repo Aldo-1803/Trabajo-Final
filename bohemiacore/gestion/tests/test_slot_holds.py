@@ -110,6 +110,7 @@ class SlotHoldFixtureMixin:
             hora_preferida=time(10, 0),
             estado=SolicitudTecnicaReserva.Estado.APROBADA_TECNICAMENTE,
             evaluacion_vigente=evaluation,
+            medio_solicitud=SolicitudTecnicaReserva.MedioSolicitud.WEB,
         )
         SolicitudTecnicaServicio.objects.create(
             solicitud=request,

@@ -460,6 +460,7 @@ def create_slot_hold(
         scope_checker=lambda solicitud, current_actor: (
             solicitud.cliente.usuario_id
             == getattr(current_actor, 'pk', None)
+            and solicitud.has_web_origin(current_actor.pk)
         ),
     )
 
@@ -552,6 +553,7 @@ def release_slot_hold(*, public_id, actor):
         actor=actor,
         scope_checker=lambda hold, current_actor: (
             hold.cliente.usuario_id == getattr(current_actor, 'pk', None)
+            and hold.solicitud.has_web_origin(current_actor.pk)
         ),
         release_reason=SlotHold.ReleaseReason.CLIENT_CANCELLED,
     )

@@ -246,6 +246,20 @@ class WalkInClientOperation(models.Model):
         ]
 
 
+class WalkInRateBucket(models.Model):
+    key = models.CharField(max_length=64, primary_key=True)
+    hits = models.PositiveIntegerField()
+    expires_at = models.DateTimeField(db_index=True)
+
+
+class WebAccessClaimDelivery(models.Model):
+    # Referencia transitoria, no una concesión de acceso. El worker verifica
+    # identidad, contacto y elegibilidad de nuevo antes de emitir un token.
+    target_user_id = models.BigIntegerField(null=True)
+    contact_digest = models.CharField(max_length=64)
+    requested_at = models.DateTimeField(auto_now_add=True)
+
+
 class WebAccessClaimToken(models.Model):
     usuario = models.ForeignKey(
         settings.AUTH_USER_MODEL,

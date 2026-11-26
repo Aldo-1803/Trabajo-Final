@@ -441,7 +441,7 @@ def _get_payment_intent_options(*, hold, actor, scope_checker):
         )
     except (SlotHold.DoesNotExist, SolicitudTecnicaReserva.DoesNotExist) as exc:
         raise PaymentIntentNotFound() from exc
-    if not scope_checker(locked_hold, cliente, actor):
+    if not scope_checker(solicitud, locked_hold, cliente, actor):
         raise PaymentIntentNotFound()
 
     existing = next(
@@ -506,15 +506,21 @@ def _get_payment_intent_options(*, hold, actor, scope_checker):
     )
 
 
+def _web_hold_owner(solicitud, hold, cliente, actor):
+    return (
+        getattr(actor, 'is_authenticated', False)
+        and actor.pk == cliente.usuario_id
+        and solicitud.cliente_id == cliente.pk
+        and solicitud.has_web_origin(actor.pk)
+    )
+
+
 def get_payment_intent_options(*, hold, actor):
     """Cotiza B1 para un HOLD propio sin crear obligaciones ni registrar dinero."""
     return _get_payment_intent_options(
         hold=hold,
         actor=actor,
-        scope_checker=lambda _hold, cliente, current_actor: (
-            getattr(current_actor, 'is_authenticated', False)
-            and getattr(current_actor, 'pk', None) == cliente.usuario_id
-        ),
+        scope_checker=_web_hold_owner,
     )
 
 
@@ -565,7 +571,7 @@ def _create_payment_intent(
         .select_related('usuario')
         .get(pk=locked_hold.cliente_id)
     )
-    if not scope_checker(locked_hold, cliente, actor):
+    if not scope_checker(solicitud, locked_hold, cliente, actor):
         raise PaymentIntentNotFound()
 
     same_key = next(
@@ -691,10 +697,7 @@ def create_payment_intent(*, hold, mode, idempotency_key, actor):
         mode=mode,
         idempotency_key=idempotency_key,
         actor=actor,
-        scope_checker=lambda _hold, cliente, current_actor: (
-            getattr(current_actor, 'is_authenticated', False)
-            and getattr(current_actor, 'pk', None) == cliente.usuario_id
-        ),
+        scope_checker=_web_hold_owner,
     )
 
 

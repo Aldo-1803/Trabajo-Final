@@ -1,22 +1,28 @@
 import hashlib
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+from smtplib import SMTPException
+from uuid import uuid4
 from unittest.mock import patch
 
 from django.contrib.auth.models import Group, Permission
 from django.core import mail
-from django.db import IntegrityError, close_old_connections, transaction
+from django.core.management import call_command
+from django.db import IntegrityError, close_old_connections, connections, transaction
 from django.test import TestCase, TransactionTestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
-from rest_framework.test import APITestCase
+from rest_framework.test import APIClient, APITestCase
 
 from gestion.models import Auditoria, DiagnosticoCapilar
 from usuarios.models import (
     Cliente,
     Usuario,
     WalkInClientOperation,
+    WalkInRateBucket,
+    WebAccessClaimDelivery,
     WebAccessClaimToken,
 )
 from usuarios.roles import BusinessRole, get_business_roles
@@ -26,9 +32,11 @@ from usuarios.walkin_client_services import (
     WalkInClientPermissionDenied,
     create_walkin_client,
 )
+from usuarios.walkin_rate_limits import Quota
 from usuarios.web_access_claim_services import (
     WebAccessClaimError,
     confirm_web_access_claim,
+    process_next_web_access_claim,
     request_web_access_claim,
 )
 
@@ -429,6 +437,73 @@ class WalkInClientApiTests(WalkInFixtureMixin, APITestCase):
         response = self.post_create(key='public-denied')
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
+    def test_selector_throttles_actor_not_shared_source_or_query(self):
+        path = self.selector_url
+        with patch('usuarios.walkin_views.WALKIN_SELECT', Quota('select-test', 1, 60)):
+            allowed = self.client.get(path, {'q': 'Persona'})
+            denied = self.client.get(path, {'q': 'Inexistente'})
+            self.assertEqual(allowed.status_code, 200)
+            self.assertEqual(denied.status_code, 429)
+            self.assertEqual(denied['Retry-After'], '60')
+            self.assertEqual(denied.data['error']['code'], 'RATE_LIMITED')
+            self.assertEqual(self.client.get(path, {'cliente_id': 1}).data, denied.data)
+            other = self.create_actor('other-rate@example.test')
+            self.client.force_authenticate(other)
+            self.assertEqual(self.client.get(path, {'q': 'Persona'}).status_code, 200)
+            self.client.force_authenticate(self.create_user('no-rate@example.test'))
+            self.assertEqual(self.client.get(path, {'q': 'Persona'}).status_code, 403)
+            self.assertEqual(WalkInRateBucket.objects.count(), 2)
+
+    def test_create_limit_retains_idempotency_and_separate_recovery(self):
+        with patch('usuarios.walkin_views.WALKIN_CREATE', Quota('create-test', 1, 600)):
+            first = self.post_create()
+            self.assertEqual(first.status_code, 201)
+            limited = self.post_create()
+            self.assertEqual(limited.status_code, 429)
+            self.assertNotIn('cliente_id', limited.data)
+            recovered_read = self.client.get(self.create_url, {'operation_id': first.data['operation_id']})
+            self.assertEqual(recovered_read.status_code, 200)
+            self.assertEqual(recovered_read.data['cliente_id'], first.data['cliente_id'])
+            # Sólo expirar la ventana de escritura; el GET es un bucket aparte.
+            WalkInRateBucket.objects.filter(hits=1, expires_at__gt=timezone.now() + timedelta(minutes=5)).update(
+                expires_at=timezone.now() - timedelta(seconds=1),
+            )
+            retry = self.post_create()
+            self.assertEqual(retry.status_code, 200)
+            self.assertTrue(retry.data['recovered'])
+            self.assertEqual(retry.data['cliente_id'], first.data['cliente_id'])
+            self.assertEqual(WalkInClientOperation.objects.count(), 1)
+
+
+class WalkInRateConcurrencyTests(WalkInFixtureMixin, TransactionTestCase):
+    def test_concurrent_selector_requests_respect_one_shared_quota(self):
+        actor = self.create_actor('race-rate@example.test')
+        path = reverse('walkin-client-selector')
+        barrier = threading.Barrier(8)
+
+        def search(_):
+            api = APIClient()
+            api.force_authenticate(actor)
+            try:
+                barrier.wait(timeout=10)
+                return api.get(path, {'q': 'Búsqueda concurrente'}).status_code
+            finally:
+                connections.close_all()
+
+        with patch('usuarios.walkin_views.WALKIN_SELECT', Quota('race-test', 3, 60)):
+            with ThreadPoolExecutor(max_workers=8) as workers:
+                outcomes = list(workers.map(search, range(8)))
+        self.assertEqual(sorted(outcomes), [200] * 3 + [429] * 5)
+        bucket = WalkInRateBucket.objects.get()
+        self.assertEqual(bucket.hits, 3)
+        # Prune no elimina una cuota activa ni revela su sujeto.
+        expired = WalkInRateBucket.objects.create(
+            key='expired-test-bucket', hits=1, expires_at=timezone.now() - timedelta(seconds=1),
+        )
+        call_command('prune_walkin_rate_buckets', verbosity=0)
+        self.assertFalse(WalkInRateBucket.objects.filter(pk=expired.pk).exists())
+        self.assertTrue(WalkInRateBucket.objects.filter(pk=bucket.pk).exists())
+
 
 @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
 class WebAccessClaimTests(WalkInFixtureMixin, TestCase):
@@ -446,6 +521,77 @@ class WebAccessClaimTests(WalkInFixtureMixin, TestCase):
         user.save()
         client = Cliente.objects.create(usuario=user, activo=True)
         return user, client
+
+    def test_provider_failure_is_generic_and_preserves_previous_token(self):
+        api = APIClient(raise_request_exception=False)
+        eligible, _ = self.create_pending()
+        self.assertTrue(request_web_access_claim(email=eligible.email).sent)
+        token = WebAccessClaimToken.objects.get(usuario=eligible)
+        path = reverse('web-access-claim-request')
+        with self.assertLogs('usuarios.web_access_claim_services', level='WARNING') as log:
+            with patch('usuarios.web_access_claim_services.EmailMultiAlternatives.send',
+                       side_effect=SMTPException('sensitive diagnostic placeholder')) as send:
+                known = api.post(path, {'email': eligible.email}, format='json')
+                unknown = api.post(path, {'email': 'missing@example.test'}, format='json')
+                send.assert_not_called()
+                self.assertEqual(WebAccessClaimDelivery.objects.count(), 2)
+                call_command('process_web_access_claims', verbosity=0)
+                self.assertEqual(send.call_count, 1)
+        self.assertEqual((known.status_code, unknown.status_code), (200, 200))
+        self.assertEqual(known.content, unknown.content)
+        self.assertEqual(dict(known.headers), dict(unknown.headers))
+        self.assertEqual(log.records[0].getMessage(), 'web_access_claim_delivery_failed')
+        self.assertIsNone(log.records[0].exc_info)
+        with patch('usuarios.web_access_claim_services.EmailMultiAlternatives.send', return_value=0):
+            self.assertEqual(api.post(path, {'email': eligible.email}, format='json').content, unknown.content)
+            self.assertTrue(process_next_web_access_claim())
+        self.assertFalse(WebAccessClaimDelivery.objects.exists())
+        self.assertEqual(WebAccessClaimToken.objects.filter(usuario=eligible).count(), 1)
+        token.refresh_from_db()
+        self.assertIsNone(token.revoked_at)
+        eligible.refresh_from_db()
+        self.assertFalse(eligible.has_usable_password())
+        self.assertEqual(eligible.web_access_status, 'PENDING_CLAIM')
+
+    def test_contact_budget_is_silent_and_origin_budget_ignores_spoofed_headers(self):
+        api = APIClient()
+        eligible, _ = self.create_pending()
+        path = reverse('web-access-claim-request')
+        with patch('usuarios.walkin_views.CLAIM_REQUEST_SOURCE', Quota('source-test', 3, 60)), patch(
+            'usuarios.walkin_views.CLAIM_REQUEST_CONTACT', Quota('contact-test', 1, 3600),
+        ):
+            first = api.post(path, {'email': eligible.email}, format='json', REMOTE_ADDR='192.0.2.1')
+            repeat = api.post(path, {'email': eligible.email.upper()}, format='json', REMOTE_ADDR='192.0.2.2')
+            unknown = api.post(path, {'email': 'unknown@example.test'}, format='json', REMOTE_ADDR='192.0.2.1')
+            self.assertEqual([first.status_code, repeat.status_code, unknown.status_code], [200] * 3)
+            self.assertEqual(first.content, repeat.content)
+            self.assertEqual(first.content, unknown.content)
+            self.assertEqual(WebAccessClaimDelivery.objects.count(), 2)
+            call_command('process_web_access_claims', verbosity=0)
+            self.assertEqual(WebAccessClaimToken.objects.filter(usuario=eligible).count(), 1)
+            self.assertEqual(len(mail.outbox), 1)
+            api.post(path, {'email': 'other@example.test'}, format='json', REMOTE_ADDR='192.0.2.1')
+            capped = api.post(path, {'email': eligible.email}, format='json', REMOTE_ADDR='192.0.2.1',
+                              HTTP_X_FORWARDED_FOR='192.0.2.3')
+            capped_unknown = api.post(path, {'email': 'unknown@example.test'}, format='json', REMOTE_ADDR='192.0.2.1')
+            self.assertEqual((capped.status_code, capped_unknown.status_code), (429, 429))
+            self.assertEqual(capped.content, capped_unknown.content)
+
+    def test_worker_discards_stale_jobs_and_changed_contacts(self):
+        path = reverse('web-access-claim-request')
+        changed, _ = self.create_pending(email='original@example.test')
+        expired, _ = self.create_pending(email='expired@example.test')
+        for subject in (changed, expired):
+            self.assertEqual(self.client.post(path, {'email': subject.email}, format='json').status_code, 200)
+        Usuario.objects.filter(pk=changed.pk).update(email='different@example.test')
+        WebAccessClaimDelivery.objects.filter(target_user_id=expired.pk).update(
+            requested_at=timezone.now() - timedelta(minutes=16),
+        )
+        with patch('usuarios.web_access_claim_services.EmailMultiAlternatives.send') as send:
+            call_command('process_web_access_claims', verbosity=0)
+            send.assert_not_called()
+        self.assertFalse(WebAccessClaimDelivery.objects.exists())
+        self.assertFalse(WebAccessClaimToken.objects.exists())
 
     @staticmethod
     def token_from_email():

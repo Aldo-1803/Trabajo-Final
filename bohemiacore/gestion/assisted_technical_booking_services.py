@@ -14,6 +14,7 @@ from usuarios.roles import BusinessPermission
 from .models import (
     Auditoria,
     ConsentimientoAdvertenciaAsistido,
+    EvaluacionRiesgoTecnico,
     Personal,
     SolicitudTecnicaAsistidaOperacion,
     SolicitudTecnicaReserva,
@@ -127,7 +128,9 @@ def _authorized_actor(actor):
         )
     user_model = get_user_model()
     try:
-        current = user_model.objects.select_for_update().get(pk=actor.pk)
+        # Revalidar la autoridad sin bloquear referencias FK al actor. Una
+        # supersesión concurrente puede auditarse con ese mismo Usuario.
+        current = user_model.objects.select_for_update(no_key=True).get(pk=actor.pk)
     except user_model.DoesNotExist as exc:
         raise AssistedTechnicalBookingPermissionDenied(
             'PERMISSION_DENIED',
@@ -205,7 +208,8 @@ def _validate_preferred_personal(personal, services):
         )
 
 
-def _existing_operation(*, command, key_digest, operation_id, actor, fingerprint):
+def _existing_operation(*, command, key_digest, operation_id, actor, fingerprint,
+                        matches_legacy=None):
     existing = (
         SolicitudTecnicaAsistidaOperacion.objects.select_related(
             'solicitud__evaluacion_vigente',
@@ -221,7 +225,8 @@ def _existing_operation(*, command, key_digest, operation_id, actor, fingerprint
         if (
             existing.actor_id != actor.pk
             or existing.operation_id != operation_id
-            or existing.fingerprint != fingerprint
+            or (existing.fingerprint != fingerprint
+                and not (matches_legacy and matches_legacy(existing)))
         ):
             raise AssistedTechnicalBookingConflict(
                 'IDEMPOTENCY_KEY_REUSED',
@@ -305,19 +310,10 @@ def create_assisted_technical_request(
     )):
         _advisory_lock(lock_value)
     current_actor = _authorized_actor(actor)
-    alta = None
-    if alta_operation_id:
-        if not current_actor.has_perm(BusinessPermission.CREATE_WALKIN_CLIENT):
-            raise AssistedTechnicalBookingPermissionDenied(
-                'WALKIN_PERMISSION_DENIED', 'No tiene permisos para vincular un alta rápida.',
-            )
-        alta = WalkInClientOperation.objects.filter(
-            operation_id=alta_operation_id, actor=current_actor, cliente_id=cliente_id,
-        ).first()
-        if alta is None:
-            raise AssistedTechnicalBookingNotFound(
-                'WALKIN_OPERATION_NOT_FOUND', 'El alta no está disponible para este Cliente.',
-            )
+    if alta_operation_id and not current_actor.has_perm(BusinessPermission.CREATE_WALKIN_CLIENT):
+        raise AssistedTechnicalBookingPermissionDenied(
+            'WALKIN_PERMISSION_DENIED', 'No tiene permisos para vincular un alta rápida.',
+        )
     existing = _existing_operation(
         command=SolicitudTecnicaAsistidaOperacion.Command.CREATE,
         key_digest=key_digest,
@@ -332,6 +328,15 @@ def create_assisted_technical_request(
             recovered=True,
         )
 
+    alta = None
+    if alta_operation_id:
+        alta = WalkInClientOperation.objects.filter(
+            operation_id=alta_operation_id, actor=current_actor, cliente_id=cliente_id,
+        ).first()
+        if alta is None:
+            raise AssistedTechnicalBookingNotFound(
+                'WALKIN_OPERATION_NOT_FOUND', 'El alta no está disponible para este Cliente.',
+            )
     cliente = _locked_client(cliente_id)
     _validate_preferred_personal(personal_preferido, services)
     try:
@@ -413,6 +418,7 @@ def register_assisted_warning_consent(
     actor,
     idempotency_key,
     operation_id,
+    evaluacion_id,
     decision,
     motivo='',
 ):
@@ -441,13 +447,14 @@ def register_assisted_warning_consent(
             'motivo',
         )
     key_digest = _sha256(key)
-    fingerprint = _fingerprint({
+    payload = {
         'actor_id': getattr(actor, 'pk', None),
         'operation_id': str(normalized_operation_id),
         'solicitud_id': solicitud_id,
         'decision': decision,
         'motivo': normalized_reason,
-    })
+    }
+    fingerprint = _fingerprint({**payload, 'evaluacion_id': evaluacion_id})
     for lock_value in sorted((
         f'assisted-key:{SolicitudTecnicaAsistidaOperacion.Command.CONSENT}:{key_digest}',
         f'assisted-operation:{normalized_operation_id}',
@@ -460,6 +467,11 @@ def register_assisted_warning_consent(
         operation_id=normalized_operation_id,
         actor=current_actor,
         fingerprint=fingerprint,
+        matches_legacy=lambda op: (
+            op.consentimiento is not None
+            and op.consentimiento.evaluacion_id == evaluacion_id
+            and op.fingerprint == _fingerprint(payload)
+        ),
     )
     if existing is not None:
         return AssistedConsentResult(
@@ -474,13 +486,23 @@ def register_assisted_warning_consent(
         actor=current_actor,
         lock=True,
     )
-    evaluation = solicitud.evaluacion_vigente
+    # Mismo orden que una reevaluación: solicitud, luego evaluación. Leer la
+    # evaluación de nuevo bajo lock protege también ante supersesión directa.
+    evaluation = None
+    if solicitud.evaluacion_vigente_id == evaluacion_id:
+        evaluation = EvaluacionRiesgoTecnico.objects.select_for_update().filter(
+            pk=evaluacion_id, cliente_id=solicitud.cliente_id,
+        ).first()
     if (
         solicitud.estado
         != SolicitudTecnicaReserva.Estado.ADVERTENCIA_PENDIENTE
         or evaluation is None
         or evaluation.outcome != TechnicalRiskOutcome.ADVERTENCIA
         or evaluation.superseded_by_id is not None
+        or not evaluation.result_snapshot.get('mensajes_cliente')
+        or not solicitud.intentos_evaluacion.filter(
+            evaluacion_id=evaluacion_id, intento=solicitud.intento,
+        ).exists()
     ):
         raise AssistedTechnicalBookingConflict(
             'STALE_TECHNICAL_EVALUATION',

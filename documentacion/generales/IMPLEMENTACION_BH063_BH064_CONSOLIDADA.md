@@ -410,3 +410,78 @@ Los logs completos quedaron en el directorio temporal local de OpenCode.
 
 Incremento 0: decisiones aprobadas (D-01 a D-07); incrementos 1–4: publicados y
 validados; incremento 5: validación focal y selectiva, sin cierre oficial.
+
+## 14. Corrección de bloqueantes de auditoría AI-01 a AI-05
+
+Línea base: `3209dbd0ea5d6dae26245c2967a43a2bc79dd1fb`. El informe independiente
+local se conserva sin modificaciones y sin incluirlo en este cambio. El
+veredicto del baseline sigue siendo histórico; la auditoría del nuevo commit y
+el cierre oficial siguen pendientes.
+
+| Hallazgo y causa | Corrección y contrato | Archivos y evidencia |
+|---|---|---|
+| AI-01 · El POST podía aceptar la evaluación que acababa de reemplazar la que leyó el operador. | La proyección asistida incluye `evaluacion_id`; el POST de consentimiento lo exige y lo incluye en el fingerprint. El servidor bloquea solicitud y evaluación, verifica cliente, intento vigente y advertencia no supersedida, y deriva textos, versión y códigos del snapshot persistido. Si cambió, `409 STALE_TECHNICAL_EVALUATION`, sin efectos; React recarga y requiere una nueva decisión. Un replay válido no agrega evidencia; para hashes históricos, el ID explícito debe coincidir con la evidencia guardada. | `gestion/assisted_technical_booking_{serializers,services}.py`, `NuevoTurno.js`; contrato D, carrera PostgreSQL, rollback de auditoría, rechazo de texto entrante e idempotencia. |
+| AI-02 · Ownership web no verificaba canal ni procedencia. | La API web y los servicios de aceptación, reevaluación, hold y preparación financiera requieren `WEB` explícito y registrante ausente o igual al propietario. No se reclasifican solicitudes ambiguas ni se reescribe evidencia anterior. La consulta operativa de Caja, la revisión técnica y la conciliación de obligaciones persistidas conservan sus permisos. | `gestion/models.py`, `views.py`, `technical_booking_request_services.py`, `slot_hold_services.py`, `payment_intent_services.py`, `assisted_payment_services.py`; acceso HTTP cruzado, web legítimo y retry, hold/Intent asistidos. |
+| AI-03 · Recepción retenía la mutación ante un rechazo definitivo y volvía a ofrecer el mismo POST. | Un 404 autoritativo del dominio puede marcar la referencia no utilizable, incluso tras reload. Abandonarla es explícito y sólo local: no borra Clientes, reservas ni pagos. Se verifica por GET el Cliente/alta restante antes de mostrarlo; 401/403 siguen bloqueando mientras no se autorice la lectura. Un GET sin raíz con CREATE incierto no prueba que el POST fallara: se conserva el mismo payload y clave, sin POST automático. | `NuevoTurno.js` y su suite, servicios de solicitud y lectura de alta; recuperación de alta inválida, Cliente fuera de alcance, consulta de raíz, timeout/reload y autoridad. |
+| AI-04 · No había límite compartido de alta/selector. | Cuotas previas a lookup de datos: UPSERT condicional PostgreSQL con reloj común y HMAC del sujeto. Ventana fija desde el primer intento de cada bucket. Actor: POST alta 30/10 min, GET alta 60/min y selector 60/min por separado. Reclamo: solicitud 30/10 min por origen, 3/hora por contacto normalizado; confirmación 30/10 min por origen en bucket distinto. `429 RATE_LIMITED` y `Retry-After` conservador, salvo cuota por contacto, que sigue devolviendo el mismo `200` sin encolar. Un retry de alta rechazado por cuota puede consultar el GET propio o esperar y volver con la misma clave; no cambia el ledger. | `usuarios/walkin_rate_limits.py`, `walkin_views.py`, migración `usuarios.0005`; pruebas de ventana, actores en la misma IP, permisos, GET de recuperación y ocho conexiones concurrentes. |
+| AI-05 · Enviar correo en línea filtraba estado HTTP y latencia del proveedor. | El POST admitido encola una referencia transitoria con la misma forma para email conocido o desconocido y devuelve un acuse genérico, no una confirmación de entrega. No guarda correo en claro ni token en la cola. El worker revalida contacto y elegibilidad, emite el token y hace rollback si el transporte falla. El log de fallo no lleva excepciones, destinatarios ni enlaces. Vigencia de token de 60 min desde emisión y consumo único sin cambios. | `usuarios/web_access_claim_services.py`, `walkin_views.py`, `process_web_access_claims.py`, migración `usuarios.0006`; test de igualdad HTTP/cuerpo/headers, excepción y envío cero simulado, rollback, contacto cambiado y plazo vencido. |
+
+### Requisitos para desplegar
+
+- Aplicar `usuarios.0005–0006` antes de servir estas rutas. Usar la misma
+  base primaria PostgreSQL y `SECRET_KEY` en todos los workers de HTTP y del
+  procesador. Los contadores no dependen de la caché local. Programar
+  `python manage.py prune_walkin_rate_buckets` periódicamente (p. ej., diario).
+- Configurar `REMOTE_ADDR` al origen confiable de la conexión si hay proxy
+  inverso; no se aceptan cabeceras `X-Forwarded-For` aportadas por el cliente.
+  Sin esa configuración los reclamos anónimos detrás del proxy comparten
+  cuota de origen. Las cuotas de alta/selector dependen del actor, no de IP.
+- **Requisito operativo del reclamo:** ejecutar `python manage.py
+  process_web_access_claims --limit 50` con un scheduler supervisado (p. ej.,
+  cada minuto) antes de habilitar el tráfico; dimensionar para que la cola no
+  llegue a 15 minutos. Usa `FOR UPDATE SKIP LOCKED` y transacciones acotadas por
+  trabajo. Supervisar backlog y el evento `web_access_claim_delivery_failed`.
+  Si un envío falla, no se activa la cuenta ni se invalida un token anterior:
+  el solicitante puede reintentar dentro de cuota. El `200` no certifica ni el
+  procesamiento ni la entrega. No se probó infraestructura externa de correo.
+- Una solicitud histórica sin canal inequívoco no puede continuar por la
+  ruta web: no se inferirá el origen ni se hará backfill sin revisión. Una
+  pestaña que reciba 404 puede olvidar la referencia local; si hubo movimiento
+  financiero, debe verificar Caja/agenda antes de repetirlo.
+
+### Validación focal y selectiva
+
+- Reproducción en `3209dbd`, con identidades sintéticas: los probes PostgreSQL
+  reprodujeron AI-01 (el comando registró B), AI-02 (aceptación web de la
+  solicitud asistida) y AI-05 (500/200 ante fallo SMTP); el selector admitió 61
+  consultas sin cuota y la prueba Jest de AI-03 no encontró una salida tras
+  el 404 definitivo. No se consultó ningún entorno público.
+- PostgreSQL 16.9 aislado, `bohemiacore.test_settings` y
+  `StablePostgresTestRunner`; migraciones sólo en bases de pruebas. Se añadió
+  la clase de cuotas concurrentes a B7 y se comprobaron los conteos usando
+  discovery, no ejecutando la matriz completa: 1.292 IDs únicos, sin duplicados.
+- Jest selectivo: **60 pruebas aprobadas** en seis suites; 36 de recepción en
+  el rerun final y 24 de alta, Caja y pantallas de reclamo ya aprobadas, sin
+  contarlas dos veces. Build estándar exitoso, los mismos 18 avisos ESLint del
+  baseline. Django `check`, drift y `sqlmigrate usuarios 0005–0006` con salida
+  0; `staticfiles.W004` por ausencia de `static` no versionado en el snapshot.
+- No se ejecutó Jest completo, la matriz B1–B7 completa ni un nuevo build
+  `CI=true`. Se dejó la regresión integral para la siguiente auditoría. Logs y
+  scripts de validación en `%LOCALAPPDATA%/Temp/opencode/bh063-064-fixes/`, fuera
+  del repositorio. Revisión por patrones de secretos, enlaces y diff sin
+  incidencias; sin scanner de secretos dedicado.
+
+- **235 pruebas PostgreSQL únicas aprobadas**: 51 de solicitud, hold y pagos
+  asistidos (incluida la carrera evaluación/consentimiento); 108 de BH-057,
+  holds web y regresión BH-058 (Intent, confirmación y checkout); 76 de alta,
+  cuotas, reclamo y autenticación/sesión. Los tres grupos salieron con código
+  0. Durante la corrección, la carrera mostró un interbloqueo entre el lock
+  del operador y la FK de auditoría; `FOR NO KEY UPDATE` permite esa referencia
+  sin quitar la protección del actor ante mutaciones. La ejecución final
+  pasó con la carrera y el resto de las pruebas asistidas.
+- **E2E focal aprobado** (Edge headless, React compilado, Django y PostgreSQL
+  aislados). Login, alta y traspaso a recepción; 404 real de una selección
+  inactivada al recargar, retorno a selección en la misma pestaña, evaluación
+  BH-057, consentimiento y disponibilidad autorizada. La BD confirmó alta
+  única, evidencia de la evaluación vigente con el operador y cero Pagos e
+  Intents. No se probó entrega externa ni se hicieron cobros.

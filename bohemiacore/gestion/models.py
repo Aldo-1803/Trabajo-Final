@@ -3296,6 +3296,19 @@ class SolicitudTecnicaReserva(models.Model):
         TELEFONO = 'TELEFONO', 'Teléfono'
         PRESENCIAL = 'PRESENCIAL', 'Presencial'
 
+    @classmethod
+    def web_origin_filter(cls, owner_id, *, prefix=''):
+        return models.Q(**{f'{prefix}medio_solicitud': cls.MedioSolicitud.WEB}) & (
+            models.Q(**{f'{prefix}operador_registrante_id': owner_id})
+            | models.Q(**{f'{prefix}operador_registrante__isnull': True})
+        )
+
+    def has_web_origin(self, owner_id):
+        return (
+            self.medio_solicitud == self.MedioSolicitud.WEB
+            and self.operador_registrante_id in (None, owner_id)
+        )
+
     class Estado(models.TextChoices):
         EVALUANDO = 'EVALUANDO', 'Evaluando'
         ADVERTENCIA_PENDIENTE = (

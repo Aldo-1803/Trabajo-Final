@@ -104,7 +104,7 @@ const OutcomePanel = ({ result, onConsent, consentBusy, readOnly }) => {
                         <p className="font-semibold" role="status">
                             Consentimiento registrado: {consent.decision}.
                         </p>
-                    ) : !readOnly && (
+                    ) : !readOnly && result.evaluacion_id && (
                         <form
                             className="space-y-3 rounded border p-4"
                             onSubmit={(event) => {
@@ -441,8 +441,9 @@ const Reception = ({ actorId }) => {
     const mounted = useRef(true);
     const writeBusy = useRef(false);
     const readBusy = useRef(false);
-    const [recovering, setRecovering] = useState(Boolean(journal.root || journal.clientId));
+    const [recovering, setRecovering] = useState(!journal.invalidReference && Boolean(journal.root || journal.clientId));
     const [accessBlocked, setAccessBlocked] = useState(false);
+    const [unavailable, setUnavailable] = useState(journal.invalidReference || null);
     const [turno, setTurno] = useState(null);
     const [projection, setProjection] = useState(null);
 
@@ -490,7 +491,8 @@ const Reception = ({ actorId }) => {
     const uncertainPayment = pending?.kind === 'payment' ? pending : null;
 
     const recover = async ({ duringWrite = false } = {}) => {
-        if (!canCreateForClient || readBusy.current || (writeBusy.current && !duringWrite)) return;
+        if (!canCreateForClient || journalRef.current.invalidReference || readBusy.current
+            || (writeBusy.current && !duringWrite)) return;
         readBusy.current = true;
         setRecovering(true);
         const current = journalRef.current;
@@ -511,20 +513,30 @@ const Reception = ({ actorId }) => {
                 setSelectedStart('');
                 setPaymentOptions(null);
             } else if (current.clientId) {
-                const { data } = current.altaId && canWalkin
+                const fromAlta = current.altaId && canWalkin;
+                const { data } = fromAlta
                     ? await axios.get(WALKIN_URL, { params: { operation_id: current.altaId } })
                     : await axios.get(CLIENT_SELECTOR_URL, { params: { cliente_id: current.clientId } });
                 if (!mounted.current) return;
                 writeJournal({ clientId: current.clientId, altaId: canWalkin ? current.altaId : null });
-                setSelectedClient(normalizeCreatedClient(data.results?.[0] || data));
+                const client = normalizeCreatedClient(data.results?.[0] || data);
+                setSelectedClient(client && (fromAlta ? client : { ...client, operation_id: null }));
             }
             setAccessBlocked(false);
+            setUnavailable(null);
             if (!duringWrite) clearWorkflowError();
         } catch (requestError) {
             if (!mounted.current) return;
-            if (requestError.response?.status === 404 && current.pending?.kind === 'request') {
-                setAccessBlocked(false);
-                setError('La solicitud todavía no está disponible. Podés reenviar el mismo comando con su clave original.');
+            const { status, code } = classifyHttpError(requestError);
+            if (status === 404) {
+                if (current.root && current.pending?.kind === 'request' && (!code || code === 'OPERATION_NOT_FOUND')) {
+                    // Un GET no observa un CREATE aún no confirmado. No permite
+                    // concluir que el POST falló ni reemplazar su identidad.
+                    setAccessBlocked(false);
+                    setError('La solicitud todavía no está disponible. Podés reenviar el mismo comando con su clave original.');
+                } else {
+                    setUnavailable(current.root ? 'root' : current.altaId && canWalkin ? 'alta' : 'client');
+                }
             } else {
                 recordWorkflowError(requestError);
                 setAccessBlocked(true);
@@ -562,18 +574,43 @@ const Reception = ({ actorId }) => {
 
     const commandFailed = async (failure, kind) => {
         const classified = recordWorkflowError(failure);
-        if ([401, 403, 404].includes(classified.status)) {
+        if ([401, 403].includes(classified.status)) {
             setAccessBlocked(true);
+            return;
+        }
+        if (classified.status === 404) {
+            const invalid = {
+                WALKIN_OPERATION_NOT_FOUND: 'alta',
+                CLIENT_OUT_OF_SCOPE: 'client',
+                REQUEST_OUT_OF_SCOPE: 'root',
+            }[classified.code];
+            if (invalid) {
+                // Rechazo del dominio antes del efecto: recordarlo incluso al
+                // recargar para no convertirlo en un reintento incierto.
+                writeJournal({ ...journalRef.current, pending: null, invalidReference: invalid });
+                setUnavailable(invalid);
+            } else if (kind !== 'request' && ['HOLD_OR_REQUEST_OUT_OF_SCOPE', 'ASSISTED_PAYMENT_CONTEXT_NOT_FOUND'].includes(classified.code)) {
+                finishCommand();
+                await recover({ duringWrite: true });
+            } else {
+                setAccessBlocked(true);
+            }
             return;
         }
         if (uncertainOutcome(failure)) return;
         if (classified.status === 409) {
             const identityConflict = !classified.code || ['OPERATION_ID_REUSED', 'IDEMPOTENCY_KEY_REUSED'].includes(classified.code);
-            if (!identityConflict) finishCommand(kind === 'request');
+            if (!identityConflict) {
+                finishCommand(kind === 'request');
+                if (kind === 'consent') setConsentIdentity(newCommandIdentity());
+            }
             if (kind !== 'request' || identityConflict) await recover({ duringWrite: true });
             return;
         }
-        if (classified.status === 400) finishCommand(kind === 'request');
+        if (classified.status === 400) {
+            finishCommand(kind === 'request');
+            if (kind === 'consent') setConsentIdentity(newCommandIdentity());
+        }
     };
 
     useEffect(() => {
@@ -703,10 +740,11 @@ const Reception = ({ actorId }) => {
     };
 
     const submitConsent = async (decision, reason, draft = null) => {
-        if (consentBusy || !result) return;
+        if (consentBusy || !result || (!draft && !result.evaluacion_id)) return;
         const activeDraft = draft || {
             payload: {
                 operation_id: consentIdentity.operationId,
+                evaluacion_id: result.evaluacion_id,
                 decision,
                 motivo: reason
             },
@@ -982,15 +1020,15 @@ const Reception = ({ actorId }) => {
         }
     };
 
-    const startAnother = () => {
-        if (journalRef.current.pending || readBusy.current || writeBusy.current) return;
-        writeJournal({ clientId: selectedClient?.cliente_id, altaId: selectedClient?.operation_id });
+    const resetRequestState = ({ keepForm = false } = {}) => {
         setResult(null);
         setTurno(null);
         setProjection(null);
-        setSelectedServices([]);
-        setPreferredDate('');
-        setPreferredTime('');
+        if (!keepForm) {
+            setSelectedServices([]);
+            setPreferredDate('');
+            setPreferredTime('');
+        }
         setRequestIdentity(newCommandIdentity());
         setConsentIdentity(newCommandIdentity());
         setAvailability(null);
@@ -1004,7 +1042,28 @@ const Reception = ({ actorId }) => {
         setSelectedPaymentMode('');
         setPaymentIntent(null);
         setPaymentIdentity(newCommandIdentity());
-        setError('');
+        clearWorkflowError();
+    };
+
+    const startAnother = () => {
+        if (journalRef.current.pending || readBusy.current || writeBusy.current) return;
+        writeJournal({ clientId: selectedClient?.cliente_id, altaId: selectedClient?.operation_id });
+        resetRequestState();
+    };
+
+    const abandonUnavailable = () => {
+        if (!unavailable || readBusy.current || writeBusy.current) return;
+        const { clientId, altaId } = journalRef.current;
+        const next = unavailable === 'client' ? {} : {
+            clientId, altaId: unavailable === 'alta' ? null : altaId,
+        };
+        writeJournal(next);
+        resetRequestState({ keepForm: true });
+        setSelectedClient(null);
+        setClientResults([]);
+        setUnavailable(null);
+        setAccessBlocked(false);
+        if (next.clientId) recover();
     };
 
     const chooseClient = (client) => {
@@ -1040,11 +1099,16 @@ const Reception = ({ actorId }) => {
         && booking.personal_id === profiles.personal.id
         && hasCapability?.(PROFESSIONAL_WORKFLOW_CAPABILITY);
 
-    if (recovering || accessBlocked) {
+    if (recovering || accessBlocked || unavailable) {
         return (
             <main className="mx-auto max-w-3xl p-8">
                 <h1 className="text-2xl font-bold">Recorrido asistido de recepción</h1>
-                {recovering ? <p role="status">Recuperando estado autorizado…</p> : (
+                {recovering ? <p role="status">Recuperando estado autorizado…</p> : unavailable ? (
+                    <>
+                        <p role="alert">La referencia no está disponible. Volver a la selección no modifica el Cliente ni la operación en el servidor. Si hubo un cobro, verificá Caja antes de repetirlo.</p>
+                        <button type="button" onClick={abandonUnavailable}>Volver a selección de Cliente</button>
+                    </>
+                ) : (
                     <>
                         <p role="alert">{error || 'No se pudo consultar el recorrido con la sesión actual.'}</p>
                         <button type="button" onClick={() => recover()}>Volver a consultar</button>
@@ -1172,7 +1236,7 @@ const Reception = ({ actorId }) => {
                         <p>Cliente: <strong>{result.cliente?.display_name || selectedClient?.display_name}</strong></p>
                         {result.servicios?.length > 0 && <p>Servicios: {result.servicios.map((service) => service.nombre).join(', ')}</p>}
                         {staleTechnical && <p role="status">Sólo lectura: la evaluación ya no está vigente.</p>}
-                        <OutcomePanel result={result} onConsent={submitConsent} consentBusy={consentBusy} readOnly={Boolean(booking || staleTechnical || uncertainConsent)} />
+                        <OutcomePanel key={result.evaluacion_id} result={result} onConsent={submitConsent} consentBusy={consentBusy} readOnly={Boolean(booking || staleTechnical || uncertainConsent)} />
                         {result.estado === 'APROBADA_TECNICAMENTE' && !slotBlocked && (
                             <AssistedHoldPanel
                                 availability={availability}

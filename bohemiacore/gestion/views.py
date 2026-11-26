@@ -7929,7 +7929,10 @@ class SolicitudTecnicaReservaViewSet(viewsets.GenericViewSet):
         except Cliente.DoesNotExist:
             return SolicitudTecnicaReserva.objects.none()
         return (
-            SolicitudTecnicaReserva.objects.filter(cliente=cliente)
+            SolicitudTecnicaReserva.objects.filter(
+                SolicitudTecnicaReserva.web_origin_filter(self.request.user.pk),
+                cliente=cliente,
+            )
             .select_related(
                 'evaluacion_vigente',
                 'personal_preferido',
@@ -8135,7 +8138,10 @@ class SlotHoldViewSet(viewsets.GenericViewSet):
             cliente = self.request.user.cliente
         except Cliente.DoesNotExist:
             return SlotHold.objects.none()
-        return SlotHold.objects.filter(cliente=cliente).select_related('personal')
+        return SlotHold.objects.filter(
+            SolicitudTecnicaReserva.web_origin_filter(self.request.user.pk, prefix='solicitud__'),
+            cliente=cliente,
+        ).select_related('personal')
 
     def _serialize(self, hold):
         return self.get_serializer(
@@ -8319,6 +8325,7 @@ class PaymentIntentViewSet(viewsets.GenericViewSet):
         command.is_valid(raise_exception=True)
         try:
             hold = SlotHold.objects.get(
+                SolicitudTecnicaReserva.web_origin_filter(request.user.pk, prefix='solicitud__'),
                 public_id=command.validated_data['slot_hold_public_id'],
                 cliente__usuario=request.user,
             )
@@ -8351,6 +8358,7 @@ class PaymentIntentViewSet(viewsets.GenericViewSet):
         command.is_valid(raise_exception=True)
         try:
             hold = SlotHold.objects.get(
+                SolicitudTecnicaReserva.web_origin_filter(request.user.pk, prefix='solicitud__'),
                 public_id=command.validated_data['slot_hold_public_id'],
                 cliente__usuario=request.user,
             )

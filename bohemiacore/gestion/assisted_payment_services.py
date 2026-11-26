@@ -173,7 +173,7 @@ def assisted_payment_options(*, solicitud_id, hold_public_id, actor):
         return _get_payment_intent_options(
             hold=hold,
             actor=current,
-            scope_checker=lambda locked_hold, cliente, scope_actor: (
+            scope_checker=lambda _solicitud, locked_hold, cliente, scope_actor: (
                 _assisted_scope(
                     solicitud_id=solicitud.pk,
                     hold=locked_hold,
@@ -239,7 +239,7 @@ def prepare_assisted_payment_intent(
             mode=mode,
             idempotency_key=_internal_intent_key(key_digest),
             actor=current,
-            scope_checker=lambda locked_hold, cliente, scope_actor: (
+            scope_checker=lambda _solicitud, locked_hold, cliente, scope_actor: (
                 _assisted_scope(
                     solicitud_id=solicitud.pk,
                     hold=locked_hold,

@@ -70,6 +70,7 @@ class AssistedTechnicalRequestCreateSerializer(StrictCommandSerializer):
 
 class AssistedConsentCommandSerializer(StrictCommandSerializer):
     operation_id = serializers.UUIDField()
+    evaluacion_id = serializers.IntegerField(min_value=1, max_value=2**63 - 1)
     decision = serializers.ChoiceField(
         choices=ConsentimientoAdvertenciaAsistido.Decision.choices
     )
@@ -158,6 +159,7 @@ class AssistedTechnicalRequestPublicSerializer(
     medio_solicitud = serializers.CharField(read_only=True)
     operation_id = serializers.SerializerMethodField()
     consentimiento = serializers.SerializerMethodField()
+    evaluacion_id = serializers.IntegerField(source='evaluacion_vigente_id', read_only=True)
     siguiente_accion = serializers.SerializerMethodField()
 
     class Meta(TechnicalBookingRequestPublicSerializer.Meta):
@@ -165,6 +167,7 @@ class AssistedTechnicalRequestPublicSerializer(
             'cliente',
             'medio_solicitud',
             'operation_id',
+            'evaluacion_id',
             'consentimiento',
             'siguiente_accion',
         )

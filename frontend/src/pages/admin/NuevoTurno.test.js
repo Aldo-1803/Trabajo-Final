@@ -84,6 +84,7 @@ const pendingIntent = {
 };
 const baseResult = (outcome, overrides = {}) => ({
     id: 91,
+    evaluacion_id: 52,
     estado: outcome === 'APTO'
         ? 'APROBADA_TECNICAMENTE'
         : outcome === 'ADVERTENCIA'
@@ -306,6 +307,63 @@ describe('Solicitud técnica asistida', () => {
         expect(axios.post.mock.calls[1]).toEqual(axios.post.mock.calls[0]);
     });
 
+    test('un 404 definitivo del alta no reintenta la solicitud tras reload y conserva el Cliente válido', async () => {
+        const alta = { ...client, operation_id: 'c3697d82-abde-4850-a092-8234b15f0682' };
+        axios.post.mockRejectedValueOnce({ response: { status: 404, data: { error: { code: 'WALKIN_OPERATION_NOT_FOUND' } } } });
+        const first = renderPage({ walkinPermission: true, routeState: { cliente: alta } });
+        await selectRequestData({ useSearch: false });
+        fireEvent.click(screen.getByRole('button', { name: 'Registrar y evaluar solicitud' }));
+        await screen.findByRole('button', { name: 'Volver a selección de Cliente' });
+        first.unmount();
+
+        renderPage({ walkinPermission: true });
+        expect(screen.queryByRole('button', { name: /Reintentar solicitud/ })).not.toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: 'Volver a selección de Cliente' }));
+        expect(await screen.findByText(client.display_name)).toBeVisible();
+        expect(axios.get).toHaveBeenCalledWith('/api/usuarios/asistido/clientes/selector/', {
+            params: { cliente_id: client.cliente_id },
+        });
+        expect(axios.post).toHaveBeenCalledTimes(1);
+        await submitApprovedRequest();
+        expect(axios.post.mock.calls[1][1]).not.toHaveProperty('alta_operation_id');
+        expect(axios.post.mock.calls[1][1].cliente_id).toBe(client.cliente_id);
+        expect(axios.post.mock.calls[1][2]).not.toEqual(axios.post.mock.calls[0][2]);
+    });
+
+    test('un Cliente inaccesible durante recuperación permite seleccionar otro sin conservar el nombre anterior', async () => {
+        const invalid = { cliente_id: 77, display_name: 'Nombre previo' };
+        const read = axios.get.getMockImplementation();
+        axios.get.mockImplementation((url, config) => config?.params?.cliente_id === invalid.cliente_id
+            ? Promise.reject({ response: { status: 404 } }) : read(url, config));
+        sessionStorage.setItem('reception.v1.booking.19', JSON.stringify({ clientId: invalid.cliente_id }));
+        renderPage();
+        fireEvent.click(await screen.findByRole('button', { name: 'Volver a selección de Cliente' }));
+        expect(screen.queryByText(invalid.display_name)).not.toBeInTheDocument();
+        await selectRequestData();
+        fireEvent.click(screen.getByRole('button', { name: 'Registrar y evaluar solicitud' }));
+        await screen.findByRole('button', { name: 'Consultar disponibilidad' });
+        expect(axios.post).toHaveBeenCalledTimes(1);
+        expect(axios.post.mock.calls[0][1].cliente_id).toBe(client.cliente_id);
+    });
+
+    test('consultar una raíz definitiva permite volver sin perder la referencia válida al alta', async () => {
+        const alta = { ...client, operation_id: 'c3697d82-abde-4850-a092-8234b15f0682' };
+        const root = '1160e334-952d-4de8-bea0-3ee37249117d';
+        const read = axios.get.getMockImplementation();
+        axios.get.mockImplementation((url, config) => {
+            if (config?.params?.operation_id === alta.operation_id) return Promise.resolve({ data: alta });
+            if (url.endsWith(`/recuperacion/${root}/`)) return Promise.reject({ response: { status: 404 } });
+            return read(url, config);
+        });
+        sessionStorage.setItem('reception.v1.booking.19', JSON.stringify({ root, clientId: alta.cliente_id, altaId: alta.operation_id }));
+        renderPage({ walkinPermission: true });
+        fireEvent.click(await screen.findByRole('button', { name: 'Volver a selección de Cliente' }));
+        expect(await screen.findByText(client.display_name)).toBeVisible();
+        expect(axios.post).not.toHaveBeenCalled();
+        await submitApprovedRequest();
+        expect(axios.post.mock.calls[0][1].alta_operation_id).toBe(alta.operation_id);
+    });
+
     test.each([
         ['APTO', /Pendiente de selección de horario y confirmación/],
         ['REQUIERE_REVISION', /no puede aprobarla/],
@@ -369,6 +427,7 @@ describe('Solicitud técnica asistida', () => {
         );
         expect(axios.post.mock.calls[1][1]).toEqual({
             operation_id: expect.any(String),
+            evaluacion_id: 52,
             decision,
             motivo: reason
         });

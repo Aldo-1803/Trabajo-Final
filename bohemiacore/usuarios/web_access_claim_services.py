@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import os
 import secrets
 from dataclasses import dataclass
@@ -8,21 +9,24 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
-from django.core.mail import EmailMultiAlternatives
+from django.core.mail import EmailMultiAlternatives, get_connection
 from django.core.validators import validate_email
 from django.db import transaction
 from django.utils import timezone
+from django.utils.crypto import salted_hmac
 
 from gestion.models import Auditoria
 
-from .models import Cliente, WebAccessClaimToken
+from .models import Cliente, WebAccessClaimDelivery, WebAccessClaimToken
 
 
 CLAIM_TOKEN_TTL = timedelta(minutes=60)
+CLAIM_DELIVERY_TTL = timedelta(minutes=15)
 WEB_ACCESS_CLAIM_AUDIT_TABLE = 'WebAccessClaim'
 WEB_ACCESS_CLAIM_REQUESTED_EVENT = 'WEB_ACCESS_CLAIM_REQUESTED'
 WEB_ACCESS_CLAIM_COMPLETED_EVENT = 'WEB_ACCESS_CLAIM_COMPLETED'
 WEB_ACCESS_CLAIM_SOURCE = 'usuarios.web_access_claim_services'
+logger = logging.getLogger(__name__)
 
 
 class WebAccessClaimError(ValueError):
@@ -64,15 +68,56 @@ def _normalize_email(email, user_model):
     return normalized
 
 
+class ClaimDeliveryFailed(Exception):
+    pass
+
+
+def _claim_contact_digest(email):
+    return salted_hmac('bh064.claim-delivery', email.casefold(), algorithm='sha256').hexdigest()
+
+
+def queue_web_access_claim(*, email):
+    user_model = get_user_model()
+    email = _normalize_email(email, user_model)
+    target_id = user_model.objects.filter(email__iexact=email).values_list('pk', flat=True).first()
+    # Misma forma de lectura y escritura para una cuenta conocida o no. Nada
+    # en el POST espera al proveedor; no se persiste email ni token en la cola.
+    WebAccessClaimDelivery.objects.create(
+        target_user_id=target_id, contact_digest=_claim_contact_digest(email),
+    )
+
+
 @transaction.atomic
-def request_web_access_claim(*, email):
+def process_next_web_access_claim():
+    job = WebAccessClaimDelivery.objects.select_for_update(skip_locked=True).order_by('pk').first()
+    if job is None:
+        return False
+    if job.target_user_id and job.requested_at > timezone.now() - CLAIM_DELIVERY_TTL:
+        email = get_user_model().objects.filter(pk=job.target_user_id).values_list('email', flat=True).first()
+        if email and _claim_contact_digest(email) == job.contact_digest:
+            request_web_access_claim(email=email, expected_user_id=job.target_user_id)
+    job.delete()
+    return True
+
+
+def request_web_access_claim(*, email, expected_user_id=None):
+    try:
+        return _request_and_send_claim(email=email, expected_user_id=expected_user_id)
+    except ClaimDeliveryFailed:
+        # El rollback ya ocurrió. No volcar excepción SMTP (puede contener
+        # destinatarios), enlaces, tokens ni información de la cuenta.
+        logger.warning('web_access_claim_delivery_failed')
+        return ClaimRequestResult(sent=False)
+
+
+@transaction.atomic
+def _request_and_send_claim(*, email, expected_user_id):
     user_model = get_user_model()
     normalized_email = _normalize_email(email, user_model)
-    user = (
-        user_model.objects.select_for_update()
-        .filter(email__iexact=normalized_email)
-        .first()
-    )
+    candidates = user_model.objects.select_for_update().filter(email__iexact=normalized_email)
+    if expected_user_id is not None:
+        candidates = candidates.filter(pk=expected_user_id)
+    user = candidates.first()
     if user is None:
         return ClaimRequestResult(sent=False)
     cliente = Cliente.objects.select_for_update().filter(usuario=user).first()
@@ -129,7 +174,15 @@ def request_web_access_claim(*, email):
         settings.DEFAULT_FROM_EMAIL,
         [user.email],
     )
-    message.send(fail_silently=False)
+    try:
+        message.connection = get_connection(timeout=10)
+        delivered = message.send(fail_silently=False)
+    except Exception:
+        # La frontera de captura es sólo el backend de entrega, no la BD ni
+        # la validación del dominio. Cualquier fallo de ese backend es igual.
+        raise ClaimDeliveryFailed from None
+    if delivered != 1:
+        raise ClaimDeliveryFailed
     return ClaimRequestResult(sent=True)
 
 
@@ -141,12 +194,18 @@ def confirm_web_access_claim(*, token, new_password):
             'El enlace de reclamo es inválido o expiró.',
         )
     digest = _digest(token.strip())
+    candidate_user_id = WebAccessClaimToken.objects.filter(token_digest=digest).values_list(
+        'usuario_id', flat=True,
+    ).first()
+    # Mismo orden que emisión: primero Usuario, luego filas dependientes.
+    # El token se vuelve a leer bajo lock, no se acepta el estado preliminar.
+    user_model = get_user_model()
+    user = user_model.objects.select_for_update().filter(pk=candidate_user_id).first() if candidate_user_id else None
     claim = (
         WebAccessClaimToken.objects.select_for_update()
-        .select_related('usuario')
-        .filter(token_digest=digest)
+        .filter(token_digest=digest, usuario_id=user.pk)
         .first()
-    )
+    ) if user else None
     now = timezone.now()
     if (
         claim is None
@@ -159,8 +218,6 @@ def confirm_web_access_claim(*, token, new_password):
             'El enlace de reclamo es inválido o expiró.',
         )
 
-    user_model = get_user_model()
-    user = user_model.objects.select_for_update().get(pk=claim.usuario_id)
     cliente = Cliente.objects.select_for_update().filter(usuario=user).first()
     if (
         cliente is None
