@@ -13,7 +13,7 @@ const GestionClientes = () => {
     const [error, setError] = useState('');
     const [creating, setCreating] = useState(false);
     const navigate = useNavigate();
-    const { session, hasPermission } = useSession();
+    const { session, user, hasPermission } = useSession();
     const canCreateClient = hasPermission('usuarios.create_walkin_client');
     const landingPath = getLandingPath(session) || '/login';
 
@@ -83,12 +83,13 @@ const GestionClientes = () => {
                     )}
                 </section>
             </div>
-            {creating && (
+            {creating && canCreateClient && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
                     <section className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-xl bg-white p-6 shadow-2xl">
                         <h2 className="mb-2 text-2xl font-bold text-gray-800">Alta rápida presencial</h2>
                         <p className="mb-6 text-sm text-gray-500">La identidad nueva queda activa, sin contraseña y con acceso web pendiente de reclamo.</p>
                         <ClienteCreationForm
+                            key={user?.id ?? 'session'} actorId={user?.id}
                             onCreated={async () => {
                                 setCreating(false);
                                 await fetchClientes();

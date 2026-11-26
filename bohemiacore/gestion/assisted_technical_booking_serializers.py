@@ -32,6 +32,7 @@ class StrictCommandSerializer(serializers.Serializer):
 
 class AssistedTechnicalRequestCreateSerializer(StrictCommandSerializer):
     operation_id = serializers.UUIDField()
+    alta_operation_id = serializers.UUIDField(required=False)
     cliente_id = serializers.IntegerField(min_value=1)
     servicio_ids = serializers.PrimaryKeyRelatedField(
         source='servicios',
@@ -108,10 +109,19 @@ class AssistedPaymentIntentCreateSerializer(StrictCommandSerializer):
 
 class AssistedPaymentIntentPublicSerializer(PaymentIntentPublicSerializer):
     operation_id = serializers.SerializerMethodField()
+    turno_estado = serializers.CharField(source='confirmed_turno.estado', allow_null=True)
 
     class Meta(PaymentIntentPublicSerializer.Meta):
-        fields = PaymentIntentPublicSerializer.Meta.fields + ('operation_id',)
+        fields = (
+            'operation_id', 'public_id', 'slot_hold_public_id', 'mode', 'currency',
+            'required_amount', 'status', 'effective_status', 'expires_at',
+            'paid_reconciled', 'confirmation_due', 'financial_threshold_reached', 'confirmed_turno_id',
+            'turno_estado', 'tracking',
+        )
         read_only_fields = fields
+
+    def get_tracking(self, obj):
+        return {'state': super().get_tracking(obj)['state']}
 
     def get_operation_id(self, _obj):
         return self.context.get('operation_id')

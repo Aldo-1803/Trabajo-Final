@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import axios from 'axios';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 import TurnoSemanticActions from '../../components/TurnoSemanticActions';
 import { useSession } from '../../context/SessionContext';
@@ -11,6 +11,9 @@ const TURNOS_URL = 'http://127.0.0.1:8000/api/gestion/turnos/';
 
 const GestionTurnos = () => {
     const navigate = useNavigate();
+    const { search } = useLocation();
+    const linkedId = new URLSearchParams(search).get('turno');
+    const focusId = /^\d+$/.test(linkedId || '') ? linkedId : null;
     const { hasPermission } = useSession();
     const [turnos, setTurnos] = useState([]);
     const [filtroEstado, setFiltroEstado] = useState('solicitado');
@@ -36,7 +39,7 @@ const GestionTurnos = () => {
         try {
             const token = localStorage.getItem('access_token');
             const response = await axios.get(TURNOS_URL, {
-                params: {
+                params: focusId ? { id: focusId } : {
                     estado: filtroEstado || undefined,
                     search: busqueda || undefined,
                     profesional: filtroProfesional || undefined,
@@ -56,7 +59,7 @@ const GestionTurnos = () => {
         } finally {
             setLoading(false);
         }
-    }, [filtroEstado, busqueda, filtroProfesional, filtroFecha]);
+    }, [filtroEstado, busqueda, filtroProfesional, filtroFecha, focusId]);
 
     useEffect(() => {
         cargarTurnos();
@@ -137,16 +140,17 @@ const GestionTurnos = () => {
                 </button>
             </div>
 
-            <div className="flex border-b border-gray-200 mb-6 overflow-x-auto">
+            {focusId && <p className="mb-4">Turno #{focusId} · <button type="button" onClick={() => navigate('/admin/turnos')}>Ver toda la agenda</button></p>}
+            {!focusId && <div className="flex border-b border-gray-200 mb-6 overflow-x-auto">
                 <TabButton estado="solicitado" label="Solicitudes" />
                 <TabButton estado="esperando_sena" label="Esperando Seña" />
                 <TabButton estado="confirmado" label="Confirmados" />
                 <TabButton estado="en_proceso" label="En proceso" />
                 <TabButton estado="realizado" label="Realizados" />
                 <TabButton estado="cancelado" label="Cancelados" />
-            </div>
+            </div>}
 
-            <section className="bg-white shadow rounded-lg p-4 mb-6" aria-label="Filtros de agenda">
+            {!focusId && <section className="bg-white shadow rounded-lg p-4 mb-6" aria-label="Filtros de agenda">
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                     <div>
                         <label htmlFor="buscar-turno" className="block text-sm font-medium text-gray-700 mb-2">
@@ -205,7 +209,7 @@ const GestionTurnos = () => {
                         </button>
                     </div>
                 </div>
-            </section>
+            </section>}
 
             {error && (
                 <div role="alert" className="mb-6 rounded-lg bg-red-50 p-4 text-red-700">

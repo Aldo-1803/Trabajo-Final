@@ -32,6 +32,7 @@ const result = {
 
 const renderNewClient = (permissions = ['usuarios.create_walkin_client']) => {
     useSession.mockReturnValue({
+        user: { id: 19 },
         session: {
             status: 'authenticated',
             businessRole: 'EMPLEADO',
@@ -95,6 +96,19 @@ describe('NuevoCliente independiente', () => {
         expect(mockNavigate).toHaveBeenCalledWith('/admin/clientes', { replace: true });
     });
 
+    test('recarga el alta ya persistida, sin reenviarla', async () => {
+        const first = renderNewClient();
+        fillForm();
+        fireEvent.click(screen.getByRole('button', { name: 'Confirmar alta' }));
+        await screen.findByText('Cliente creado');
+        first.unmount();
+        axios.get.mockResolvedValueOnce({ data: result });
+        renderNewClient();
+        expect(await screen.findByText('Cliente creado')).toBeInTheDocument();
+        expect(axios.get).toHaveBeenCalledWith('/api/usuarios/asistido/clientes/alta-rapida/', { params: { operation_id: result.operation_id } });
+        expect(axios.post).toHaveBeenCalledTimes(1);
+    });
+
     test('con permiso asistido continúa usando el cliente_id estable', async () => {
         renderNewClient([
             'usuarios.create_walkin_client',
@@ -107,7 +121,10 @@ describe('NuevoCliente independiente', () => {
 
         expect(mockNavigate).toHaveBeenCalledWith(
             '/admin/nuevo-turno',
-            { replace: true, state: { cliente: result } }
+            { replace: true }
         );
+        expect(JSON.parse(sessionStorage.getItem('reception.v1.booking.19'))).toEqual({
+            clientId: result.cliente_id, altaId: result.operation_id,
+        });
     });
 });

@@ -24,7 +24,7 @@ from django.core.files.base import ContentFile
 import logging
 import datetime as dt
 import os
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from django.http import FileResponse, Http404
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -8262,11 +8262,16 @@ class PaymentIntentViewSet(viewsets.GenericViewSet):
         queryset = self._operational_queryset()
         search = request.query_params.get('search', '').strip()
         if search:
-            queryset = queryset.filter(
-                Q(cliente__usuario__email__icontains=search)
-                | Q(cliente__usuario__first_name__icontains=search)
-                | Q(cliente__usuario__last_name__icontains=search)
-            )
+            try:
+                public_id = UUID(search)
+            except ValueError:
+                queryset = queryset.filter(
+                    Q(cliente__usuario__email__icontains=search)
+                    | Q(cliente__usuario__first_name__icontains=search)
+                    | Q(cliente__usuario__last_name__icontains=search)
+                )
+            else:
+                queryset = queryset.filter(public_id=public_id)
         intent_status = request.query_params.get('status', '').strip()
         if intent_status:
             queryset = queryset.filter(status=intent_status)
@@ -8509,6 +8514,14 @@ class PaymentIntentViewSet(viewsets.GenericViewSet):
         if not can_read:
             raise Http404
         snapshot = financial_snapshot(intent)
+        recovery_key = request.headers.get('Idempotency-Key', '').strip()
+        recovery = {}
+        if recovery_key:
+            if not request.user.has_perm(BusinessPermission.REGISTER_PAYMENT):
+                raise PermissionDenied('No tiene permisos para recuperar un registro de Pago.')
+            recovery['command_committed'] = len(recovery_key) <= 128 and intent.payments.filter(
+                idempotency_key=recovery_key, recorded_by=request.user,
+            ).exists()
         return Response({
             'results': PagoSerializer(
                 intent.payments.order_by('recorded_at', 'pk'),
@@ -8516,5 +8529,6 @@ class PaymentIntentViewSet(viewsets.GenericViewSet):
                 context=self.get_serializer_context(),
             ).data,
             'financial': self._financial_data(snapshot),
-        })
+            **recovery,
+        }, headers={'Cache-Control': 'no-store'})
 

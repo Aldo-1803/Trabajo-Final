@@ -22,6 +22,7 @@ class ProductoFilter(django_filters.FilterSet):
         return queryset.filter(stock__lte=5) if value else queryset
 
 class TurnoFilter(django_filters.FilterSet):
+    id = django_filters.NumberFilter(field_name='pk')
     fecha_desde = django_filters.DateFilter(field_name='fecha', lookup_expr='gte')
     fecha_hasta = django_filters.DateFilter(field_name='fecha', lookup_expr='lte')
     cliente = django_filters.NumberFilter(field_name='cliente__id')

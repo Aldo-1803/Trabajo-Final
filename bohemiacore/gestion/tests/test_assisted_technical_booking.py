@@ -175,6 +175,57 @@ class AssistedTechnicalBookingTests(TestCase):
             HTTP_IDEMPOTENCY_KEY=key or f'consent-{uuid4()}',
         )
 
+    def test_recovery_uses_explicit_scoped_walkin_link_and_public_evidence(self):
+        from usuarios.models import WalkInClientOperation
+
+        permission = Permission.objects.get(content_type__app_label='usuarios', codename='create_walkin_client')
+        self.operator.user_permissions.add(permission)
+        alta = WalkInClientOperation.objects.create(
+            actor=self.operator, cliente=self.cliente, result_created=False,
+            idempotency_key_digest='a' * 64, fingerprint='b' * 64,
+        )
+        alta_url = reverse('walkin-client-create')
+        intake = self.api.get(alta_url, {'operation_id': alta.operation_id})
+        self.assertEqual(intake.status_code, 200)
+        self.assertEqual(intake.data['stage'], 'CLIENT_READY')
+        self.assertNotIn(self.client_user.email, intake.content.decode())
+        payload = self.payload(alta_operation_id=str(alta.operation_id))
+        refused = self.create(payload={**payload, 'cliente_id': self.cliente.pk + 1})
+        self.assertEqual(refused.status_code, 404)
+        created = self.create(TechnicalRiskOutcome.REQUIERE_REVISION, payload=payload, key='linked-create')
+        self.assertEqual(created.status_code, 201, created.data)
+        retry = self.create(TechnicalRiskOutcome.REQUIERE_REVISION, payload=payload, key='linked-create')
+        self.assertEqual(retry.status_code, 200)
+        incompatible = self.create(payload={k: v for k, v in payload.items() if k != 'alta_operation_id'}, key='linked-create')
+        self.assertEqual(incompatible.status_code, 409)
+        recovery = reverse('solicitud-tecnica-asistida-recuperacion', args=[payload['operation_id']])
+        read = self.api.get(recovery, {'command_id': payload['operation_id']})
+        self.assertEqual(read.status_code, 200, read.data)
+        self.assertEqual(read.data['stage'], 'TECHNICAL_REVIEW')
+        self.assertEqual(read.data['alta_operation_id'], str(alta.operation_id))
+        self.assertTrue(read.data['command_committed'])
+        self.assertEqual(read.data['request']['faltantes'], [{'code': 'DIAGNOSTICO_ACTUALIZADO'}])
+        for private in ('NO EXPONER', 'SAFE_RULE', 'linked-create', self.client_user.email):
+            self.assertNotIn(private, read.content.decode())
+        other = self.create(TechnicalRiskOutcome.NO_APTO)
+        other_read = self.api.get(reverse('solicitud-tecnica-asistida-recuperacion', args=[other.data['operation_id']]))
+        self.assertEqual(other_read.data['stage'], 'CLOSED')
+        self.assertIsNone(other_read.data['alta_operation_id'])
+
+    def test_warning_recovery_acknowledges_only_the_committed_consent(self):
+        created = self.create(TechnicalRiskOutcome.ADVERTENCIA)
+        recovery = reverse('solicitud-tecnica-asistida-recuperacion', args=[created.data['operation_id']])
+        operation_id = uuid4()
+        before = self.api.get(recovery, {'command_id': operation_id})
+        self.assertEqual(before.data['stage'], 'CONSENT_PENDING')
+        self.assertFalse(before.data['command_committed'])
+        result = self.consent(created.data['id'], 'ACEPTA', operation_id=operation_id)
+        self.assertEqual(result.status_code, 200)
+        after = self.api.get(recovery, {'command_id': operation_id})
+        self.assertTrue(after.data['command_committed'])
+        self.assertEqual(after.data['consent_operation_id'], str(operation_id))
+        self.assertEqual(after.data['stage'], 'TECHNICAL_PENDING')
+
     def test_authorized_operator_creates_multiservice_request_in_order(self):
         second = Servicio.objects.create(nombre='Segundo', activo=True)
         payload = self.payload(servicio_ids=[second.pk, self.service.pk])

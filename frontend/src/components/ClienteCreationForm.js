@@ -2,11 +2,11 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 
 import { notify } from '../utils/notificaciones';
+import { tabRecovery, uncertainOutcome } from '../utils/receptionStorage';
 
 
 const CREATE_URL = '/api/usuarios/asistido/clientes/alta-rapida/';
 const SELECTOR_URL = '/api/usuarios/asistido/clientes/selector/';
-const UNCERTAIN_DRAFT_KEY = 'bh064.walkin.uncertain-operation';
 
 const EMPTY_CLIENT = {
     first_name: '',
@@ -24,24 +24,16 @@ const createIdempotencyKey = () => {
     return `walkin-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 };
 
-const loadUncertainDraft = () => {
-    try {
-        const value = sessionStorage.getItem(UNCERTAIN_DRAFT_KEY);
-        if (!value) return null;
-        const parsed = JSON.parse(value);
-        return parsed?.key && parsed?.payload ? parsed : null;
-    } catch (_error) {
-        return null;
-    }
-};
-
 const candidateIds = (candidates) => (
     candidates.map((candidate) => candidate.cliente_id).sort((a, b) => a - b)
 );
 
 
-const ClienteCreationForm = ({ onCreated, onCancel, compact = false }) => {
-    const restoredDraft = useRef(loadUncertainDraft()).current;
+const ClienteCreationForm = ({ onCreated, onCancel, compact = false, actorId }) => {
+    const [storage] = useState(() => tabRecovery('walkin', actorId));
+    const [restored] = useState(() => storage.read());
+    const restoredDraft = restored?.key && restored?.payload ? restored : null;
+    const submitBusy = useRef(false);
     const [client, setClient] = useState(
         restoredDraft?.payload
             ? { ...EMPTY_CLIENT, ...restoredDraft.payload }
@@ -50,7 +42,7 @@ const ClienteCreationForm = ({ onCreated, onCancel, compact = false }) => {
     const [idempotencyKey, setIdempotencyKey] = useState(
         restoredDraft?.key || createIdempotencyKey
     );
-    const [creating, setCreating] = useState(false);
+    const [creating, setCreating] = useState(Boolean(restored?.operationId));
     const [uncertainDraft, setUncertainDraft] = useState(restoredDraft);
     const [errorMessage, setErrorMessage] = useState('');
     const [result, setResult] = useState(null);
@@ -67,6 +59,17 @@ const ClienteCreationForm = ({ onCreated, onCancel, compact = false }) => {
         candidates.length > 0
         && candidates.every((candidate) => reviewed[candidate.cliente_id])
     ), [candidates, reviewed]);
+
+    useEffect(() => {
+        if (!restored?.operationId) return undefined;
+        let active = true;
+        axios.get(CREATE_URL, { params: { operation_id: restored.operationId } }).then(({ data }) => {
+            if (active) setResult(data);
+        }).catch(() => {
+            if (active) setErrorMessage('No se pudo consultar el alta con la sesión actual. Volvé a ingresar o recargá para reintentar.');
+        }).finally(() => { if (active) setCreating(false); });
+        return () => { active = false; };
+    }, [restored]);
 
     useEffect(() => {
         const warnBeforeLeaving = (event) => {
@@ -143,13 +146,8 @@ const ClienteCreationForm = ({ onCreated, onCancel, compact = false }) => {
         medio_alta: 'PRESENCIAL'
     });
 
-    const persistUncertain = (draft) => {
-        sessionStorage.setItem(UNCERTAIN_DRAFT_KEY, JSON.stringify(draft));
-        setUncertainDraft(draft);
-    };
-
     const finishRequest = async (response) => {
-        sessionStorage.removeItem(UNCERTAIN_DRAFT_KEY);
+        storage.write(response.data.operation_id ? { operationId: response.data.operation_id } : null);
         setUncertainDraft(null);
         setCandidates([]);
         setReviewed({});
@@ -164,7 +162,15 @@ const ClienteCreationForm = ({ onCreated, onCancel, compact = false }) => {
     };
 
     const submitPayload = async (payload, key = idempotencyKey) => {
-        if (creating) return;
+        if (creating || submitBusy.current) return;
+        const draft = { key, payload };
+        try {
+            storage.write(draft);
+        } catch (_error) {
+            setErrorMessage('No se pudo guardar la recuperación en esta pestaña. No se envió el alta.');
+            return;
+        }
+        submitBusy.current = true;
         setCreating(true);
         setErrorMessage('');
         try {
@@ -175,9 +181,10 @@ const ClienteCreationForm = ({ onCreated, onCancel, compact = false }) => {
         } catch (error) {
             const status = error.response?.status;
             const apiError = error.response?.data?.error;
-            if (!error.response) {
-                const draft = { key, payload };
-                persistUncertain(draft);
+            const needsRetry = uncertainOutcome(error) || apiError?.code === 'IDEMPOTENCY_KEY_REUSED';
+            setUncertainDraft(needsRetry ? draft : null);
+            if (!needsRetry) storage.write(null);
+            if (!error.response || status >= 500) {
                 setErrorMessage(
                     'No se recibió respuesta. No cambies los datos: reintentá para recuperar el mismo resultado.'
                 );
@@ -210,6 +217,7 @@ const ClienteCreationForm = ({ onCreated, onCancel, compact = false }) => {
                     : apiError?.detail || 'No se pudo completar la operación.'
             );
         } finally {
+            submitBusy.current = false;
             setCreating(false);
         }
     };
@@ -243,6 +251,7 @@ const ClienteCreationForm = ({ onCreated, onCancel, compact = false }) => {
     };
 
     const startAnother = () => {
+        storage.write(null);
         setClient(EMPTY_CLIENT);
         setResult(null);
         setErrorMessage('');
@@ -280,7 +289,9 @@ const ClienteCreationForm = ({ onCreated, onCancel, compact = false }) => {
                         Buscar o dar de alta otro
                     </button>
                     {onCreated && (
-                        <button type="button" onClick={() => onCreated(result)} className="rounded-lg bg-stone-700 px-4 py-2 font-bold text-white">
+                        <button type="button" onClick={() => {
+                            if (onCreated(result) !== false) storage.write(null);
+                        }} className="rounded-lg bg-stone-700 px-4 py-2 font-bold text-white">
                             Continuar
                         </button>
                     )}

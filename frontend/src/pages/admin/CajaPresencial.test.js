@@ -57,6 +57,7 @@ let currentFinancial;
 
 const setPermissions = (permissions) => {
     useSession.mockReturnValue({
+        user: { id: 19 },
         hasPermission: (permission) => permissions.includes(permission),
     });
 };
@@ -89,6 +90,7 @@ const selectIntent = async () => {
 describe('CajaPresencial', () => {
     beforeEach(() => {
         jest.clearAllMocks();
+        sessionStorage.clear();
         jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
         localStorage.setItem('access_token', 'financial-token');
         paymentRows = [];
@@ -269,7 +271,7 @@ describe('CajaPresencial', () => {
         fireEvent.change(screen.getByLabelText('Importe efectivo'), {target: {value: '100.00'}});
         fireEvent.click(screen.getByRole('button', {name: 'Registrar efectivo'}));
         expect(await screen.findByRole('alert')).toHaveTextContent('Conflicto temporal de idempotencia.');
-        fireEvent.click(screen.getByRole('button', {name: 'Registrar efectivo'}));
+        fireEvent.click(screen.getByRole('button', {name: 'Reintentar el mismo cobro'}));
 
         await waitFor(() => expect(axios.post).toHaveBeenCalledTimes(2));
         const first = axios.post.mock.calls[0];
@@ -277,6 +279,27 @@ describe('CajaPresencial', () => {
         expect(second[2].headers['Idempotency-Key']).toBe(first[2].headers['Idempotency-Key']);
         expect(second[1].occurred_at).toBe(first[1].occurred_at);
         expect(second[1]).toEqual(first[1]);
+    });
+
+    test('reload en Caja reconoce un cobro confirmado sin ejecutar otro POST', async () => {
+        axios.post.mockRejectedValueOnce(new Error('Sin respuesta'));
+        const first = render(<CajaPresencial />);
+        await selectIntent();
+        fireEvent.change(screen.getByLabelText('Importe efectivo'), {target: {value: '100.00'}});
+        fireEvent.click(screen.getByRole('button', {name: 'Registrar efectivo'}));
+        await screen.findByRole('button', {name: 'Reintentar el mismo cobro'});
+        const key = axios.post.mock.calls[0][2].headers['Idempotency-Key'];
+        first.unmount();
+        const read = axios.get.getMockImplementation();
+        axios.get.mockImplementation((url, config) => url.endsWith('/payments/')
+            && config.headers['Idempotency-Key'] === key ? Promise.resolve({data: {
+                results: [{...pendingPayment, status: 'RECONCILED'}], financial: financial({ balance: '900.00' }), command_committed: true,
+            }}) : read(url, config));
+        render(<CajaPresencial />);
+        await selectIntent();
+        expect(await screen.findByText(/Se recuperó el Pago ya registrado/)).toBeInTheDocument();
+        expect(axios.post).toHaveBeenCalledTimes(1);
+        expect(screen.queryByRole('button', {name: 'Reintentar el mismo cobro'})).not.toBeInTheDocument();
     });
 
     test('403 de dominio se muestra y no duplica un envío en curso', async () => {

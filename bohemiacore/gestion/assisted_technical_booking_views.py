@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from rest_framework import exceptions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -38,6 +40,7 @@ from .assisted_slot_hold_services import (
     release_assisted_slot_hold,
 )
 from .models import SolicitudTecnicaAsistidaOperacion
+from .assisted_reception import reception_projection
 from .permissions import CanCreateTurnoForClient, IsActiveUser
 from .slot_hold_clock import database_now
 
@@ -176,6 +179,23 @@ class AssistedTechnicalRequestViewSet(viewsets.GenericViewSet):
         except AssistedTechnicalBookingNotFound as exc:
             return self._domain_error(exc, status.HTTP_404_NOT_FOUND)
         return Response(AssistedTechnicalRequestPublicSerializer(solicitud).data)
+
+    @action(detail=False, methods=['get'], url_path=r'recuperacion/(?P<operation_id>[^/.]+)')
+    def recuperacion(self, request, operation_id=None):
+        try:
+            operation_id = UUID(operation_id)
+            command_id = request.query_params.get('command_id')
+            command_id = UUID(command_id) if command_id is not None else None
+        except ValueError:
+            return self._error('INVALID_UUID', 'La referencia de operación es inválida.', 400)
+        data, error = self._execute_domain_command(lambda: reception_projection(
+            actor=request.user, operation_id=operation_id, command_id=command_id,
+        ))
+        if error:
+            return error
+        if data is None:
+            return self._error('OPERATION_NOT_FOUND', 'No hay una operación disponible en este alcance.', 404)
+        return Response(data, headers={'Cache-Control': 'no-store'})
 
     @action(detail=True, methods=['post'], url_path='consentimiento')
     def consentimiento(self, request, pk=None):

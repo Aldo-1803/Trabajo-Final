@@ -1,4 +1,4 @@
-# BH-063/BH-064 — Implementación consolidada, Incrementos 1–4
+# BH-063/BH-064 — Implementación consolidada, Incrementos 1–5
 
 **Fecha:** 2026-11-23
 
@@ -14,6 +14,8 @@ Este documento enlaza los incrementos implementados sin duplicar sus actas:
 2. [BH-063, Incremento 2 — solicitud, riesgo y consentimiento](IMPLEMENTACION_BH063_2_SOLICITUD_RIESGO_CONSENTIMIENTO.md).
 3. **BH-063, Incremento 3 — hold asistido y disponibilidad**, documentado a
    continuación.
+4. **BH-063, Incremento 4 — confirmación financiera y finalización**, §12.
+5. **BH-063/BH-064, Incremento 5 — recorrido de recepción y recuperación**, §13.
 
 El Incremento 3 retiene temporalmente capacidad para una solicitud asistida
 técnicamente aprobada. No crea `Turno`, `PaymentIntent` ni `Pago`; tampoco
@@ -315,3 +317,96 @@ los totales únicos anteriores. Los logs completos se conservaron únicamente en
 el directorio temporal local.
 
 `BH-063 INCREMENTO 4 = VALIDADO`
+
+## 13. Incremento 5 — recorrido de recepción y recuperación
+
+**Baseline:** `ff1cea94fa5776d05339b87627f38644d73cfebd` en `save/work-in-progress`.
+
+### 13.1 Recorrido y autoridades
+
+`NuevoTurno` selecciona un Cliente con el selector minimizado o recibe la
+referencia tras `NuevoCliente`, sin transportar el resultado del alta en el
+historial del navegador. Conserva Cliente y Servicios ordenados en el resultado
+técnico, identifica el paso actual, muestra el vencimiento del hold y separa la
+preparación del Intent del registro/conciliación de Pagos en Caja. Caja busca el
+Intent por UUID exacto, sin ampliar sus permisos vigentes. Al volver, recepción
+consulta el resultado: sólo `Turno.estado=confirmado` muestra confirmación actual;
+si el Turno avanzó o se canceló, se muestra su estado real.
+
+El acceso a agenda global usa `gestion.view_global_agenda` y filtra por el ID del
+Turno, incluso si cambió de estado. El trabajo técnico exige perfil Personal
+activo, capacidad `technical_record.read_global` y asignación al Turno; sus
+endpoints canónicos mantienen el control final de acceso. Recepción no adquiere
+capacidad de revisión técnica. Para R-03 se muestran mensajes y advertencias
+públicos, faltantes reconocidos, fecha mínima, alternativas y causas públicas de
+sólo lectura; no se proyectan diagnósticos, reglas, fórmulas o evidencia interna.
+
+### 13.2 Contratos de lectura y referencias
+
+| Recurso | Lectura | Scope y resultado |
+|---|---|---|
+| Alta rápida | `GET /api/usuarios/asistido/clientes/alta-rapida/?operation_id=<uuid>` | Originador activo con `usuarios.create_walkin_client`; `CLIENT_READY` y resumen minimizado. |
+| Selección existente | `GET /api/usuarios/asistido/clientes/selector/?cliente_id=<id>` | Mismos permisos y universo activo del selector; no constituye un alta. |
+| Recorrido | `GET /api/gestion/solicitudes-tecnicas-asistidas/recuperacion/<uuid>/` | UUID raíz del `CREATE`, actor originador activo con `gestion.create_turno_for_client`, y solicitud asistida propia. `command_id` opcional reconoce sólo un comando persistido y visible de esa raíz. |
+| Caja | `GET /api/gestion/payment-intents/?search=<uuid>` y `GET /api/gestion/payment-intents/<uuid>/payments/` | Scope operativo publicado. Con el header `Idempotency-Key` en la segunda lectura, sólo `gestion.register_payment` puede reconocer un Pago registrado por el mismo actor en ese Intent; no se devuelve la clave. |
+
+La migración `gestion.0048` agrega una FK nullable en el ledger asistido. El
+`CREATE` puede recibir `alta_operation_id`; el servidor verifica permiso de
+alta, actor y Cliente, y lo incluye en el fingerprint. Los clientes anteriores
+no cambian de fingerprint, y no hay backfill ni correlación por mera coincidencia
+de Cliente. La raíz enlaza evaluación vigente, consentimiento y hold mediante
+las relaciones existentes; el ledger enlaza el Intent con el hold y el Intent
+aprobado enlaza el Turno. No se agregó un modelo global.
+
+El GET no toma locks de negocio, no registra comandos, no materializa la
+expiración y no guarda un estado derivado. Proyecta `CLIENT_READY`,
+`TECHNICAL_PENDING`, `TECHNICAL_REVIEW`, `CONSENT_PENDING`, `HOLD_ACTIVE`,
+`PAYMENT_PENDING`, `CONFIRMED`, `RECOVERABLE_FAILURE` o `CLOSED`, sin estados
+nuevos de Turno. El cálculo de expiración usa reloj PostgreSQL. El Intent sólo
+se muestra con el permiso compuesto de creación asistida y registro de Pago;
+su respuesta tiene campos explícitos, sin snapshots, checkout ni secretos. La
+referencia y el estado del Turno propio de la operación no otorgan acceso a
+ningún endpoint de agenda o trabajo técnico. Se distinguen 400 por referencia
+malformada, 401 por sesión, 403 por permiso, 404 por ausencia o fuera de scope
+y 409 en comandos por incompatibilidad.
+
+### 13.3 Reanudación y límites
+
+- La pestaña guarda referencias por ID del actor y registra la identidad y el
+  payload del comando **antes** del envío. Reload, retorno de Caja y nueva sesión
+  del mismo actor consultan el estado autorizado; si la respuesta fue incierta,
+  no se cambia de clave ni se repite automáticamente. Si el servidor reconoce
+  el comando, se descarta el borrador recuperado sin otro POST. Sin un resultado
+  visible se ofrece reintentar el mismo comando.
+- Los cobros usan la misma obligación, clave, importe, propósito y fecha del
+  registro original. La transferencia incierta no guarda el comprobante en la
+  pestaña: si no se reconoce el Pago, el operador vuelve a adjuntar el original.
+  La conciliación vuelve a leer el Pago y usa las transiciones publicadas. No se
+  materializa ni se reactiva un hold por leerlo, y no se convierte un pago tardío
+  en confirmación.
+- La continuidad de borradores es local a una pestaña y un actor; no es una cola
+  compartida ni sincroniza entre dispositivos. Cerrar la pestaña o borrar su
+  almacenamiento puede perder el comando local; antes de iniciar un nuevo
+  cobro hay que verificar Caja y agenda. El borrador pendiente de alta puede
+  contener los datos de ingreso necesarios para repetir el comando. No se usa
+  `localStorage`, URL ni historial para guardar payloads o claves.
+- Sin D-08, políticas nuevas, cambios al evaluador, reclamo por teléfono,
+  autoevaluación ni ajustes a históricos. Auditoría independiente y cierre
+  oficial quedan pendientes.
+
+### 13.4 Evidencia de validación y estado
+
+| Grupo | Evidencia |
+|---|---|
+| Backend focal PostgreSQL | 72 pruebas de alta BH-064, solicitud/consentimiento, hold, Intent, finalización y sus concurrencias; 4 nuevas de recuperación, scope, expiración sin mutación, conciliación y Turno persistido. |
+| Backend selectivo | 59 pruebas de pagos manuales, PaymentIntent y agenda global. |
+| React focal y selectivo | 101 pruebas en `NuevoTurno`, `NuevoCliente`, `ClienteCreationForm`, `CajaPresencial`, `GestionTurnos`, `GestionClientes` y `TrabajoTecnicoTurno`. |
+| Verificaciones | Django checks, drift de migraciones, SQL `0048` y aplicación en la BD de pruebas, build React estándar, diff, secretos y enlaces. |
+
+No se repitieron B1–B7 ni Jest global: los cambios no reescriben B2/B3, BH-057,
+agenda, autenticación ni el ledger profesional, y los consumidores tocados se
+probaron directamente. No se aplicaron migraciones a la BD local de desarrollo.
+Los logs completos quedaron en el directorio temporal local de OpenCode.
+
+Incremento 0: decisiones aprobadas (D-01 a D-07); incrementos 1–4: publicados y
+validados; incremento 5: validación focal y selectiva, sin cierre oficial.

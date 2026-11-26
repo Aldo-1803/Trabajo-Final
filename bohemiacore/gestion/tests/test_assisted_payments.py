@@ -127,6 +127,84 @@ class AssistedPaymentFixtureMixin(AssistedSlotHoldFixtureMixin):
 
 
 class AssistedPaymentTests(AssistedPaymentFixtureMixin, TestCase):
+    def recovery_url(self):
+        root = SolicitudTecnicaAsistidaOperacion.objects.create(
+            operation_id=uuid4(), actor=self.operator, solicitud=self.solicitud,
+            command=SolicitudTecnicaAsistidaOperacion.Command.CREATE,
+            fingerprint='a' * 64, idempotency_key_digest='b' * 64,
+        )
+        return reverse('solicitud-tecnica-asistida-recuperacion', args=[root.operation_id])
+
+    def test_recovery_expiration_is_effective_and_read_only(self):
+        url = self.recovery_url()
+        self.assertEqual(self.api.get(url).data['stage'], 'HOLD_ACTIVE')
+        self.api.force_authenticate(self.other_operator)
+        self.assertEqual(self.api.get(url).status_code, 404)
+        self.api.force_authenticate(None)
+        self.assertEqual(self.api.get(url).status_code, 401)
+        self.api.force_authenticate(self.operator)
+        invalid = reverse('solicitud-tecnica-asistida-recuperacion', args=['no-es-uuid'])
+        self.assertEqual(self.api.get(invalid).status_code, 400)
+        audit_count = Auditoria.objects.count()
+        with patch('gestion.assisted_reception.database_now', return_value=self.hold.expires_at):
+            read = self.api.get(url)
+        self.assertEqual(read.data['stage'], 'RECOVERABLE_FAILURE')
+        self.assertEqual(read.data['hold']['effective_state'], 'EXPIRED')
+        self.hold.refresh_from_db()
+        self.assertEqual(self.hold.state, SlotHold.State.ACTIVE)
+        self.assertEqual(Auditoria.objects.count(), audit_count)
+
+    def test_cashier_and_reception_recover_pending_and_actual_booking_state(self):
+        url = self.recovery_url()
+        payload = self.intent_payload()
+        prepared = self.prepare(payload=payload)
+        intent_id = prepared.data['public_id']
+        outstanding = self.api.get(reverse('payment-intent-list'), {'search': intent_id})
+        self.assertEqual(outstanding.status_code, 200)
+        self.assertEqual([row['public_id'] for row in outstanding.data['results']], [intent_id])
+        payment = register_manual_payment(
+            intent_public_id=intent_id, amount=Decimal('300.00'), currency='ARS',
+            method=Pago.Method.BANK_TRANSFER, purpose=Pago.Purpose.CONFIRMATION,
+            occurred_at=timezone.now(), manual_reference='i5-transfer-reference',
+            receipt=SimpleUploadedFile('i5.pdf', b'%PDF-1.7\ni5 evidence', content_type='application/pdf'),
+            idempotency_key='i5-stable-payment', actor=self.operator,
+        ).payment
+        payments_url = reverse('payment-intent-payments', args=[intent_id])
+        payment_read = self.api.get(payments_url, HTTP_IDEMPOTENCY_KEY='i5-stable-payment')
+        self.assertTrue(payment_read.data['command_committed'])
+        self.assertNotIn('i5-stable-payment', payment_read.content.decode())
+        self.other_operator.user_permissions.add(self.register_permission)
+        self.api.force_authenticate(self.other_operator)
+        self.assertFalse(self.api.get(payments_url, HTTP_IDEMPOTENCY_KEY='i5-stable-payment').data['command_committed'])
+        self.api.force_authenticate(self.operator)
+        pending = self.api.get(url, {'command_id': payload['operation_id']})
+        self.assertEqual(pending.data['stage'], 'PAYMENT_PENDING')
+        self.assertTrue(pending.data['command_committed'])
+        self.assertEqual(pending.data['intent']['tracking']['state'], 'ADMIN_REVIEW')
+        self.assertIsNone(pending.data['turno'])
+        for field in ('checkout', 'policy_snapshot', 'lines', 'terminal_reason'):
+            self.assertNotIn(field, pending.data['intent'])
+        self.policy_actor.user_permissions.add(Permission.objects.get(content_type__app_label='gestion', codename='confirm_deposit'))
+        reconcile_manual_payment(payment_public_id=payment.public_id, decision='ACCEPT', reason='', actor=self.policy_actor)
+        confirmed = self.api.get(url)
+        booking = Turno.objects.get()
+        self.assertEqual(confirmed.data['stage'], 'CONFIRMED')
+        self.assertEqual(confirmed.data['turno']['id'], booking.pk)
+        Turno.objects.filter(pk=booking.pk).update(estado=Turno.Estado.EN_PROCESO)
+        self.assertEqual(self.api.get(url).data['stage'], 'CLOSED')
+        self.operator.user_permissions.remove(self.register_permission)
+        self.api.force_authenticate(Usuario.objects.get(pk=self.operator.pk))
+        revoked = self.api.get(url, {'command_id': payload['operation_id']})
+        self.assertIsNone(revoked.data['intent'])
+        self.assertFalse(revoked.data['command_committed'])
+        self.assertEqual(revoked.data['turno']['estado'], Turno.Estado.EN_PROCESO)
+        self.operator.user_permissions.remove(self.permission)
+        self.api.force_authenticate(Usuario.objects.get(pk=self.operator.pk))
+        self.assertEqual(self.api.get(url).status_code, 403)
+        self.assertEqual(Pago.objects.count(), 1)
+        self.assertEqual(PaymentIntent.objects.count(), 1)
+        self.assertEqual(Turno.objects.count(), 1)
+
     def test_options_and_prepare_reuse_policy_without_creating_money_or_turno(self):
         options = self.api.get(self.options_url(), {
             'hold_public_id': str(self.hold.public_id),

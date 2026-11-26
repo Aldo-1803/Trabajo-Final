@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 
 import { useSession } from '../../context/SessionContext';
+import { ADMIN_ROUTES } from '../../routes/routes';
+import { tabRecovery, uncertainOutcome } from '../../utils/receptionStorage';
 
 
 const INTENTS_URL = '/api/gestion/payment-intents/';
@@ -63,7 +65,7 @@ const currentPurpose = (intent) => (
 );
 
 
-const CajaPresencial = () => {
+const Cashier = ({ actorId }) => {
     const { hasPermission } = useSession();
     const canRegister = hasPermission('gestion.register_payment');
     const canReconcile = hasPermission('gestion.confirm_deposit');
@@ -87,25 +89,37 @@ const CajaPresencial = () => {
     const [loading, setLoading] = useState(false);
     const [loadingPayments, setLoadingPayments] = useState(false);
     const [submitting, setSubmitting] = useState('');
+    const submittingRef = useRef(false);
     const [message, setMessage] = useState('');
     const [error, setError] = useState('');
-    const paymentOperations = useRef({});
-    const checkoutKeys = useRef({});
+    const [storage] = useState(() => tabRecovery('cashier', actorId));
+    const [restored] = useState(() => storage.read() || {});
+    const registerDrafts = useRef(restored);
+    const [pendingRegistration, setPendingRegistration] = useState(null);
+    const persist = useCallback((intentId, draft, slot = 'registration') => {
+        const next = { ...registerDrafts.current };
+        const entry = { ...next[intentId], [slot]: draft };
+        if (!entry.registration && !entry.checkout) delete next[intentId];
+        else next[intentId] = entry;
+        storage.write(next);
+        registerDrafts.current = next;
+        if (slot === 'registration') setPendingRegistration(draft);
+    }, [storage]);
 
     const authHeaders = (extra = {}) => ({
         Authorization: `Bearer ${localStorage.getItem('access_token')}`,
         ...extra,
     });
 
-    const applyFinancial = useCallback((financial) => {
+    const applyFinancial = useCallback((financial, intentId) => {
         if (!financial) return;
-        setSelected((current) => current ? {...current, ...financial} : current);
+        setSelected((current) => current?.public_id === intentId ? {...current, ...financial} : current);
         setObligations((current) => current.map((item) => (
-            item.public_id === selected?.public_id
+            item.public_id === intentId
                 ? {...item, ...financial}
                 : item
         )));
-    }, [selected?.public_id]);
+    }, []);
 
     const loadObligations = useCallback(async (term = '') => {
         if (!canRead) return;
@@ -124,6 +138,11 @@ const CajaPresencial = () => {
                     || current;
             });
         } catch (requestError) {
+            if ([401, 403].includes(requestError.response?.status)) {
+                setObligations([]);
+                setSelected(null);
+                setPayments([]);
+            }
             setError(apiError(
                 requestError,
                 'No se pudieron consultar las obligaciones.'
@@ -138,25 +157,37 @@ const CajaPresencial = () => {
         setLoadingPayments(true);
         setError('');
         try {
+            const pending = canRegister && registerDrafts.current[intentId]?.registration;
             const response = await axios.get(
                 `${INTENTS_URL}${intentId}/payments/`,
-                {headers: authHeaders()}
+                {headers: authHeaders(pending ? {'Idempotency-Key': pending.key} : {})}
             );
             setPayments(response.data.results || []);
-            applyFinancial(response.data.financial);
+            applyFinancial(response.data.financial, intentId);
+            if (pending && response.data.command_committed) {
+                persist(intentId, null);
+                setMessage('Se recuperó el Pago ya registrado. No se envió otro cobro.');
+            }
         } catch (requestError) {
+            if ([401, 403, 404].includes(requestError.response?.status)) {
+                setSelected(null);
+                setObligations([]);
+                setPayments([]);
+            }
             setError(apiError(requestError, 'No se pudieron consultar los pagos.'));
         } finally {
             setLoadingPayments(false);
         }
-    }, [applyFinancial]);
+    }, [applyFinancial, canRegister, persist]);
 
     useEffect(() => {
         loadObligations(initialSearch.current);
     }, [loadObligations]);
 
     const selectObligation = (intent) => {
+        if (submittingRef.current || loadingPayments) return;
         setSelected(intent);
+        setPendingRegistration(canRegister ? registerDrafts.current[intent.public_id]?.registration : null);
         setPayments([]);
         setCashAmount(intent.balance || '');
         setTransferAmount(intent.balance || '');
@@ -168,98 +199,80 @@ const CajaPresencial = () => {
         loadPayments(intent.public_id);
     };
 
-    const operationFor = (kind, fingerprint) => {
-        const existing = paymentOperations.current[kind];
-        if (existing?.fingerprint === fingerprint) return existing;
-        const operation = {
-            fingerprint,
-            key: newKey(`in-person-${kind.toLowerCase()}`),
-            occurredAt: new Date().toISOString(),
+    const submitRegistration = async (method, retry = false) => {
+        if (!selected || !canRegister || submittingRef.current || loadingPayments) return;
+        const intentId = selected.public_id;
+        const existing = registerDrafts.current[intentId]?.registration;
+        if (Boolean(existing) !== retry) return;
+        const isCash = method === 'CASH';
+        if (!isCash && !transferReceipt) return;
+        const draft = existing || {
+            key: newKey(`in-person-${method.toLowerCase()}`),
+            payload: {
+                amount: isCash ? cashAmount : transferAmount,
+                currency: selected.currency, method, purpose: currentPurpose(selected),
+                occurred_at: new Date().toISOString(),
+                ...(!isCash ? { manual_reference: transferReference } : {}),
+            },
+            receipt: !isCash ? { name: transferReceipt.name, size: transferReceipt.size } : null,
         };
-        paymentOperations.current[kind] = operation;
-        return operation;
-    };
-
-    const registerCash = async (event) => {
-        event.preventDefault();
-        if (!selected || submitting) return;
-        const purpose = currentPurpose(selected);
-        const fingerprint = [selected.public_id, cashAmount, purpose].join(':');
-        const operation = operationFor('CASH', fingerprint);
-        setSubmitting('cash');
-        setMessage('');
-        setError('');
-        try {
-            const response = await axios.post(
-                `${INTENTS_URL}${selected.public_id}/payments/`,
-                {
-                    amount: cashAmount,
-                    currency: selected.currency,
-                    method: 'CASH',
-                    purpose,
-                    occurred_at: operation.occurredAt,
-                },
-                {headers: authHeaders({'Idempotency-Key': operation.key})}
-            );
-            applyFinancial(response.data.financial);
-            setMessage('Efectivo registrado y conciliado por B2.');
-            delete paymentOperations.current.CASH;
-            await loadPayments(selected.public_id);
-        } catch (requestError) {
-            setError(apiError(requestError, 'No se pudo registrar el efectivo.'));
-        } finally {
-            setSubmitting('');
+        if (!isCash && (draft.receipt.name !== transferReceipt.name || draft.receipt.size !== transferReceipt.size)) {
+            setError('Para reintentar, adjuntá el comprobante original. No se envió otro pago.');
+            return;
         }
-    };
-
-    const registerTransfer = async (event) => {
-        event.preventDefault();
-        if (!selected || !transferReceipt || submitting) return;
-        const purpose = currentPurpose(selected);
-        const fingerprint = [
-            selected.public_id,
-            transferAmount,
-            purpose,
-            transferReference,
-            transferReceipt.name,
-            transferReceipt.size,
-        ].join(':');
-        const operation = operationFor('BANK_TRANSFER', fingerprint);
-        const data = new FormData();
-        data.append('amount', transferAmount);
-        data.append('currency', selected.currency);
-        data.append('method', 'BANK_TRANSFER');
-        data.append('purpose', purpose);
-        data.append('occurred_at', operation.occurredAt);
-        data.append('manual_reference', transferReference);
-        data.append('receipt', transferReceipt);
-        setSubmitting('transfer');
+        try {
+            persist(intentId, draft);
+        } catch (_error) {
+            setError('No se pudo guardar la recuperación en esta pestaña. No se envió el cobro.');
+            return;
+        }
+        let data = draft.payload;
+        if (!isCash) {
+            data = new FormData();
+            Object.entries(draft.payload).forEach(([key, value]) => data.append(key, value));
+            data.append('receipt', transferReceipt);
+        }
+        submittingRef.current = true;
+        setSubmitting(isCash ? 'cash' : 'transfer');
         setMessage('');
         setError('');
         try {
             const response = await axios.post(
-                `${INTENTS_URL}${selected.public_id}/payments/`,
+                `${INTENTS_URL}${intentId}/payments/`,
                 data,
-                {headers: authHeaders({'Idempotency-Key': operation.key})}
+                {headers: authHeaders({'Idempotency-Key': draft.key})}
             );
-            applyFinancial(response.data.financial);
-            setMessage('Transferencia registrada. El comprobante está pendiente de conciliación.');
-            delete paymentOperations.current.BANK_TRANSFER;
-            await loadPayments(selected.public_id);
+            applyFinancial(response.data.financial, intentId);
+            setMessage(isCash ? 'Efectivo registrado y conciliado por B2.' : 'Transferencia registrada. El comprobante está pendiente de conciliación.');
+            persist(intentId, null);
+            await loadPayments(intentId);
         } catch (requestError) {
-            setError(apiError(requestError, 'No se pudo registrar la transferencia.'));
+            const status = requestError.response?.status;
+            if (!retry && !uncertainOutcome(requestError) && status === 400) persist(intentId, null);
+            if (status === 409) await loadPayments(intentId);
+            if ([401, 403, 404].includes(status)) {
+                setObligations([]);
+                setSelected(null);
+                setPayments([]);
+            }
+            setError(apiError(requestError, isCash ? 'No se pudo registrar el efectivo.' : 'No se pudo registrar la transferencia.'));
         } finally {
+            submittingRef.current = false;
             setSubmitting('');
         }
     };
+
+    const registerCash = (event) => { event.preventDefault(); submitRegistration('CASH'); };
+    const registerTransfer = (event) => { event.preventDefault(); submitRegistration('BANK_TRANSFER'); };
 
     const reconcile = async (payment, decision) => {
-        if (submitting) return;
+        if (!canReconcile || submittingRef.current || loadingPayments) return;
         const reason = rejectionReasons[payment.public_id] || '';
         if (decision === 'REJECT' && !reason.trim()) {
             setError('Informá una razón para rechazar el comprobante.');
             return;
         }
+        submittingRef.current = true;
         setSubmitting(`reconcile-${payment.public_id}`);
         setMessage('');
         setError('');
@@ -269,7 +282,7 @@ const CajaPresencial = () => {
                 {decision, reason: decision === 'REJECT' ? reason.trim() : ''},
                 {headers: authHeaders()}
             );
-            applyFinancial(response.data.financial);
+            applyFinancial(response.data.financial, selected.public_id);
             setMessage(
                 decision === 'ACCEPT'
                     ? 'Comprobante conciliado. El saldo fue actualizado por B2.'
@@ -277,17 +290,25 @@ const CajaPresencial = () => {
             );
             await loadPayments(selected.public_id);
         } catch (requestError) {
+            await loadPayments(selected.public_id);
             setError(apiError(requestError, 'No se pudo conciliar el comprobante.'));
         } finally {
+            submittingRef.current = false;
             setSubmitting('');
         }
     };
 
     const generateCheckout = async () => {
-        if (!selected || submitting) return;
-        const key = checkoutKeys.current[selected.public_id]
+        if (!selected || !canRegister || submittingRef.current) return;
+        const key = registerDrafts.current[selected.public_id]?.checkout
             || newKey('in-person-checkout');
-        checkoutKeys.current[selected.public_id] = key;
+        try {
+            persist(selected.public_id, key, 'checkout');
+        } catch (_error) {
+            setError('No se pudo guardar la recuperación del enlace.');
+            return;
+        }
+        submittingRef.current = true;
         setSubmitting('checkout');
         setMessage('');
         setError('');
@@ -310,6 +331,7 @@ const CajaPresencial = () => {
         } catch (requestError) {
             setError(apiError(requestError, 'No se pudo generar el enlace de Mercado Pago.'));
         } finally {
+            submittingRef.current = false;
             setSubmitting('');
         }
     };
@@ -354,7 +376,8 @@ const CajaPresencial = () => {
 
     const cashEnabled = selected?.enabled_manual_methods?.includes('CASH');
     const transferEnabled = selected?.enabled_manual_methods?.includes('BANK_TRANSFER');
-    const hasBalance = Number(selected?.balance) > 0;
+    const hasBalance = Number(selected?.balance) > 0
+        && !['EXPIRED', 'CANCELLED', 'REJECTED'].includes(selected.effective_status);
 
     return (
         <main className="min-h-screen bg-stone-50 px-4 py-10">
@@ -363,6 +386,9 @@ const CajaPresencial = () => {
                 <p className="mb-6 text-stone-500">
                     Cobros vinculados a obligaciones existentes. No incluye arqueo ni cierre de caja.
                 </p>
+                {initialSearch.current && hasPermission('gestion.create_turno_for_client') && (
+                    <a href={ADMIN_ROUTES.NUEVO_TURNO} className="mb-4 block underline">Volver al recorrido de recepción</a>
+                )}
 
                 <form
                     className="mb-6 flex flex-col gap-3 rounded-xl bg-white p-5 shadow sm:flex-row"
@@ -458,7 +484,20 @@ const CajaPresencial = () => {
                                     </button>
                                 </section>
 
-                                {canRegister && hasBalance && (
+                                {canRegister && pendingRegistration && (
+                                    <section aria-label="Recuperar cobro" className="space-y-3 rounded-xl bg-amber-50 p-6">
+                                        <p>Hay un cobro con resultado incierto. Revisá el estado o reintentá el mismo registro; no inicies otro.</p>
+                                        {pendingRegistration.receipt && <label className="block">Volvé a adjuntar el comprobante original
+                                            <input type="file" accept="image/*,.pdf" onChange={(event) => setTransferReceipt(event.target.files?.[0] || null)} />
+                                        </label>}
+                                        <button type="button" disabled={Boolean(submitting) || loadingPayments || Boolean(pendingRegistration.receipt && !transferReceipt)}
+                                            onClick={() => submitRegistration(pendingRegistration.payload.method, true)}>
+                                            Reintentar el mismo cobro
+                                        </button>
+                                    </section>
+                                )}
+
+                                {canRegister && hasBalance && (!pendingRegistration || submitting) && (
                                     <section className="grid gap-5 rounded-xl bg-white p-6 shadow md:grid-cols-2" aria-label="Registrar cobro">
                                         {cashEnabled && (
                                             <form onSubmit={registerCash}>
@@ -538,7 +577,7 @@ const CajaPresencial = () => {
                                     </section>
                                 )}
 
-                                {canRegister && hasBalance && (
+                                {canRegister && hasBalance && !pendingRegistration && (
                                     <section className="rounded-xl bg-white p-6 shadow" aria-labelledby="mercado-pago-title">
                                         <h3 id="mercado-pago-title" className="text-lg font-bold text-stone-700">Mercado Pago presencial</h3>
                                         <p className="mt-1 text-sm text-stone-500">
@@ -640,5 +679,9 @@ const CajaPresencial = () => {
     );
 };
 
+const CajaPresencial = () => {
+    const { user } = useSession();
+    return <Cashier key={user?.id ?? 'session'} actorId={user?.id} />;
+};
 
 export default CajaPresencial;

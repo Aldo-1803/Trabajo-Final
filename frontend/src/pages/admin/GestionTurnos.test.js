@@ -12,13 +12,16 @@ jest.mock('axios', () => ({
 jest.mock('../../context/SessionContext', () => ({
     useSession: jest.fn()
 }));
+let mockSearch = '';
 jest.mock('react-router-dom', () => ({
-    useNavigate: () => jest.fn()
+    useNavigate: () => jest.fn(),
+    useLocation: () => ({ search: mockSearch }),
 }), { virtual: true });
 
 
 describe('GestionTurnos', () => {
     beforeEach(() => {
+        mockSearch = '';
         jest.clearAllMocks();
         localStorage.setItem('access_token', 'test-token');
         useSession.mockReturnValue({
@@ -38,6 +41,16 @@ describe('GestionTurnos', () => {
                 estado: 'confirmado'
             }]
         });
+    });
+
+    test('abre el Turno de recepción por ID sin el filtro inicial de solicitudes', async () => {
+        mockSearch = '?turno=721';
+        render(<GestionTurnos />);
+        await waitFor(() => expect(axios.get).toHaveBeenCalledWith(expect.stringContaining('/gestion/turnos/'), {
+            params: { id: '721' },
+            headers: { Authorization: 'Bearer test-token' },
+        }));
+        expect(screen.getByText('Ver toda la agenda')).toBeInTheDocument();
     });
 
     test('lista el contrato global seguro', async () => {

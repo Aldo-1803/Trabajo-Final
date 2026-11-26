@@ -4653,6 +4653,10 @@ class SolicitudTecnicaAsistidaOperacion(models.Model):
         blank=True,
         related_name='operacion',
     )
+    alta_cliente = models.ForeignKey(
+        'usuarios.WalkInClientOperation', on_delete=models.PROTECT,
+        null=True, blank=True, related_name='solicitudes_asistidas',
+    )
     hold = models.ForeignKey(
         SlotHold,
         on_delete=models.PROTECT,
@@ -4720,6 +4724,12 @@ class SolicitudTecnicaAsistidaOperacion(models.Model):
             errors['idempotency_key_digest'] = 'El digest no es válido.'
         if len(self.fingerprint) != 64:
             errors['fingerprint'] = 'El fingerprint no es válido.'
+        if self.alta_cliente_id and (
+            self.command != self.Command.CREATE
+            or self.alta_cliente.actor_id != self.actor_id
+            or self.alta_cliente.cliente_id != self.solicitud.cliente_id
+        ):
+            errors['alta_cliente'] = 'El alta no coincide con la solicitud.'
         if self.consentimiento_id:
             if self.consentimiento.solicitud_id != self.solicitud_id:
                 errors['consentimiento'] = 'El consentimiento no coincide.'

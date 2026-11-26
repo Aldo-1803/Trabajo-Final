@@ -8,7 +8,7 @@ from uuid import UUID
 from django.contrib.auth import get_user_model
 from django.db import connection, transaction
 
-from usuarios.models import Cliente
+from usuarios.models import Cliente, WalkInClientOperation
 from usuarios.roles import BusinessPermission
 
 from .models import (
@@ -272,6 +272,7 @@ def create_assisted_technical_request(
     hora_preferida,
     medio_solicitud,
     personal_preferido=None,
+    alta_operation_id=None,
 ):
     key = _normalized_key(idempotency_key)
     normalized_operation_id = _normalized_operation_id(operation_id)
@@ -296,6 +297,7 @@ def create_assisted_technical_request(
         'hora_preferida': hora_preferida.isoformat(),
         'personal_preferido_id': getattr(personal_preferido, 'pk', None),
         'medio_solicitud': medio_solicitud,
+        **({'alta_operation_id': str(alta_operation_id)} if alta_operation_id else {}),
     })
     for lock_value in sorted((
         f'assisted-key:{SolicitudTecnicaAsistidaOperacion.Command.CREATE}:{key_digest}',
@@ -303,6 +305,19 @@ def create_assisted_technical_request(
     )):
         _advisory_lock(lock_value)
     current_actor = _authorized_actor(actor)
+    alta = None
+    if alta_operation_id:
+        if not current_actor.has_perm(BusinessPermission.CREATE_WALKIN_CLIENT):
+            raise AssistedTechnicalBookingPermissionDenied(
+                'WALKIN_PERMISSION_DENIED', 'No tiene permisos para vincular un alta rápida.',
+            )
+        alta = WalkInClientOperation.objects.filter(
+            operation_id=alta_operation_id, actor=current_actor, cliente_id=cliente_id,
+        ).first()
+        if alta is None:
+            raise AssistedTechnicalBookingNotFound(
+                'WALKIN_OPERATION_NOT_FOUND', 'El alta no está disponible para este Cliente.',
+            )
     existing = _existing_operation(
         command=SolicitudTecnicaAsistidaOperacion.Command.CREATE,
         key_digest=key_digest,
@@ -342,6 +357,7 @@ def create_assisted_technical_request(
         idempotency_key_digest=key_digest,
         fingerprint=fingerprint,
         solicitud=solicitud,
+        alta_cliente=alta,
     )
     _audit(
         operation=operation,

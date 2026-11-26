@@ -10,9 +10,7 @@ jest.mock('axios', () => ({
     default: { get: jest.fn(), post: jest.fn() }
 }));
 jest.mock('../../context/SessionContext', () => ({ useSession: jest.fn() }));
-let mockLocationState = null;
 jest.mock('react-router-dom', () => ({
-    useLocation: () => ({ state: mockLocationState }),
     Link: ({ children, to, ...props }) => <a href={to} {...props}>{children}</a>
 }), { virtual: true });
 
@@ -116,13 +114,33 @@ const baseResult = (outcome, overrides = {}) => ({
 const renderPage = ({
     permission = true,
     paymentPermission = false,
+    walkinPermission = false,
+    actorId = 19,
+    bookingDestinations = false,
     routeState = null
 } = {}) => {
-    mockLocationState = routeState;
+    if (routeState?.cliente) sessionStorage.setItem(`reception.v1.booking.${actorId}`, JSON.stringify({
+        clientId: routeState.cliente.cliente_id, altaId: routeState.cliente.operation_id,
+    }));
+    const existingRead = axios.get.getMockImplementation();
+    if (routeState?.cliente) axios.get.mockImplementation((url, config) => {
+        if (config?.params?.cliente_id === routeState.cliente.cliente_id) {
+            return Promise.resolve({ data: { results: [routeState.cliente] } });
+        }
+        if (walkinPermission && config?.params?.operation_id === routeState.cliente.operation_id && routeState.cliente.operation_id) {
+            return Promise.resolve({ data: routeState.cliente });
+        }
+        return existingRead(url, config);
+    });
     useSession.mockReturnValue({
+        user: actorId ? { id: actorId } : null,
+        hasCapability: () => bookingDestinations,
+        profiles: { personal: { id: 4, active: bookingDestinations } },
         hasPermission: (value) => (
             permission && (
                 value === 'gestion.create_turno_for_client'
+                || walkinPermission && value === 'usuarios.create_walkin_client'
+                || bookingDestinations && value === 'gestion.view_global_agenda'
                 || paymentPermission && value === 'gestion.register_payment'
             )
         )
@@ -177,6 +195,7 @@ const chooseAvailableSlot = async () => {
 describe('Solicitud técnica asistida', () => {
     beforeEach(() => {
         jest.clearAllMocks();
+        sessionStorage.clear();
         axios.get.mockImplementation((url) => {
             if (url === '/api/gestion/servicios/') {
                 return Promise.resolve({ data: services });
@@ -226,10 +245,11 @@ describe('Solicitud técnica asistida', () => {
     });
 
     test('reutiliza el cliente recién creado por BH-064', async () => {
-        renderPage({ routeState: { cliente: {
+        renderPage({ walkinPermission: true, routeState: { cliente: {
             cliente_id: 41,
             display_name: 'Ana Pérez',
-            cliente_activo: true
+            cliente_activo: true,
+            operation_id: 'c3697d82-abde-4850-a092-8234b15f0682',
         } } });
         await selectRequestData({ useSearch: false });
         expect(screen.getByText(/Ana Pérez/)).toBeInTheDocument();
@@ -238,6 +258,52 @@ describe('Solicitud técnica asistida', () => {
         }));
         await waitFor(() => expect(axios.post).toHaveBeenCalled());
         expect(axios.post.mock.calls[0][1].cliente_id).toBe(41);
+        expect(axios.post.mock.calls[0][1].alta_operation_id).toBe('c3697d82-abde-4850-a092-8234b15f0682');
+    });
+
+    test('reload recupera un commit no observado y sólo ofrece destinos autorizados', async () => {
+        axios.post.mockRejectedValueOnce(new Error('Sin respuesta'));
+        const first = renderPage();
+        await selectRequestData();
+        fireEvent.click(screen.getByRole('button', { name: 'Registrar y evaluar solicitud' }));
+        await screen.findByRole('button', { name: 'Reintentar solicitud con la misma clave' });
+        const root = axios.post.mock.calls[0][1].operation_id;
+        first.unmount();
+        const read = axios.get.getMockImplementation();
+        axios.get.mockImplementation((url, config) => url.endsWith(`/recuperacion/${root}/`) ? Promise.resolve({ data: {
+            stage: 'CONFIRMED', next_action: 'VIEW_BOOKING', command_committed: true,
+            request: baseResult('APTO', { operation_id: root, cliente: { display_name: client.display_name } }),
+            hold: { ...activeHold, effective_state: 'CONSUMED' },
+            intent: null,
+            turno: { id: 721, estado: 'confirmado', personal_id: 4 },
+        } }) : read(url, config));
+        const restored = renderPage({ bookingDestinations: true });
+        expect(await screen.findByRole('link', { name: 'Ver Turno en agenda' })).toHaveAttribute('href', '/admin/turnos?turno=721');
+        expect(screen.getByRole('link', { name: 'Abrir trabajo técnico' })).toHaveAttribute('href', '/turnos/721/trabajo-tecnico');
+        expect(screen.getByLabelText('Paso actual')).toHaveAttribute('data-stage', 'CONFIRMED');
+        expect(axios.post).toHaveBeenCalledTimes(1);
+        expect(screen.queryByRole('button', { name: /reintentar/i })).not.toBeInTheDocument();
+        restored.unmount();
+        renderPage({ actorId: 99 });
+        await screen.findByLabelText('Buscar Cliente');
+        expect(screen.queryByText(/721|Laura Gómez/)).not.toBeInTheDocument();
+    });
+
+    test('reload sin commit visible sólo reintenta con payload y clave originales', async () => {
+        axios.post.mockRejectedValueOnce(new Error('Sin respuesta'));
+        const first = renderPage();
+        await selectRequestData();
+        fireEvent.click(screen.getByRole('button', { name: 'Registrar y evaluar solicitud' }));
+        await screen.findByRole('button', { name: 'Reintentar solicitud con la misma clave' });
+        const root = axios.post.mock.calls[0][1].operation_id;
+        first.unmount();
+        const read = axios.get.getMockImplementation();
+        axios.get.mockImplementation((url, config) => url.endsWith(`/recuperacion/${root}/`)
+            ? Promise.reject({ response: { status: 404 } }) : read(url, config));
+        renderPage();
+        fireEvent.click(await screen.findByRole('button', { name: 'Reintentar solicitud con la misma clave' }));
+        expect(await screen.findByRole('button', { name: 'Consultar disponibilidad' })).toBeVisible();
+        expect(axios.post.mock.calls[1]).toEqual(axios.post.mock.calls[0]);
     });
 
     test.each([
@@ -619,6 +685,7 @@ describe('Solicitud técnica asistida', () => {
                 confirmation_due: '0.00',
                 financial_threshold_reached: true,
                 confirmed_turno_id: 721,
+                turno_estado: 'confirmado',
                 effective_status: 'APPROVED',
                 tracking: { state: 'CONFIRMED', requires_polling: false }
             } });
@@ -682,6 +749,9 @@ describe('Solicitud técnica asistida', () => {
                 if (url === '/api/gestion/servicios/') return Promise.resolve({ data: services });
                 if (url.endsWith('/disponibilidad/')) return Promise.resolve({ data: availability });
                 if (url.endsWith('/pago/opciones/')) return Promise.resolve({ data: paymentOptions });
+                if (url.includes('/recuperacion/')) return Promise.resolve({ data: {
+                    request: baseResult('APTO'), hold: activeHold, intent: null, turno: null,
+                } });
                 return Promise.reject(new Error(`Unexpected URL: ${url}`));
             });
             axios.post.mockImplementation((url) => {
@@ -758,6 +828,7 @@ describe('Solicitud técnica asistida', () => {
             .toBeInTheDocument();
 
         useSession.mockReturnValue({
+            user: { id: 19 },
             hasPermission: (value) => value === 'gestion.create_turno_for_client'
         });
         view.rerender(<NuevoTurno />);

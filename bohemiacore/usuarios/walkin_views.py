@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from django.db.models import Q
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -7,7 +9,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 
 from .authentication import ClaimAwareTokenObtainPairSerializer
 from .contact_normalization import try_normalize_argentine_phone
-from .models import Cliente
+from .models import Cliente, WalkInClientOperation
 from .roles import BusinessPermission
 from .serializers import (
     WalkInClientCreateCommandSerializer,
@@ -35,6 +37,26 @@ class ClaimAwareTokenObtainPairView(TokenObtainPairView):
 
 class WalkInClientCreateView(APIView):
     permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        actor = request.user
+        if not actor.is_active or not actor.has_perm(BusinessPermission.CREATE_WALKIN_CLIENT):
+            return self._error('PERMISSION_DENIED', 'No tiene permisos para consultar altas.', 403)
+        try:
+            operation_id = UUID(request.query_params.get('operation_id', ''))
+        except ValueError:
+            return self._error('INVALID_UUID', 'La referencia de alta es inválida.', 400)
+        operation = WalkInClientOperation.objects.select_related('cliente__usuario').filter(
+            actor=actor, operation_id=operation_id,
+        ).first()
+        if operation is None:
+            return self._error('OPERATION_NOT_FOUND', 'No hay un alta disponible en este alcance.', 404)
+        return Response({
+            **candidate_summary(operation.cliente),
+            'stage': 'CLIENT_READY',
+            'created': operation.result_created,
+            'operation_id': str(operation.operation_id),
+        }, headers={'Cache-Control': 'no-store'})
 
     def post(self, request):
         serializer = WalkInClientCreateCommandSerializer(data=request.data)
@@ -121,6 +143,20 @@ class WalkInClientSelectorView(APIView):
                 }
             }, status=status.HTTP_403_FORBIDDEN)
         query = request.query_params.get('q', '').strip()
+        client_ref = request.query_params.get('cliente_id')
+        if client_ref is not None:
+            try:
+                client_id = int(client_ref)
+                if not 0 < client_id < 2**63:
+                    raise ValueError
+            except ValueError:
+                return WalkInClientCreateView._error('INVALID_QUERY', 'La referencia de Cliente es inválida.', 400)
+            client = Cliente.objects.select_related('usuario').filter(
+                pk=client_id, activo=True, usuario__is_active=True,
+            ).first()
+            if client is None:
+                return WalkInClientCreateView._error('CLIENT_NOT_FOUND', 'El Cliente no está disponible.', 404)
+            return Response({'results': [candidate_summary(client)]}, headers={'Cache-Control': 'no-store'})
         if not 2 <= len(query) <= 100:
             return Response({
                 'error': {
