@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useParams, useNavigate } from 'react-router-dom';
 import { confirmarAccion, notify } from '../../utils/notificaciones';
+import { IconEye, IconFileText } from '../../components/common/Icons';
 
 const DetalleRutina = () => {
     const { id } = useParams();
@@ -80,7 +81,9 @@ const DetalleRutina = () => {
                             {rutina.descripcion}
                         </p>
 
-                        <h3 className="text-xl font-bold text-gray-800 mb-6 border-b pb-2">📄 Archivo de la Rutina</h3>
+                                                <h3 className="text-xl font-bold text-gray-800 mb-6 border-b pb-2 inline-flex items-center gap-2">
+                                                    <IconFileText className="h-5 w-5" /> Archivo de la Rutina
+                                                </h3>
                         
                         {rutina.archivo ? (
                             <div className="bg-blue-50 p-6 rounded-lg border-2 border-blue-200">
@@ -91,7 +94,7 @@ const DetalleRutina = () => {
                                     rel="noopener noreferrer"
                                     className="inline-block bg-blue-500 text-white px-6 py-3 rounded-full font-bold hover:bg-blue-600 transition"
                                 >
-                                    👁️ Ver Archivo
+                                    <IconEye className="h-5 w-5" /> Ver Archivo
                                 </a>
                             </div>
                         ) : (
@@ -112,7 +115,7 @@ const DetalleRutina = () => {
                             onClick={() => handleDescargarRutina()}
                             className="bg-blue-500 text-white px-8 py-3 rounded-full font-bold hover:bg-blue-600 shadow-lg transform hover:-translate-y-1 transition-all"
                         >
-                            👁️ Ver Archivo
+                            <IconEye className="h-5 w-5" /> Ver Archivo
                         </button>
                     </div>
                 </div>

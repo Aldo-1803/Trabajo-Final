@@ -1,0 +1,4318 @@
+﻿BOHEMIA HAIR
+
+
+
+
+DOCUMENTO DE REQUISITOS DEL SISTEMA
+
+
+Versión  01.02
+Fecha: 13/06/2025
+Realizado por: Amarilla, Aldo
+Realizado para: Bohemia Hair
+________________
+Lista de Cambios
+Nro
+	Fecha
+	Descripción
+	Autor
+	0
+	13/06/2025
+	Versión 01,02
+	Amarilla Aldo
+	1
+	13/06/2025
+	Se actualizan los Requisitos en base a la plantilla enviada:Se reemplaza Planteo del problema por Presentación General. 
+	Amarilla, Aldo
+	2
+	16/09/25
+	Se agregan objetivo 14 y se modifican las descripciones.
+	Amarilla, Aldo
+	
+
+	16/09/25
+	Se agrega un nuevo C.U “Gestionar Equipamiento”
+	Amarilla, Aldo
+	
+
+	17/09/25
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	________________
+
+
+Contenidos
+Evaluación de la propuesta        1
+Contenidos        2
+Introducción y objetivos        3
+Alcance y limitaciones        3
+Especificación de módulos        3
+Funcionales        3
+No funcionales        3
+Descripción de los módulos        3
+Procesos automatizados        4
+Estimación de tamaño por módulo        4
+Entorno tecnológico y metodológico        5
+Planificación de actividades        5
+________________
+________________
+
+
+Índice de Figuras
+
+
+Figura 1 - Diagrama de Caso de Uso Sistema
+Figura 2 - Diagrama de Subsistema
+________________
+
+
+
+
+Presentación General
+El presente proyecto tiene como finalidad el desarrollo de un sistema de software para Bohemia Hair, un salón especializado en coloración y cuidado capilar dirigido por la profesional Yanina. El sistema está diseñado con un enfoque modular y configurable, de modo que pueda adaptarse también a otros salones del rubro, permitiendo la personalización de servicios, productos, tratamientos y gestión de stock según las necesidades específicas de cada negocio.
+En la actualidad, la gestión de turnos, el seguimiento post-servicio y el control de insumos se realizan de manera manual, principalmente a través de consultas presenciales o mediante aplicaciones de mensajería instantánea. Esta modalidad presenta limitaciones en eficiencia, trazabilidad y continuidad de la atención personalizada, generando dependencia del contacto directo con la profesional y dificultando la escalabilidad del servicio.
+El sistema propuesto busca resolver estas problemáticas mediante una solución digital integral, que incorpore:
+* Automatización de turnos con control de agenda y disponibilidad.
+* Rutinas personalizadas de cuidado capilar, basadas en el historial y estado del cabello de cada clienta.
+* Sugerencias inteligentes de productos y tratamientos, previamente configuradas por la profesional.
+* Gestión autónoma de stock de insumos críticos, vinculada al uso en los servicios prestados.
+* Módulos de comunicación y recordatorios automáticos, que reduzcan la dependencia de la mensajería directa.
+
+
+
+
+Participantes del Proyecto
+Desarrollador: Amarilla, Aldo.
+Cliente: Bohemia Hair.
+
+
+________________
+Objetivos del Sistema
+
+
+OBJ–01 
+	Gestión integral del salón.
+	Descripción 
+	Brindar una plataforma centralizada que permita a la profesional administrar la atención a clientes, la planificación de turnos, la gestión de insumos y las operaciones internas del salón.
+	Estabilidad 
+	Alta
+	Comentarios 
+	Ninguno
+	
+
+
+
+OBJ–02
+	Rutinas personalizadas.
+	Descripción 
+	Ofrecer a cada cliente recomendaciones de cuidado capilar adaptadas a su tipo de cabello, estado y servicios recibidos, para mejorar el seguimiento y fidelización.
+	Estabilidad 
+	Alta
+	Comentarios 
+	Ninguno.
+	
+
+OBJ–03 
+	 Recordatorios automáticos 
+	Descripción 
+	Enviar notificaciones automáticas sobre rutinas que vencen, próximos mantenimientos y tratamientos sugeridos, para garantizar continuidad en el cuidado capilar.
+	Estabilidad 
+	Alta
+	Comentarios 
+	Ninguno.
+	
+
+OBJ–04 
+	Solicitud y gestión de turnos.
+	Descripción 
+	Facilitar la reserva y administración de turnos en línea, sugiriendo fechas y horarios adecuados según la disponibilidad y el historial de cada cliente.
+	Estabilidad 
+	Media.
+	Comentarios 
+	Puede variar según la carga de datos por parte de cada negocio.
+	
+
+OBJ–05
+	Contenido educativo y profesional.
+	Descripción 
+	Proporcionar acceso a consejos, artículos, videos o imágenes con información educativa validada por la profesional, para que las clientas aprendan a cuidar mejor su cabello.
+	Estabilidad 
+	Alta
+	Comentarios 
+	Ninguno.
+	
+
+OBJ–06
+	Catálogo de productos capilares. 
+	Descripción 
+	Permitir a las clientas consultar un catálogo digital de productos con fotos, precios y descripciones, y solicitar su compra o información adicional de manera sencilla.
+	Estabilidad 
+	Alta
+	Comentarios 
+	No se realizan compras dentro de la página, la compra se realiza externamente. [a]
+	
+
+
+
+
+
+
+
+OBJ–07 
+	Gestión automatizada de stock. 
+	Descripción 
+	Controlar automáticamente el inventario de insumos y productos, registrando consumos y generando alertas cuando los niveles estén por debajo del mínimo establecido.
+	Estabilidad 
+	Alta
+	Comentarios 
+	Ninguno.
+	
+
+
+
+
+
+
+
+OBJ–08
+	Reportes estadísticos. 
+	Descripción [b]
+	Generar reportes sobre servicios más solicitados, productos más vendidos y métricas de uso del sistema, para apoyar la toma de decisiones estratégicas.
+	Estabilidad 
+	Alta
+	Comentarios 
+	Ninguno.
+	
+
+OBJ–09
+	Auditoría y trazabilidad. 
+	Descripción 
+	Registrar y auditar las actividades realizadas en el sistema (turnos, señas, rutinas, productos), garantizando control, transparencia y seguridad en la gestión.
+	Estabilidad 
+	Alta
+	Comentarios 
+	Ninguno.
+	
+
+
+
+OBJ–10
+	 Configuración de datos del salón. 
+	Descripción 
+	Permitir parametrizar datos propios de cada negocio, como servicios, productos, horarios de atención y personal, para adaptar el sistema a distintos salones.
+	Estabilidad 
+	Alta
+	Comentarios 
+	Ninguno.
+	
+
+OBJ–11
+	 Gestión de señas para reservas. 
+	Descripción 
+	Asegurar la confirmación de turnos mediante señas, registrando pagos, validando comprobantes y aplicando políticas de reprogramación definidas por la profesional.
+	Estabilidad 
+	Alta
+	Comentarios 
+	Fundamental para evitar cancelaciones sin costo.
+	
+
+OBJ–12
+	 Optimización de agenda. 
+	Descripción 
+	Mejorar la ocupación del salón con reprogramaciones asistidas, sugerencias de turnos alternativos y promociones last-minute que ayuden a cubrir huecos disponibles.
+	Estabilidad 
+	Media-Alta
+	Comentarios 
+	Impacta directamente en la eficiencia y productividad del salón.
+	
+
+OBJ–13
+	 Promociones automáticas. 
+	Descripción 
+	Generar promociones de forma automática a partir del catálogo de productos y servicios, incluyendo packs y ofertas de último momento, para incentivar ventas y fidelización.
+	Estabilidad 
+	Media
+	Comentarios 
+	Aporta valor comercial y fidelización, sin requerir gestión manual constante.
+	
+
+OBJ–14
+	 Gestión de Equipamiento. 
+	Descripción 
+	Registrar y administrar los recursos físicos del salón (sillas, lavacabezas, cabinas u otros), controlando su disponibilidad y estado, para optimizar la asignación en turnos y evitar sobrecarga de equipamiento.
+	Estabilidad 
+	Media
+	Comentarios 
+	Requerido para asegurar que la planificación de turnos respete la capacidad real del salón.
+	
+
+Diagrama de Caso de Uso del Sistema
+  
+
+Figura 1 - Diagrama de Caso de Uso Sistema
+________________
+Casos de Uso
+Iteración 1 – MVP operativo (núcleo básico del sistema)
+* 1) Registrarse.
+* 2) Recuperar contraseña.
+* 3) Iniciar Sesión.
+* 4) Editar Datos personales.
+* 5) Ver guía de diagnóstico capilar.
+* 8) Consultar Rutinas.
+* 9) Descargar/guardar Rutina.
+* 10) Gestionar Rutina.
+* 11) Generación automática de rutina inicial (proceso automatizado)
+* 12) Consultar historial de servicios (cliente).
+* 14) Ver detalle de servicio.
+* 15) Gestionar Agenda.
+* 19) Solicitar Turno.
+* 20) Cancelar Turno.
+* 40) Consultar Notificaciones (básicas: confirmación de turno, recordatorios simples).
+* 30) Consultar carrito de compras.
+* 32) Gestionar Productos.
+* 35)Generador automático de promociones (productos y servicios) (Proceso automatizado).
+* 37) Guardar contenido educativo.
+* 38) Publicar contenido educativo.
+* 39) Gestionar contenido educativo.
+Iteración 2 – Experiencia del cliente + contenido
+* 6) Gestionar Usuarios.
+* 7) Consultar Historial de Rutinas (cliente).
+* 13) Consultar Servicios.
+* 17) Historial técnico de clienta (profesional).
+* 18) Editar fórmula técnica (profesional).
+* 21) Consultar estado de turno.
+* 22) Reprogramar turno (cliente)
+* 28) Consultar catálogo de productos.
+* 29) Ver detalle de producto.
+* 33) Consultar Promociones y beneficios.
+* 27) Asistente de reprogramación y optimización de turnos (proceso automatizado).
+* 23) Reprogramar turno (profesional).
+* 16) Gestionar turnos.
+* 40) Consultar notificaciones.
+* 41) Reportes estadísticos (básico en MVP, extendido en versión avanzada).
+* 42) Gestionar Equipamiento.
+* 43) Gestionar Horarios Laborales.
+* 44) Gestionar Personal.
+* 45) Buscar Turno
+Iteración 3 – Gestión avanzada y automatizaciones
+* 24) Enviar Comprobante de seña (cliente).
+* 25) Confirmar Seña.
+* 34) Gestionar promociones y beneficios.
+* 31) Enviar pedido por WhatsApp 
+* 26) Gestionar Política de señas.
+* Consultar Historial de Rutinas (versión extendida: historial de rutinas con evolución técnica)
+* Asistente de Reprogramación y Optimización de Turnos(extendido: más ajustes por hábitos/servicios)
+* 36) Consultar contenido educativo
+
+
+
+
+Diagrama de Subsistemas
+  
+[c]Figura 2 - Diagrama de Subsistema 
+
+
+________________
+Descripción de Subsistema
+Subsistema de Autenticación y Usuarios
+Objetivo: Administrar el acceso al sistema y la gestión de usuarios con diferentes roles (cliente, profesional, administrador).
+Responsabilidades principales:
+* Registro, inicio de sesión y recuperación de contraseña.
+* Asignación y control de roles/permisos.
+* Alta, baja y edición de usuarios.
+Relaciones: Interactúa con todos los demás subsistemas, dado que el acceso es el punto de entrada a las funcionalidades.
+Subsistema de Perfiles y Diagnóstico Capilar
+Objetivo: Gestionar los datos personales y técnicos del cabello de cada cliente.
+Responsabilidades principales:
+* Edición de datos personales.
+* Registro del perfil capilar (tipo, grosor, estado, porosidad, cuero cabelludo).
+* Guía de diagnóstico capilar para asistencia en el registro.
+Relaciones: Sus datos alimentan el subsistema de Rutinas y el de Recomendaciones y Automatización.
+Subsistema de Servicios
+Objetivo: Definir los servicios que ofrece el salón (coloraciones, cortes, tratamientos, etc.).
+Responsabilidades principales:
+* Consultar y detallar servicios.
+* Definir duración y requisitos técnicos de cada servicio.
+Relaciones: Se conecta con Agenda y Turnos (para calcular la duración de cada reserva) y con Historial Técnico.
+Subsistema de Agenda y Turnos
+Objetivo: Gestionar la agenda del salón, las reservas de turnos y la administración de señas.
+Responsabilidades principales:
+   * Solicitud, cancelación y consulta del estado de turnos.
+   * Gestión de la agenda por parte de la profesional.
+   * Control de disponibilidad horaria. 
+   * Manejo de señas: creación de obligación, validación de comprobante y reglas de reprogramación.
+   * Cancelar/Reprogramar Turno (Cliente y Profesional)
+   * Confirmar Seña (Profesional).
+Relaciones: Se conecta con Servicios (para duración de citas), con Notificaciones (recordatorios y alertas) y con Recomendaciones (sugerencias inteligentes).
+Subsistema de Productos y Promociones
+Objetivo: Administrar el catálogo de productos, promociones y beneficios.
+Responsabilidades principales:
+   * Visualización de catálogo con fotos y precios.
+   * Envío de pedido vía WhatsApp.
+   * Gestión de productos, stock y promociones por parte de la profesional/administrador.
+   * Generador automático de promociones: combos de productos, packs de servicios y promos last-minute para huecos de agenda.
+Relaciones: Se conecta con Inventario, con Integraciones Externas (WhatsApp), con Agenda y Turnos y con Notificaciones.
+Subsistema de Contenido Educativo
+Objetivo: Centralizar la publicación y consulta de contenido educativo para clientes.
+Responsabilidades principales:
+   * Publicar artículos, videos e imágenes.
+   * Consultar y guardar contenido.
+   * Gestión y edición del contenido publicado.
+Relaciones: Puede disparar notificaciones de nuevo contenido.
+Subsistema de Notificaciones y Mensajería
+Objetivo: Automatizar la comunicación con las clientas mediante avisos y recordatorios.
+Responsabilidades principales:
+   * Enviar notificaciones sobre turnos confirmados, cancelaciones y próximos turnos.
+   * Recordar vencimiento de rutinas de cuidado.
+   * Alertas sobre promociones y nuevo contenido educativo.
+   * Avisar deadline de señas pendientes.
+   * Difundir promociones generadas automáticamente.
+   * Notificar sugerencias de reprogramación.
+Relaciones: Se conecta con Agenda y Turnos, Rutinas, Promociones y Contenido Educativo.
+Subsistema de Rutinas de Cuidado
+Objetivo: Administrar rutinas personalizadas de cuidado capilar.
+Responsabilidades principales:
+   * Consultar y descargar rutinas.
+   * Historial de rutinas aplicadas.
+   * Gestión de rutinas por parte de la profesional.
+Relaciones: Depende de Perfiles y Recomendaciones, y notifica a las clientas mediante el subsistema de Notificaciones.
+________________
+Subsistema de Inventario y Stock
+Objetivo: Controlar el stock de insumos y productos.
+Responsabilidades principales:
+   * Actualización automática de stock según servicios realizados.
+   * Alertas de reposición de insumos.
+   * Gestión de mínimos y proyección de consumo.
+Relaciones: Se alimenta del Historial Técnico y de los turnos confirmados.
+Subsistema de Historial Técnico y Fórmulas
+Objetivo: Guardar y administrar información técnica detallada por cliente.
+Responsabilidades principales:
+   * Registro del historial técnico de cada cliente (fórmulas, técnicas, notas).
+   * Consulta solo por la profesional.
+   * Edición y versionado de fórmulas técnicas utilizadas en cada servicio.
+Relaciones: Alimenta al subsistema de Inventario (para deducir insumos consumidos).
+Subsistema de Recomendaciones y Automatización
+Objetivo: Ejecutar los procesos inteligentes y autónomos definidos.
+Responsabilidades principales:
+   * Generación automática de rutina inicial.
+   * Recomendación de próximos turnos.
+   * Ejecución de reglas de negocio basadas en perfiles e historial.
+Relaciones: Depende de Perfiles, Rutinas y Agenda; comunica resultados vía Notificaciones.
+
+________________
+Subsistema de Reportes y Analítica
+Objetivo: Proveer métricas para la toma de decisiones.
+Responsabilidades principales:
+   * Reportes de servicios más solicitados, productos más vendidos, stock utilizado.
+   * Métricas de asistencia, cancelaciones y adherencia a rutinas.
+Relaciones: Recibe datos de Agenda, Servicios, Rutinas, Inventario y Automatización.
+Subsistema de Integraciones Externas
+Objetivo: Facilitar la conexión con plataformas externas.
+Responsabilidades principales:
+   * Envío de pedidos vía WhatsApp.
+   * Notificaciones por correo/SMS (si se configura).
+Relaciones: Soporta a Productos y Notificaciones principalmente.
+Requisitos del Sistema
+Requisitos de Información
+IRQ - 01
+	Usuarios y Roles
+	Objetivos asociados
+	   * OBJ - 01.
+   * OBJ - 09.
+   * OBJ - 10.
+	Requisitos 
+Asociados
+	   * CU - 01.
+   * CU - 02.
+   * CU - 03.
+   * CU - 27.
+	Descripción
+	El sistema deberá almacenar los datos de los usuarios y sus permisos. 
+	Datos
+Específicos
+	   * nombre.
+   * apellido.
+   * email (único).
+   * teléfono/WhatsApp.
+   * fecha de nacimiento (opcional).
+   * redes (opcional).
+   * hash de contraseña.
+   * rol (cliente/profesional/admin).
+   * estado (activo/bloqueado).
+   * fecha de alta.
+   * última actividad.
+   * preferencias de notificación (opt-in).
+	Estabilidad
+	Alta.
+	Comentarios
+	Cifrar contraseñas; email único; registro de auditoría de cambios (quién/cuándo).
+	
+
+IRQ - 02
+	Perfil capilar y diagnóstico
+	Objetivos asociados
+	   * OBJ - 02.
+
+
+	Requisitos 
+Asociados
+	   * CU - 04.
+   * CU - 05.
+	Descripción
+	El sistema deberá almacenar el perfil capilar de la cliente.
+	Datos
+Específicos
+	   * tipo (lacio/ondulado/rizado/afro).
+   * grosor (fino/medio/grueso).
+   * porosidad.
+   * estado (saludable/seco/dañado, etc.).
+   * cuero cabelludo (seco/normal/graso).
+   * objetivos (color, reparación, etc.).
+   * alergias/observaciones.
+   * fecha de último diagnóstico.
+	Estabilidad
+	Alta.
+	Comentarios
+	Usar catálogos/enums para valores; versionar cambios de diagnóstico.
+	
+
+IRQ - 03
+	Servicios
+	Objetivos asociados
+	   * OBJ - 01.
+   * OBJ - 04.
+   * OBJ - 08.
+	Requisitos 
+Asociados
+	   * CU - 13.
+   * CU - 14.
+   * CU - 17.
+   * CU - 18.
+	Descripción
+	El sistema deberá almacenar los servicios ofrecidos. 
+Enriquecer servicios para promos.
+	Datos
+Específicos
+	   * nombre.
+   * descripción.
+   * categoría.
+   * duración estándar.
+   * requisitos/contraindicaciones.
+   * precio de referencia.
+   * fórmula base/insumos por defecto (si aplica).
+   * imágenes.
+   * tags/compatibilidades.
+   * relaciones_complementarias.
+   * flag_apto_promo.
+	Estabilidad
+	Alta.
+	Comentarios
+	Duración alimenta Agenda/Turnos; relacionar con insumos estándar.
+	
+
+IRQ - 04
+	Agendas y Disponibilidad
+	Objetivos asociados
+	   * OBJ - 04.
+   * OBJ - 12
+	Requisitos 
+Asociados
+	   * CU–09
+   * CU–10
+   * CU–15
+   * CU–22
+   * CU–23
+   * CU–30
+   * CU–32
+	Descripción
+	El sistema deberá almacenar la disponibilidad operativa. Marcar huecos y slots promocionables.
+	Datos
+Específicos
+	   * horarios de atención (por día).
+   * bloqueos/feriados.
+   *  franjas y capacidad.
+   * estado de cada slot (libre, reservado, bloqueado) .
+   * motivos de bloqueo, recursos (opcional).
+   * indice_utilización.
+   * slot_promocionado(bool).
+   * referencia_promo (opcional).
+   * motivos de bloqueo.
+	Estabilidad
+	Media-Alta.
+	Comentarios
+	Necesario para sugerencias automáticas de turno; coherente con Turnos.
+	
+
+IRQ - 05
+	Turnos
+	Objetivos asociados
+	   * OBJ - 04.
+   * OBJ - 03.
+   * OBJ - 09.
+   * OBJ - 11
+   * OBJ - 12
+	Requisitos 
+Asociados
+	   * CU–09, 
+   * CU–10
+   * CU–15
+   * CU–22
+   * CU–23
+   * CU–24
+   * CU–25
+   * CU–26
+   * CU–27
+   * CU–30
+   * CU–32
+	Descripción
+	El sistema deberá almacenar los turnos. Soporte completo a seña y reprogramación.
+	Datos
+Específicos
+	   * código de turno.
+   * cliente.
+   * servicio.
+   * fecha/hora inicio–fin.
+   * estado (pendiente/confirmado/cancelado/no-show).
+   * Canal de origen (web/app).
+   * notas, timestamps de cambios.
+   * motivo de cancelación.
+   * recordatorios enviados.
+   * requiere_seña
+   * monto_seña
+   * estado_seña
+   * deadline_seña
+   * motivo_cambio
+   * turno_sustito_id(backfill)
+   * contadores de reprogramación(cliente/profesional)
+   * logs de estado.
+	Estabilidad
+	Alta.
+	Comentarios
+	Auditar transiciones de estado; integrarse con Notificaciones.
+	
+
+IRQ - 06
+	Rutina de Cuidado
+	Objetivos asociados
+	   * OBJ - 02.
+   * OBJ - 03.
+	Requisitos 
+Asociados
+	   * CU - 07.
+   * CU - 08.
+   * CU - 14.
+   * CU - 10.
+	Descripción
+	El sistema deberá almacenar las rutinas personalizadas.
+	Datos
+Específicos
+	   * nombre.
+   * descripción.
+   * pasos/tareas.
+   * frecuencia.
+   * productos sugeridos.
+   * versión (v1..vn).
+   * estado (activa/vencida).
+   * origen (automática/manual).
+   * fechas de asignación/actualización.
+   * historial por cliente.
+	Estabilidad
+	Alta.
+	Comentarios
+	Versionado obligatorio; relacionar con Perfil capilar y Productos.
+	
+
+IRQ - 07
+	Productos
+	Objetivos asociados
+	   * OBJ - 06.
+   * OBJ - 13.
+	Requisitos 
+Asociados
+	   * CU–28
+   * CU–29
+   * CU–30
+   * CU–31
+   * CU–32 
+   * CU–34
+	Descripción
+	El sistema deberá almacenar el catálogo de productos.
+	Datos
+Específicos
+	   * SKU.
+   * nombre.
+   * descripción.
+   * marca.
+   * compatibilidad (tipo/estado de cabello).
+   * precio vigente.
+   * imágenes.
+   * stock actual.
+   * stock mínimo.
+   * punto de pedido.
+   * promos aplicables.
+	Estabilidad
+	Alta.
+	Comentarios
+	Mantener históricos de precio y stock; afecta Inventario y Pedidos por WhatsApp.
+	
+
+
+
+IRQ - 08
+	Promociones y Beneficios
+	Objetivos asociados
+	   * OBJ - 06.
+   * OBJ - 13.
+	Requisitos 
+Asociados
+	   * CU–33
+   * CU–34
+   * CU–35
+	Descripción
+	El sistema deberá almacenar promociones/beneficios. Tipificar y trazar promos generadas.
+	Datos
+Específicos
+	   * nombre.
+   * descripción.
+   * tipo (descuento/pack).
+   * vigencia (desde–hasta).
+   * condiciones.
+   * alcance (productos/servicios).
+   * segmentación (opcional).
+   * estado (activa/pausada).
+   * tipo_promocion {combo_producto, pack_servicio, add_on, hueco_lastminue}
+   * items(productos_ids/servicios_ids)
+   * slot_asociado (si aplica).
+   * origen.
+	Estabilidad
+	Media.
+	Comentarios
+	Validar fechas/solapamientos; log de activación/desactivación.
+	
+
+IRQ - 09
+	Contenido Educativo
+	Objetivos asociados
+	   * OBJ - 05.
+	Requisitos 
+Asociados
+	   * CU–36
+   * CU–37
+   * CU–38
+   * CU–39.
+	Descripción
+	El sistema deberá almacenar piezas de contenido.
+	Datos
+Específicos
+	   * título.
+   * tipo (artículo/video).
+   * archivo/URL, miniatura.
+   * autor.
+   * tags/temas.
+   * fecha de publicación.
+   * visibilidad.
+   * métricas (vistas/guardados).
+   * estado (publicado/borrador).
+	Estabilidad
+	Media.
+	Comentarios
+	Considerar derechos de autor; relacionar con notificaciones “nuevo contenido”.
+	
+
+IRQ - 10
+	Historial Técnico y Fórmulas (Solo Profesional)
+	Objetivos asociados
+	   * OBJ - 09.
+	Requisitos 
+Asociados
+	   * CU - 17
+   * CU - 18.
+	Descripción
+	El sistema deberá almacenar el detalle técnico por turno/servicio.
+	Datos
+Específicos
+	   * referencia al turno.
+   * fórmula aplicada (productos, proporciones/volúmenes, tiempos). 
+   * notas técnicas.
+   * fotos antes/después (opcional).
+   * versionado de fórmula.
+   * responsable de cambios y fecha/hora.
+	Estabilidad
+	Alta.
+	Comentarios
+	Solo visible para profesional; imprescindible para deducir consumos de insumos.
+	
+
+IRQ - 11
+	Inventario e Insumos
+	Objetivos asociados
+	   * OBJ - 07.
+	Requisitos 
+Asociados
+	   * CU–32 
+   * CU–35
+	Descripción
+	El sistema deberá almacenar el inventario.
+	Datos
+Específicos
+	   * ítems de insumo (SKU, nombre, unidad).
+   * stock actual.
+   * mínimos/seguridad.
+   * costo.
+   * movimientos (entrada/salida).
+   * consumos automáticos por servicio y proyección por turnos confirmados.
+	Estabilidad
+	Alta.
+	Comentarios
+	Base del control automatizado de stock; soporte a sugerencia de compra.
+	
+
+IRQ - 12
+	Notificaciones
+	Objetivos asociados
+	   * OBJ–03
+   * OBJ–09
+   * OBJ–11
+   * OBJ–12
+   * OBJ–13.
+	Requisitos 
+Asociados
+	   * CU–16
+   * CU–27
+   * CU–35
+	Descripción
+	El sistema deberá almacenar eventos de notificación. Nuevos eventos.
+	Datos
+Específicos
+	   * tipo (turno, rutina, promo, contenido).
+   * canal (in-app/email/WhatsApp).
+   * mensaje/plantilla.
+   * destinatario.
+   * disparador.
+   * fecha/hora.
+   * estado (pendiente/enviada/leída).
+   * preferencias de usuario.
+   * tipos extra: deadline_seña.
+   * promo_lastminute.
+   * sugerencia_reprogramacion.
+   * canal.
+   * plantilla usada.
+   * tracking de apertura.
+	Estabilidad
+	Alta.
+	Comentarios
+	Necesario para trazabilidad y métricas de entrega/apertura.
+	
+
+IRQ - 13
+	Integraciones Externas(WhatsApp, correo)
+	Objetivos asociados
+	   * OBJ - 06.
+   * OBJ - 09.
+	Requisitos 
+Asociados
+	   * CU - 20.
+   * CU - 31.
+	Descripción
+	El sistema deberá almacenar parámetros de integración.
+	Datos
+Específicos
+	   * números de destino.
+   * plantillas y variables.
+   * logs de envío.
+   * resultado (entregado/fallido).
+   * configuraciones (tokens/credenciales si aplica).
+   * preferencias de contacto.
+	Estabilidad
+	Media.
+	Comentarios
+	Pedido por WhatsApp no procesa pago interno; guardar solo lo necesario.
+	
+
+IRQ - 14
+	Reportes y Métricas
+	Objetivos asociados
+	   * OBJ - 08.
+   * OBJ - 09
+	Requisitos 
+Asociados
+	   * CU - 41.
+	Descripción
+	El sistema deberá almacenar agregados e indicadores para análisis.
+	Datos
+Específicos
+	   * métricas de servicios (volumen/duración).
+   * productos (ventas/rotación).
+   * stock (rupturas/proyección).
+   * turnos (confirmación/cancelación/no-show).
+   * rutinas (adopción).
+   * aceptación de recomendaciones; rango temporal y filtros usados.
+	Estabilidad
+	Alta.
+	Comentarios
+	Mantener históricos de precio y stock; afecta Inventario y Pedidos por WhatsApp.
+	
+
+
+
+IRQ - 15
+	Señas de turno
+	Objetivos asociados
+	   * OBJ - 11
+	Requisitos 
+Asociados
+	   * CU–24
+   * CU–25
+   * CU–26
+	Descripción
+	Registro de la seña asociada a un turno aceptado.
+	Datos
+Específicos
+	   * turno_id
+   * cliente_id
+   * monto
+   * moneda
+   * estado {pendiente, acreditada, vencida, retenida, reembolsada}.
+   * deadline
+   * medio(transferencia/efectivo)
+   * comprobante_url
+   * reprogramaciones_cliente(0..2)
+   * reprogramaciones_operativa
+   * timestamps
+   * politica_snapshot
+	Estabilidad
+	Alta.
+	Comentarios
+	
+
+	
+
+IRQ - 16
+	Lista de espera
+	Objetivos asociados
+	   * OBJ - 12
+	Requisitos 
+Asociados
+	   * CU - 27
+	Descripción
+	Preferencias para ser notificado ante huecos disponibles.
+	Datos
+Específicos
+	   * cliente_id
+   * servicios preferidos
+   * dias/franjas
+   * prioridad
+   * estado{activa, pausada}
+   * historial de ofertas/aceptaciones
+	Estabilidad
+	Alta.
+	Comentarios
+	Permite llenar huecos de agenda automáticamente; se relaciona con Agenda y Notificaciones.
+	
+
+IRQ - 17
+	Reglas de promociones
+	Objetivos asociados
+	   * OBJ -13
+	Requisitos 
+Asociados
+	   * CU -35
+	Descripción
+	Plantillas/reglas para generar promos automáticas (productos y servicios).
+	Datos
+Específicos
+	   * tipo_regla{combo_producto, pack_servicio, hueco_lasminute}.
+   * criterios{categorías/tags, compatibilidades, duración de servicio, franja horaria}.
+   * descuento (%monto).
+   * tamaño pack(2-3).
+   * vigencia.
+   * modo{auto | Revisión}.
+	Estabilidad
+	Alta.
+	Comentarios
+	
+
+	
+
+IRQ - 18
+	Equipamiento del salón
+	Objetivos asociados
+	   * OBJ–14 – Gestión de equipamiento del salón.
+   * OBJ–01 – Gestión integral del salón.
+	Requisitos 
+Asociados
+	   * CU–42 – Gestionar equipamiento.
+   * CU–19 – Solicitar turno (valida disponibilidad de equipamiento).
+   * CU–23 – Reprogramar turno (profesional).
+	Descripción
+	El sistema debe registrar y administrar el equipamiento físico disponible en el salón, asociado a la planificación de turnos y servicios.
+	Datos
+Específicos
+	   * id_equipamiento (identificador único)
+   * tipo (silla, lavacabezas, cabina, secador, etc.)
+   * nombre/referencia (ej. “Silla 1”)
+   * estado (disponible, en uso, fuera de servicio, mantenimiento)
+   * fecha_alta
+   * fecha_baja (si aplica)
+   * observaciones
+	Estabilidad
+	Alta.
+	Comentarios
+	
+
+	
+
+IRQ - 19
+	Personal
+	Objetivos asociados
+	   * OBJ–01 – Gestión integral del salón.
+   * OBJ–10 – Configuración de datos del salón.
+	Requisitos 
+Asociados
+	   * CU–44 – Gestionar personal
+   * CU–19 – Solicitar turno (valida disponibilidad según skills de personal)
+   * CU–32 – Gestionar turnos (asignación a personal)
+	Descripción
+	El sistema debe almacenar la información del personal que trabaja en el salón, permitiendo su gestión y vinculación con turnos y servicios.
+	Datos
+Específicos
+	   * id_personal (identificador único)
+   * nombre
+   * apellido
+   * contacto (teléfono, email)
+   * rol (ej. colorista, asistente, administrador)
+   * habilitaciones/skills (qué servicios puede realizar)
+   * estado (activo/inactivo)
+   * fecha_alta
+   * fecha_baja (si aplica)
+	Estabilidad
+	Alta.
+	Comentarios
+	
+
+	
+
+IRQ - 20
+	Horarios del personal
+	Objetivos asociados
+	   * OBJ–01 – Gestión integral del salón.
+   * OBJ–04 – Solicitud y gestión de turnos.
+   * OBJ–12 – Optimización de agenda.
+	Requisitos 
+Asociados
+	   * CU–43 – Gestionar horarios laborales
+   * CU–19 – Solicitar turno (validación de disponibilidad)
+   * CU–23 – Reprogramar turno (profesional)
+	Descripción
+	El sistema debe registrar y administrar los horarios laborales del personal, incluyendo jornadas recurrentes y excepciones (vacaciones, feriados, ausencias)
+	Datos
+Específicos
+	   * id_horario
+   * id_personal (FK hacia Personal)
+   * día_semana (ej. lunes)
+   * hora_inicio
+   * hora_fin
+   * excepciones (tipo: feriado, licencia, ausencia; fecha puntual)
+   * vigencia_desde / vigencia_hasta
+	Estabilidad
+	Alta.
+	Comentarios
+	
+
+	
+
+Requisitos Funcionales
+
+
+
+
+ID
+	Requisito Funcional
+	Objetivos asociados
+	Casos de Uso asociados
+	Requisitos de Información asociados
+	RF–01 Autenticación y Usuarios
+	El sistema permitirá registrar usuarios, iniciar sesión, recuperar contraseñas y gestionar roles y permisos de acceso.
+	OBJ - 01
+OBJ - 09
+OBJ - 10
+	CU–01
+CU–02
+CU–03
+CU–27
+	IRQ–01 
+	RF–02
+ Gestión de Perfil y Diagnóstico
+	El sistema permitirá a los usuarios editar sus datos personales, registrar información capilar y consultar una guía de diagnóstico.
+	OBJ–02
+	CU–04
+CU–05
+	IRQ–01
+IRQ–02 
+	RF–03
+ Rutinas de Cuidado
+	El sistema permitirá a las clientas consultar, descargar y gestionar rutinas de cuidado capilar, así como ver su historial.
+	OBJ–02
+OBJ–03
+	CU–7 CU–8 CU–9 CU–10 CU–11
+	IRQ–06
+IRQ–02
+	RF–04 
+Historial de Servicios y Técnico
+	El sistema permitirá a las clientas consultar el historial de servicios realizados y a la profesional ver el historial técnico con fórmulas, pudiendo editarlas.
+	OBJ–01
+OBJ–09
+	CU–12 CU–17 CU–18.
+	IRQ–03 
+IRQ–10 
+	RF–05
+ Gestión de Turnos y Agenda
+	El sistema permitirá solicitar, cancelar, reprogramar turnos (cliente y profesional), administrar agenda y gestionar señas: crear obligación tras aceptación del turno, recibir comprobante y confirmar seña, aplicar límites de reprogramación (≤2 cliente), y activar backfill de huecos.
+	OBJ–04
+OBJ–03
+OBJ–09
+	CU–09 CU–10
+CU–15 CU–30
+CU–32 CU–22 CU–23 CU–24 CU–25 CU–26 CU–27
+
+
+	IRQ–04 
+IRQ–05
+IRQ–15
+IRQ–16
+IRQ–12
+
+
+	RF–06 Servicios
+	El sistema mostrará servicios con su detalle y permitirá ofrecer packs de servicio (p.ej. color + retoque) cuando corresponda.
+	OBJ–01
+OBJ–04
+	CU–13 CU–14  CU–35 
+	IRQ–03 IRQ–08
+IRQ–17
+	RF–07 Catálogo de Productos y Promociones
+	El sistema administrará catálogo y permitirá promociones automáticas de productos (combos de 2–3) al alta de un producto compatible; mostrará promos en la sección correspondiente.
+	OBJ–06
+OBJ–07
+	CU–28 CU–29 CU–30 CU–31 CU–32 CU–33 CU–34 CU–35
+
+
+	IRQ–07 
+IRQ–08 
+IRQ–11
+IRQ–17 
+	RF–08 
+Pedidos
+	El sistema permitirá a las clientas enviar pedidos a través de WhatsApp con un mensaje precargado.
+	OBJ–06
+	CU–20
+	IRQ–07 
+IRQ–13 
+
+
+	RF–09 Contenido Educativo
+	El sistema permitirá consultar, guardar, publicar y gestionar contenido educativo (artículos, videos, imágenes).
+	OBJ–05
+	CU–21
+CU–22
+CU–28
+CU–29
+	IRQ–09
+	RF–10 Notificaciones
+	El sistema enviará notificaciones de turnos, rutinas, deadline de seña, promos last-minute y sugerencias de reprogramación, respetando límites de frecuencia.
+	OBJ–03
+OBJ–09
+	CU–16
+CU–27
+CU–35
+	IRQ–12 
+IRQ–13 
+	RF–11 Automatizaciones y Recomendaciones
+	El sistema ejecutará procesos automáticos: (a) Generación de rutina inicial; (b) Asistente de Reprogramación y Optimización de Turnos (sugerir reprogramar ante cancelación y cubrir huecos); (c) Generador Automático de Promociones (combos de productos al alta y packs/last-minute en servicios).
+	OBJ–02
+OBJ–03
+OBJ–07
+	CU–23
+CU–24
+CU–25
+CU–11
+CU–27
+CU–35
+
+
+	IRQ–02 
+IRQ–06 
+IRQ–05
+IRQ–11
+IRQ–04
+IRQ–05
+IRQ–07
+IRQ–08
+IRQ–15
+IRQ–17
+	RF – 12 Reportes
+	El sistema permitirá generar reportes estadísticos sobre servicios, productos, rutinas, turnos y stock.
+	OBJ–08
+OBJ–09
+	CU–41
+	IRQ–14 
+	RF - 13 Gestión de Equipamiento
+	El sistema debe permitir a la profesional/administradora gestionar el equipamiento del salón, incluyendo altas, bajas, modificaciones y el estado de cada recurso (disponible, en uso, fuera de servicio, mantenimiento).
+	OBJ–14
+OBJ–01
+	CU – 42
+CU – 19
+CU – 23
+	IRQ–18
+IRQ–05
+	RF – 14 Gestión de Personal
+	El sistema debe permitir gestionar la información del personal que trabaja en el salón (altas, bajas, modificaciones), definir roles y habilitaciones (qué servicios puede realizar), y controlar su estado (activo/inactivo).
+	OBJ–01
+OBJ–10
+	CU - 44
+CU - 19
+CU - 32
+	IRQ–19 IRQ - 05
+	RF - 15 Gestión de Horarios del Personal
+	El sistema debe permitir a la profesional/administradora definir los horarios laborales del personal, incluyendo reglas recurrentes  y excepciones. El sistema debe usar esta información para validar la disponibilidad de personal al momento de reservar o reprogramar turnos.
+	OBJ–01
+OBJ–04
+OBJ–12
+	CU–43
+CU–19
+CU–23
+	IRQ–20
+IRQ–19
+IRQ–05
+	
+
+Requisitos No Funcionales
+
+
+ID
+	Requisito No Funcional
+	Objetivos asociados
+	Requisitos Funcionales relacionados
+	Requisitos de Información relacionados
+	RNF–01 Usabilidad y Accesibilidad
+	Distinguir visualmente promos de productos y servicios; identificar promos last-minute con fecha/hora; flujos claros para envío/validación de comprobante de seña.
+	OBJ–01 OBJ–02
+	RF–01 RF–02
+RF–03 RF–05
+RF–07 RF–09
+RF–10
+	IRQ–01 IRQ–02
+IRQ–06 IRQ–07
+IRQ–09 IRQ–12
+	RNF–02 Rendimiento
+	Jobs de automatización: generación nocturna de promos < 2 min; ciclo de detección de huecos cada 1–5 min sin degradar UX; reprogramación asistida con respuesta < 2 s.
+	OBJ–01
+OBJ–04
+	RF–01
+RF–05
+RF–11
+	IRQ–01 IRQ–04
+IRQ–05 IRQ–06
+IRQ–11
+	RNF–03 Seguridad de la Información
+	No almacenar datos de tarjeta; comprobantes de seña como archivos seguros; acceso a historial técnico y señas solo por roles autorizados.
+	OBJ–09
+	RF–01 RF–02
+RF–04 RF–05
+RF–10
+	IRQ–01 IRQ–02
+IRQ–10 IRQ–12
+IRQ–13
+	RNF–04 Disponibilidad
+	Mantener 99% en horario laboral; notificaciones de deadline de seña no deben perderse ante reinicios (reintentos).
+	OBJ–01 OBJ–04
+	RF–05
+RF–10
+	IRQ–04 IRQ–05
+IRQ–12
+	RNF–05 Escalabilidad
+	Reglas de promociones parametrizables (nuevas categorías/servicios) sin cambios de código.
+	OBJ–10
+	RF–01 RF–05
+RF–07 RF–09
+RF–11
+	IRQ–01 IRQ–02
+IRQ–04 IRQ–05
+IRQ–07
+	RNF–06 Mantenibilidad
+	El código deberá estar modularizado, documentado y seguir buenas prácticas de arquitectura.
+	OBJ–09
+	Todos
+	Todos
+	RNF–07 Compatibilidad
+	El sistema deberá ser compatible con navegadores modernos (Chrome, Firefox, Edge) y dispositivos Android/iOS.
+Promos/agenda visibles y operables desde móviles y desktop (navegadores modernos).
+	OBJ–01
+	RF–01 RF–02
+RF–05 RF–07
+	IRQ–01 IRQ–04
+IRQ–07
+	RNF–08 Auditabilidad
+	El sistema deberá registrar las operaciones críticas (gestión de turnos, rutinas, productos, usuarios, stock) con fecha, hora y usuario. Log de transiciones de seña/turno (quién/cuándo/motivo), generación/aprobación de promociones (incluye rules snapshot).
+	OBJ–09
+	RF–01 RF–03
+RF–04 RF–05
+RF–07 RF–11
+RF–12
+	IRQ–01 IRQ–05
+IRQ–06 IRQ–07
+IRQ–10 IRQ–11
+IRQ–14
+	RNF–09 Integración Externa
+	Uso de canales existentes (in-app/email/WhatsApp) para: deadline de seña, promos last-minute, sugerencias de reprogramación.
+	OBJ–06
+OBJ–09
+	RF–07 RF–08
+RF–10
+	IRQ–07 IRQ–12
+IRQ–13
+	RNF–10 Copias de Seguridad
+	El sistema deberá contar con mecanismos de backup automático de la base de datos con periodicidad configurable. 
+Respaldos periódicos incluyendo adjuntos de comprobantes. 
+	OBJ–09
+	Todos los que gestionen datos persistentes
+	Todos
+	RNF - 11 
+Gobernanza de promos
+	Cap de frecuencia: máx. N promos/semana/cliente; descuento máximo global (p.ej. 20%); sin stacking de varias promos sobre el mismo ítem/turno.
+	
+
+	
+
+	
+
+	RNF - 12 Seguridad de datos de personal
+	El sistema debe garantizar la seguridad y confidencialidad de la información del personal, permitiendo acceso y modificaciones solo a usuarios con permisos de administración.
+	OBJ–01
+OBJ–10 
+	RF–14 
+RF–15
+	IRQ–19
+IRQ –20
+	RNF–13 Disponibilidad de recursos en tiempo real
+	El sistema debe validar en tiempo real la disponibilidad de personal y equipamiento al solicitar o reprogramar un turno, evitando asignaciones dobles o sobrecarga de recursos.
+	OBJ–01
+OBJ–04
+OBJ–12
+OBJ–14
+
+
+	RF–13 RF–14 RF–15
+
+
+	IRQ–18 IRQ–19 IRQ–20 IRQ–05
+
+
+	RNF–14
+Integridad referencial de recursos
+	El sistema debe garantizar la integridad de datos entre turnos, personal y equipamiento, impidiendo que un turno quede registrado sin estar asociado a un recurso válido y activo.
+	OBJ–01
+OBJ–12
+
+
+	RF–13 
+RF–14 
+RF–15
+
+
+	IRQ–18 IRQ–19
+IRQ–20 IRQ–05 
+
+
+	Casos de Usos extendidos
+UC - 01
+	Registrarse
+	Objetivos Asociados
+	OBJ - 1 Gestión integral del salón
+	Requisitos Asociados
+	IRQ - 1 Usuarios y Roles
+	Descripción
+	Permite a un usuario no registrado crear una cuenta en la aplicación.
+	Precondición
+	El usuario no tiene una cuenta existente en el sistema.
+	Secuencia Normal
+	Paso
+	Acción
+	
+
+	1
+	El usuario accede a la página de registro.
+	2
+	El sistema presenta un formulario de registro.
+	3
+	El usuario completa los campos (Nombre, Apellido, Fecha de Nacimiento, Teléfono, Red Social, Correo, Contraseña) y envía el formulario.
+	4
+	El sistema valida la sintaxis y unicidad del correo electrónico y otros campos.
+	5
+	El sistema crea un nuevo registro de usuario en la base de datos.
+	6
+	El sistema envía un correo de confirmación de registro.
+	7
+	El sistema notifica al usuario que su registro ha sido exitoso y le pide verificar su correo.
+	Postcondición
+	Se ha creado una nueva cuenta de usuario y el sistema ha enviado un correo de confirmación.
+	Excepción
+	Paso
+	Acción
+	
+
+	4
+	Si los datos no son válidos, el sistema resalta los campos incorrectos con mensajes de error descriptivos. El usuario debe corregir los datos.
+	
+
+	4
+	Si el correo electrónico ya está en uso, el sistema muestra un mensaje de error y sugiere la opción de "Recuperar Contraseña".
+	Rendimiento
+	Paso 
+	Cota de Tiempo
+	
+
+	5
+	La creación del usuario y el registro en la base de datos no debe exceder los 500 ms.
+	Frecuencia 
+	Media
+	Estabilidad
+	
+
+	Comentario
+	Se implementará un sistema de validación del lado del cliente (React.js) para una mejor experiencia de usuario, y del lado del servidor (Django) para garantizar la seguridad. La autenticación se gestionará con JWT para desacoplar el frontend del backend.
+	
+
+UC - 02
+	Recuperar Contraseña
+	Objetivos Asociados
+	
+
+	Requisitos Asociados
+	IRQ - 1 Usuarios y Roles
+	Descripción
+	Permite a un usuario con una cuenta olvidada restablecer su contraseña.
+	Precondición
+	El usuario tiene una cuenta registrada en el sistema.
+	Secuencia Normal
+	Paso
+	Acción
+	
+
+	1
+	El usuario hace clic en "Olvidé mi contraseña".
+	2
+	El sistema solicita el correo electrónico del usuario.
+	3
+	El usuario ingresa su correo y lo envía.
+	4
+	El sistema busca el correo electrónico en la base de datos y genera un token seguro.
+	5
+	El sistema envía un correo al usuario con un enlace para restablecer la contraseña que incluye el token.
+	6
+	El usuario accede al enlace y el sistema presenta un formulario para la nueva contraseña.
+	7
+	El usuario ingresa la nueva contraseña y la confirma.
+	8
+	El sistema valida la nueva contraseña y actualiza el registro en la base de datos.
+	9
+	El sistema confirma al usuario que la contraseña ha sido cambiada.
+	Postcondición
+	La contraseña del usuario ha sido actualizada y el token de restablecimiento ha sido invalidado.
+	Excepción
+	Paso
+	Acción
+	
+
+	4
+	Si el correo no existe en la base de datos, el sistema muestra un mensaje de error genérico.
+	6
+	Si el token en el enlace es inválido o ha expirado, el sistema muestra un mensaje de error y el usuario debe reintentar el proceso.
+	Rendimiento
+	Paso 
+	Cota de Tiempo
+	
+
+	5
+	(menos de 2 segundos).
+	Frecuencia 
+	Baja
+	Estabilidad
+	El requisito es altamente estable y sigue patrones de seguridad estándar.
+	Comentario
+	El enlace de restablecimiento de contraseña tendrá un tiempo de expiración (ej. 15 minutos) para garantizar la seguridad. El backend de Django gestionará la generación y validación de los tokens.
+	
+
+UC - 03
+	Iniciar Sesión
+	Objetivos Asociados
+	OBJ - 1 Gestión integral del salón
+	Requisitos Asociados
+	IRQ - 1 Usuarios y Roles
+	Descripción
+	Permite a un usuario registrado acceder a su cuenta.
+	Precondición
+	
+
+	Secuencia Normal
+	Paso
+	Acción
+	
+
+	1
+	El usuario accede a la página de inicio de sesión.
+	2
+	El sistema presenta un formulario con campos para correo y contraseña.
+	3
+	El usuario ingresa sus credenciales y hace clic en "Iniciar Sesión".
+	4
+	El sistema valida las credenciales contra la base de datos.
+	5
+	El sistema genera un JWT y lo envía al frontend.
+	6
+	El sistema redirige al usuario a su panel de control o página principal.
+	Postcondición
+	El usuario ha sido autenticado y tiene acceso a las funcionalidades privadas del sistema.
+	Excepción
+	Paso
+	Acción
+	
+
+	4
+	Si las credenciales son incorrectas, el sistema muestra un mensaje de error genérico.
+	Rendimiento
+	Paso 
+	Cota de Tiempo
+	
+
+	4
+	menos de 200 ms
+	Frecuencia 
+	Alta
+	Estabilidad
+	El requisito es altamente estable y es una funcionalidad central del sistema.
+	Comentario
+	Se utilizará JWT (JSON Web Tokens) para la gestión de la sesión, lo que permite un sistema de autenticación sin estado, ideal para la arquitectura Django/React.js
+	
+
+UC - 04
+	Editar Datos Personales
+	Objetivos Asociados
+	OBJ - 1 Gestión integral del salón
+	Requisitos Asociados
+	IRQ - 1 Usuarios y Roles
+	Descripción
+	Permite a un usuario con sesión activa modificar su información personal (nombre, apellido, etc.).
+	Precondición
+	
+
+	Secuencia Normal
+	Paso
+	Acción
+	
+
+	1
+	El usuario navega a la sección de su perfil.
+	2
+	El sistema muestra los datos actuales del usuario.
+	3
+	El usuario hace clic en "Editar Perfil"
+	4
+	El sistema habilita la edición de los campos.
+	5
+	El usuario modifica los datos y los envía.
+	6
+	El sistema valida los datos enviados.
+	7
+	El sistema actualiza el registro del usuario en la base de datos.
+	8
+	El sistema confirma la actualización exitosa.
+	Postcondición
+	La información del perfil del usuario ha sido actualizada en la base de datos.
+	Excepción
+	Paso
+	Acción
+	
+
+	6
+	Si los datos no son válidos (ej. formato de teléfono incorrecto), el sistema muestra mensajes de error específicos y no guarda los cambios.
+	Rendimiento
+	Paso 
+	Cota de Tiempo
+	
+
+	7
+	 La actualización de los datos no debe exceder los 300 ms.
+	Frecuencia 
+	baja a media
+	Estabilidad
+	El requisito es altamente estable y es una funcionalidad básica de la gestión de usuarios.
+	Comentario
+	La validación de datos se realizará en el frontend y en el backend para una mayor seguridad. La comunicación se realizará a través de un endpoint seguro en la API de Django.
+	
+
+UC - 05
+	Ver guía de diagnóstico capilar
+	Objetivos Asociados
+	OBJ 2 Rutina Personalizada
+OBJ - 5 Contenido educativo y profesional
+	Requisitos Asociados
+	IRQ - 2 Perfil Capilar
+IRQ - 9 Contenido Educativo
+	Descripción
+	Permite al usuario completar un cuestionario para determinar su tipo de cabello y estado actual.
+	Precondición
+	El usuario ha iniciado sesión.
+	Secuencia Normal
+	Paso
+	Acción
+	
+
+	1
+	El usuario navega a la sección de diagnóstico capilar.
+	2
+	 El sistema presenta una serie de preguntas sobre el cabello del usuario (tipo, grosor, porosidad, etc.).
+	3
+	El usuario selecciona las opciones que corresponden a su cabello.
+	4
+	El usuario envía el cuestionario.
+	5
+	El sistema registra las respuestas en la base de datos, asociándolas al perfil del usuario.
+	6
+	El sistema confirma que el diagnóstico ha sido guardado.
+	Postcondición
+	 El perfil del usuario en la base de datos contiene los datos de su diagnóstico capilar.
+	Excepción
+	Paso
+	Acción
+	
+
+	4
+	Si el usuario no completa todas las preguntas obligatorias, el sistema le notifica y no permite el envío.
+	Rendimiento
+	Paso 
+	Cota de Tiempo
+	
+
+	5
+	menos de 300 ms
+	Frecuencia 
+	muy baja
+	Estabilidad
+	El requisito es estable en cuanto a su propósito, pero las preguntas específicas podrían evolucionar.
+	Comentario
+	Este UC es la base para la funcionalidad de recomendación. La estructura de las preguntas y respuestas debe ser flexible en la base de datos para permitir futuras expansiones.
+	
+
+UC - 08
+	Consultar Rutina
+	Objetivos Asociados
+	OBJ - 2 Rutina Personalizada 
+OBJ - 5 Contenido educativo y profesional
+	Requisitos Asociados
+	IRQ - 2 Perfil Capilar
+IRQ - 6 Rutina de Cuidado
+	Descripción
+	Muestra al usuario un listado de rutinas de cuidado capilar y también basadas en su diagnóstico.
+	Precondición
+	El usuario ha iniciado sesión y ha completado la guía de diagnóstico capilar.
+	Secuencia Normal
+	Paso
+	Acción
+	
+
+	1
+	El usuario navega a la sección de "Rutinas Personalizadas".
+	2
+	El sistema recupera el diagnóstico capilar del usuario.
+	3
+	El sistema consulta la base de datos de rutinas predefinidas por la administradora.
+	4
+	El sistema filtra las rutinas que coinciden con el diagnóstico del usuario.
+	5
+	El sistema muestra las rutinas recomendadas en una lista.
+	6
+	El usuario puede seleccionar una rutina para ver sus detalles.
+	Postcondición
+	El usuario ha accedido a una lista de rutinas de cuidado capilar que son relevantes para su perfil.
+	Excepción
+	Paso
+	Acción
+	
+
+	2
+	Si el usuario no ha completado el diagnóstico, el sistema le redirige al UC "Ver guía de diagnóstico capilar" con una notificación.
+	
+
+	4
+	Si no hay rutinas que coincidan con el diagnóstico, el sistema muestra un mensaje indicando que no hay rutinas personalizadas disponibles y sugiere rutinas generales.
+	Rendimiento
+	Paso 
+	Cota de Tiempo
+	
+
+	5
+	< 500 ms.
+	Frecuencia 
+	media a alta
+	Estabilidad
+	El requisito es estable, aunque la cantidad de rutinas recomendadas puede aumentar con el tiempo.
+	Comentario
+	Es crucial que la consulta a la base de datos esté optimizada para un rendimiento rápido, utilizando índices en los campos de diagnóstico.
+	
+
+UC - 09
+	Descargar/Guardar Rutina
+	Objetivos Asociados
+	OBJ - 02 Rutina personalizada
+OBJ - 05 Contenido educativo y profesional
+	Requisitos Asociados
+	IRQ - 6 Rutina de Cuidado
+	Descripción
+	 Permite a un cliente guardar una rutina de cuidado capilar para consultarla sin conexión.
+	Precondición
+	El cliente ha iniciado sesión y tiene al menos una rutina asignada.
+	Secuencia Normal
+	Paso
+	Acción
+	
+
+	1
+	El cliente navega a la sección de "Rutinas Personalizadas".
+	2
+	El sistema muestra las rutinas asignadas al cliente.
+	3
+	El cliente selecciona una rutina y hace clic en la opción "Descargar" o "Guardar".
+	4
+	 El sistema genera una versión de la rutina optimizada para ser vista offline.
+	5
+	El sistema notifica al cliente que la rutina ha sido guardada exitosamente en el dispositivo.
+	Postcondición
+	Una versión offline de la rutina seleccionada está disponible para el cliente.
+	Excepción
+	Paso
+	Acción
+	
+
+	3
+	Si la rutina ya está guardada, el sistema lo notifica y pregunta si desea sobrescribirla.
+	Rendimiento
+	Paso 
+	Cota de Tiempo
+	
+
+	4
+	La generación y guardado del archivo no debe exceder los 500 ms.
+	Frecuencia 
+	baja
+	Estabilidad
+	El requisito es altamente estable.
+	Comentario
+	Se puede implementar como un archivo PDF o como contenido almacenado localmente en el navegador o la aplicación móvil, lo cual requerirá un manejo de la caché en el frontend con React.js.
+	
+
+
+
+UC - 10
+	Gestionar Rutina (Profesional)
+	Objetivos Asociados
+	OBJ - 01 Gestión integral del salón
+OBJ - 02 Rutinas personalizadas
+	Requisitos Asociados
+	IRQ - 6 Rutina de Cuidado
+IRQ - 9 Contenido Educativo
+	Descripción
+	 Permite a un profesional crear, editar o eliminar plantillas de rutinas de cuidado capilar.
+	Precondición
+	 El usuario tiene un rol de profesional y ha iniciado sesión.
+	Secuencia Normal
+	Paso
+	Acción
+	
+
+	1
+	El profesional navega a la sección de "Gestión de Rutinas".
+	2
+	El sistema muestra una lista de plantillas de rutinas existentes.
+	3
+	El profesional selecciona una acción (Crear, Editar, Eliminar).
+	4
+	 Si es "Crear", el sistema presenta un formulario con campos para los detalles de la rutina (nombre, descripción, pasos, etc.). Si es "Editar", el sistema carga los datos de la rutina seleccionada en el formulario.
+	5
+	El profesional completa/modifica la información y guarda los cambios.
+	
+
+	6
+	El sistema valida y actualiza la plantilla de la rutina en la base de datos.
+	
+
+	7
+	El sistema notifica al profesional que la gestión fue exitosa.
+	Postcondición
+	Una nueva plantilla de rutina ha sido creada, o una existente ha sido modificada/eliminada.
+	Excepción
+	Paso
+	Acción
+	
+
+	6
+	 Si hay errores de validación, el sistema muestra mensajes de error y no guarda los cambios.
+	Rendimiento
+	Paso 
+	Cota de Tiempo
+	
+
+	6
+	La operación de guardado no debe exceder los 500 ms.
+	Frecuencia 
+	baja
+	Estabilidad
+	El requisito es estable.
+	Comentario
+	Este caso de uso es crucial para el rol del profesional. El backend de Django será el responsable de la lógica de negocio y la persistencia en PostgreSQL.
+	
+
+SECUENCIA NORMAL : ELIMINAR
+Secuencia Normal
+	Paso
+	Acción
+	
+
+	1
+	El profesional navega a la sección de "Gestión de Rutinas" y selecciona una rutina para eliminar.
+	2
+	 El sistema verifica si la plantilla de rutina está asociada a algún cliente.
+	3
+	Si la rutina no tiene asociaciones, el sistema la elimina del registro y confirma la acción al profesional.
+	4
+	Si la rutina tiene asociaciones activas, el sistema no la elimina. En su lugar, marca el campo estado de la plantilla de rutina como Obsoleta.
+	5
+	El sistema notifica al profesional que la rutina ha sido marcada como obsoleta y que ya no se puede asignar a nuevos clientes.
+	
+
+	6
+	El sistema envía una notificación a cada cliente que tiene esa rutina asignada, informándoles que "la rutina que estaban siguiendo ahora es obsoleta y se recomienda realizar un nuevo diagnóstico para obtener una rutina actualizada."
+	
+
+Postcondición
+	La plantilla de rutina se ha eliminado o marcado como obsoleta, manteniendo la integridad de los datos de los clientes.
+	
+
+
+
+
+
+
+
+UC - 11
+	Generación automática de rutina inicial (Proceso Automatizado)
+	Objetivos Asociados
+	OBJ - 02 Rutina personalizada
+OBJ - 05 Contenido educativo y profesional
+	Requisitos Asociados
+	IRQ - 2 Perfil Capilar y diagnóstico
+IRQ - 6 Rutina de Cuidado
+	Descripción
+	Un proceso del sistema que asigna la primera rutina personalizada al cliente basado en su diagnóstico capilar.
+	Precondición
+	El cliente ha iniciado sesión y tiene al menos una rutina asignada.
+	Secuencia Normal
+	Paso
+	Acción
+	
+
+	1
+	El cliente finaliza el UC "Ver guía de diagnóstico capilar".
+	2
+	El sistema, en el backend, recupera el diagnóstico del cliente.
+	3
+	El sistema ejecuta un algoritmo de lógica de negocio para encontrar la plantilla de rutina más adecuada.
+	4
+	 El sistema asigna una nueva rutina específica para el cliente, vinculándola a la plantilla de origen.
+	5
+	El sistema notifica al cliente (ej. con una notificación push o in-app) que su rutina personalizada está disponible.
+	Postcondición
+	Una rutina personalizada ha sido creada y asignada al cliente en la base de datos.
+	Excepción
+	Paso
+	Acción
+	
+
+	3
+	 Si no se encuentra una rutina que coincida, el sistema asigna una rutina genérica de "iniciación" o muestra un mensaje informando que se asignará una rutina personalizada en breve.
+	Rendimiento
+	Paso 
+	Cota de Tiempo
+	
+
+	4
+	La generación de la rutina debe ser casi instantánea, idealmente no superando los 300 ms.
+	Frecuencia 
+	Se ejecuta una vez por cada cliente nuevo que completa el diagnóstico.
+	Estabilidad
+	El requisito es estable y fundamental para la funcionalidad clave del sistema.
+	Comentario
+	Este es un proceso de backend puro, donde Django se encargará de la lógica de emparejamiento entre diagnóstico y rutinas.
+	
+
+UC - 12
+	Consultar historial de servicios (cliente)
+	Objetivos Asociados
+	OBJ - 01 Gestión Integral del salón
+OBJ - 05 Contenido educativo y profesional
+	Requisitos Asociados
+	IRQ - 03 Servicios
+IRQ - 10 Historial Técnico y Fórmulas (Solo Profesional)
+	Descripción
+	 Permite a un cliente ver una lista de los servicios que ha recibido en el salón.
+	Precondición
+	El cliente ha iniciado sesión.
+	Secuencia Normal
+	Paso
+	Acción
+	
+
+	1
+	El cliente navega a la sección de "Historial de Servicios".
+	2
+	El sistema consulta la base de datos para recuperar los servicios asociados a la cuenta del cliente.
+	3
+	El sistema muestra una lista de servicios, incluyendo la fecha y el tipo de servicio.
+	Postcondición
+	El cliente puede ver su historial de servicios.
+	Excepción
+	Paso
+	Acción
+	
+
+	2
+	Si no hay servicios en el historial, el sistema muestra un mensaje indicando que no hay historial de servicios.
+	Rendimiento
+	Paso 
+	Cota de Tiempo
+	
+
+	2
+	La carga de la lista no debe exceder los 500 ms, incluso con un historial extenso.
+	Frecuencia 
+	Media
+	Estabilidad
+	El requisito es estable.
+	Comentario
+	 La implementación requerirá que el backend de Django exponga una API para que el frontend de React.js pueda solicitar y mostrar el historial.
+	
+
+
+
+UC - 14
+	Ver detalle de servicio
+	Objetivos Asociados
+	OBJ - 04 Solicitud y gestión de turnos
+OBJ - 05 Contenido educativo y profesional
+	Requisitos Asociados
+	IRQ - 03 Servicios
+	Descripción
+	Permite a un cliente o usuario no registrado ver la información detallada (descripción, duración, costo) de un servicio que ofrece el salón.
+	Precondición
+	 El usuario está navegando en la sección de servicios del salón.
+	Secuencia Normal
+	Paso
+	Acción
+	
+
+	1
+	El usuario navega a la sección del catálogo de servicios.
+	2
+	El sistema presenta una lista de los servicios disponibles.
+	3
+	El usuario selecciona un servicio de la lista.
+	4
+	 El sistema recupera los detalles completos del servicio desde la base de datos (nombre, descripción, duración, precio, etc.).
+	5
+	El sistema muestra una vista detallada del servicio seleccionado al usuario.
+	Postcondición
+	El usuario ha accedido a la información completa de un servicio del salón.
+	Excepción
+	Paso
+	Acción
+	
+
+	4
+	Si el servicio no se encuentra disponible (ej. fue eliminado), el sistema muestra un mensaje de error o redirige a la lista de servicios.
+	Rendimiento
+	Paso 
+	Cota de Tiempo
+	
+
+	4
+	 La carga de los detalles no debe exceder los 300 ms.
+	Frecuencia 
+	baja
+	Estabilidad
+	El requisito es estable.
+	Comentario
+	Este caso de uso puede ser ejecutado por un usuario no registrado, ya que no requiere datos de perfil. El backend de Django deberá exponer un endpoint público en la API para que el frontend de React.js solicite la información de un servicio específico.
+	
+
+
+
+
+
+
+
+UC - 15
+	Gestionar Agenda (Profesional)
+	Objetivos Asociados
+	OBJ - 04 Solicitud y gestión de turnos
+OBJ - 12 Optimización de agenda
+	Requisitos Asociados
+	IRQ - 04 Agendas y Disponibilidad
+IRQ - 05 Turnos
+IRQ - 12 Notificaciones
+IRQ - 15 Seña de turnos
+	Descripción
+	Permitir al Profesional/Administrador definir y modificar la disponibilidad del salón para la atención de clientes, incluyendo la configuración de horarios, bloqueos de tiempo y manejo de excepciones.
+	Precondición
+	   * El usuario tiene un rol de profesional y ha iniciado sesión
+   * La configuración inicial del salón (días laborales, horario por defecto, etc.) ya existe en el sistema.
+	Secuencia Normal
+	Paso
+	Acción
+	
+
+	1
+	El profesional navega a la sección de "Agenda".
+	2
+	El Sistema muestra una vista de calendario con la agenda actual del salón.
+	3
+	El Profesional selecciona un día o un rango de fechas.
+	4
+	El Profesional elige la opción para Definir Horarios Laborales.
+	5
+	El Profesional ingresa los horarios de inicio y fin para el día o rango seleccionado.
+	6
+	El Profesional confirma la operación.
+
+
+	7
+	El Sistema guarda los nuevos horarios laborales y los refleja en la vista de la agenda.
+	8
+	El Sistema muestra un mensaje de confirmación de la actualización.
+	Postcondición
+	La agenda del salón y los estados de los turnos han sido actualizados, y se han enviado las notificaciones correspondientes.
+	Excepción
+	Paso
+	Acción
+	
+
+	Formato de Fecha/
+Hora Inválido:
+	En el paso 5 de la Secuencia Normal, el Profesional ingresa un valor que no es un formato de fecha u hora válido.
+	
+
+	
+
+	El Sistema valida la entrada, muestra un mensaje de error y no procede con la operación.
+	
+
+	Horario no Válido:
+	En el paso 5 de la Secuencia Normal, el Profesional ingresa un horario de fin que es anterior al horario de inicio.
+	
+
+	
+
+	 El Sistema detecta la inconsistencia, muestra un mensaje de error y no procede con la operación.
+	Rendimiento
+	Paso 
+	Cota de Tiempo
+	
+
+	2
+	La carga de la agenda completa no debe exceder los 1 segundo.
+	Frecuencia 
+	Alta
+	Estabilidad
+	El requisito es altamente estable y es una funcionalidad crítica.
+	Comentario
+	El backend de Django gestionará la lógica de negocio para los cambios de estado y las notificaciones. La interfaz de React.js deberá ser intuitiva, con indicadores visuales claros para cada estado del turno.
+	
+
+Bloquear un Horario Específico
+Secuencia Alternativa
+	Paso
+	Acción
+	
+
+	1
+	En el paso 2 de la Secuencia Normal, el Profesional selecciona un bloque de tiempo en un día concreto
+	2
+	El Profesional elige la opción para Bloquear Horario.
+	3
+	El Sistema solicita un motivo para el bloqueo (ej. "Mantenimiento del salón").
+	4
+	El Profesional ingresa el motivo y confirma la acción.
+	5
+	El Sistema verifica si hay turnos agendados en ese horario.
+	6
+	Si no hay turnos, el Sistema marca el horario como no disponible en la agenda.
+	7
+	Si hay turnos, el Sistema muestra una advertencia con los detalles de los turnos afectados y solicita una confirmación final para proceder con la cancelación.
+	8
+	Si el Profesional confirma, el Sistema marca el horario como no disponible y cambia el estado de los turnos afectados a "Cancelado por Profesional"
+	9
+	Envía notificaciones automáticas a los clientes.
+	10
+	El Sistema muestra un mensaje de confirmación de la operación.
+	
+
+Marcar un Día como No Laborable / Feriado
+Secuencia Alternativa
+	Paso
+	Acción
+	
+
+	1
+	En el paso 2 de la Secuencia Normal, el Profesional selecciona un día completo.
+	2
+	El Profesional elige la opción para Marcar como Día No Laborable
+	3
+	El Sistema solicita un tipo de día no laborable (ej. "Feriado", "Vacaciones").
+	4
+	El Profesional selecciona el tipo y confirma la acción.
+	5
+	El Sistema marca el horario como no disponible en la agenda.
+	6
+	El Sistema marca el día completo como no disponible, haciendo que ningún turno pueda ser agendado en esa fecha.
+	7
+	El Sistema muestra un mensaje de confirmación.
+	
+
+UC - 19
+	Solicitar Turno
+	Objetivos Asociados
+	OBJ - 04 Solicitud y gestión de turnos.
+	Requisitos Asociados
+	IRQ - 4 Agendas y Disponibilidad
+IRQ - 5 Turnos
+	Descripción
+	  Permite a un cliente solicitar y reservar un turno en la agenda del salón.
+	Precondición
+	El cliente ha iniciado sesión.
+	Secuencia Normal
+	Paso
+	Acción
+	
+
+	1
+	El Cliente navega a la sección de "Solicitar Turno".
+	2
+	El Sistema muestra un catálogo de servicios disponibles.
+	3
+	 El Cliente selecciona uno o más servicios del catálogo.
+	4
+	El Sistema, basándose en la duración de los servicios seleccionados, calcula el tiempo total estimado para la cita.
+	5
+	El Sistema muestra al Cliente las fechas y horarios disponibles que se ajustan a la duración total calculada.
+	6
+	El Cliente selecciona una fecha y un horario disponibles.
+	7
+	El Sistema registra el turno con estado "SOLICITADO" (En Análisis) y notifica al profesional.
+	8
+	El Sistema queda a la espera de la aprobación manual del Administrador.
+	9
+	Una vez aprobado por el Admin, el Sistema cambia el estado a "ESPERANDO SEÑA" y notifica al Cliente.
+	10
+	El Cliente recibe la notificación, ingresa a "Mis Turnos" y sube el comprobante de pago.
+	11
+	El Sistema almacena el comprobante y actualiza el estado a "PENDIENTE DE CONFIRMACIÓN FINAL".
+	12
+	El Sistema asigna el turno al Cliente en la agenda.
+	13
+	El Sistema envía una notificación de confirmación al Cliente (por correo electrónico o notificación push).
+	Postcondición
+	Se ha creado un turno en la agenda con el estado Pendiente de aprobación, se ha registrado el comprobante de pago de la seña y se ha notificado a ambas partes.
+	Excepción
+	Paso
+	Acción
+	
+
+	7
+	Si el profesional rechaza la solicitud (por superposición o fuerza mayor), el turno pasa a estado "RECHAZADO/CANCELADO" y se notifica al cliente con el motivo.
+	
+
+	9
+	Si el cliente no sube el comprobante dentro del tiempo límite (ej. 24hs) desde la aprobación, el sistema libera el turno automáticamente (Vencimiento de Seña).
+	Rendimiento
+	Paso 
+	Cota de Tiempo
+	
+
+	7
+	La creación del turno y la actualización de los estados no debe exceder los 500 ms.
+	Frecuencia 
+	Alta
+	Estabilidad
+	El requisito es altamente estable.
+	Comentario
+	El backend de Django deberá manejar la subida y almacenamiento seguro del comprobante de pago y gestionar los cambios de estado del turno.
+	
+
+UC - 20
+	Cancelar Turno
+	Objetivos Asociados
+	OBJ - 04 Solicitud y gestión de turnos
+	Requisitos Asociados
+	IRQ - 06 Turnos
+IRQ - 12 Notificaciones
+	Descripción
+	Permite a un cliente o a un profesional cancelar un turno agendado, registrando el motivo de la cancelación.
+	Precondición
+	Existe un turno agendado en estado Aceptado
+	Secuencia Normal
+	Paso
+	Acción
+	
+
+	1
+	El cliente navega a la sección de "Mis Turnos".
+	2
+	 El sistema muestra una lista de sus turnos agendados.
+	3
+	El cliente selecciona un turno y hace clic en la opción "Cancelar Turno".
+	4
+	 El sistema verifica si la cancelación está dentro del límite de tiempo.
+	5
+	Si se cumple la condición, el sistema solicita al cliente que ingrese un motivo para la cancelación.
+	6
+	El cliente ingresa el motivo y confirma la cancelación.
+	7
+	El sistema actualiza el estado del turno a Cancelado en la base de datos, registra el motivo y libera el horario.
+	8
+	El sistema notifica al profesional sobre la cancelación y envía una confirmación al cliente.
+	Postcondición
+	
+
+	Excepción
+	Paso
+	Acción
+	
+
+	4
+	Si el cliente intenta cancelar dentro de las 24 horas previas al turno, el sistema muestra un mensaje de error indicando la política de cancelación y no permite la acción.
+	Rendimiento
+	Paso 
+	Cota de Tiempo
+	
+
+	7 / 6
+	 La actualización del estado no debe exceder los 300 ms.
+	Frecuencia 
+	Baja
+	Estabilidad
+	
+
+	Comentario
+	La tabla de turnos en PostgreSQL deberá incluir un nuevo campo motivo_cancelacion para registrar esta información, lo que será útil para futuras métricas y análisis de negocio. El backend de Django implementará la lógica de validación de las 24 horas.
+	
+
+Secuencia normal (Flujo para el Profesional)
+Secuencia Normal
+	Paso
+	Acción
+	
+
+	1
+	El profesional navega a la sección de "Agenda".
+	2
+	 El sistema muestra la agenda del día.
+	3
+	El profesional selecciona un turno y hace clic en "Cancelar Turno".
+	4
+	 El sistema solicita al profesional que ingrese un motivo para la cancelación.
+	5
+	El profesional ingresa el motivo y confirma la cancelación.
+	6
+	 El sistema actualiza el estado del turno a Cancelado, registra el motivo, y notifica al cliente sobre la cancelación.
+	
+
+UC - 40
+	Consultar Notificaciones
+	Objetivos Asociados
+	OBJ - 03 Recordatorios automáticos
+OBJ - 04 Solicitud y gestión de turnos
+OBJ - 05 Contenido educatuvo y profesional
+OBJ - 12 Optimización de agenda
+	Requisitos Asociados
+	IRQ - 12 Notificaciones
+	Descripción
+	Permite a un cliente consultar una lista de notificaciones importantes del salón.
+	Precondición
+	El cliente ha iniciado sesión.
+	Secuencia Normal
+	Paso
+	Acción
+	
+
+	1
+	El cliente accede a la sección de "Notificaciones" o hace clic en un icono de campana.
+	2
+	El sistema consulta la base de datos para obtener las notificaciones asociadas al cliente.
+	3
+	El sistema muestra una lista de notificaciones, ordenadas por fecha y con un indicador de "leído" o "no leído".
+	4
+	El cliente puede hacer clic en una notificación para ver el detalle y marcarla como leída.
+	Postcondición
+	El cliente ha consultado sus notificaciones pendientes.
+	Excepción
+	Paso
+	Acción
+	
+
+	2
+	Si no hay notificaciones, el sistema muestra un mensaje indicando que no hay notificaciones nuevas.
+	Rendimiento
+	Paso 
+	Cota de Tiempo
+	
+
+	3
+	La carga de la lista de notificaciones no debe exceder los 500 ms.
+	Frecuencia 
+	Media - Alta
+	Estabilidad
+	El requisito es estable.
+	Comentario
+	 Las notificaciones pueden ser de tipo Recordatorio de turno, Rutina actualizada, Promoción, etc., y la base de datos de PostgreSQL deberá soportar esta tipología.
+	
+
+UC - 30
+	Consultar carrito de compras
+	Objetivos Asociados
+	OBJ - 06 Catálogo de productos capilares
+
+
+	Requisitos Asociados
+	IRQ - 7 Productos
+	Descripción
+	 Permite a un cliente ver y gestionar los productos que ha añadido a su carrito de compras.
+	Precondición
+	El cliente ha iniciado sesión y ha agregado al menos un producto al carrito.
+	Secuencia Normal
+	Paso
+	Acción
+	
+
+	1
+	El cliente navega a la sección de "Carrito de Compras".
+	2
+	El sistema recupera la lista de productos y sus cantidades asociadas al carrito del cliente.
+	3
+	El sistema muestra una lista de los productos, con su nombre, precio, cantidad y el total del carrito.
+	4
+	El cliente puede modificar las cantidades o eliminar productos del carrito.
+	Postcondición
+	El cliente ha consultado y gestionado los productos que desea comprar.
+	Excepción
+	Paso
+	Acción
+	
+
+	2
+	Si el carrito está vacío, el sistema muestra un mensaje indicando que no hay productos en el carrito.
+	Rendimiento
+	Paso 
+	Cota de Tiempo
+	
+
+	3
+	 La carga del carrito no debe exceder los 400 ms.
+	Frecuencia 
+	Media
+	Estabilidad
+	El requisito es estable
+	Comentario
+	Este C.U. sienta las bases para el proceso de compra. El backend de Django gestionará la sesión del carrito y la persistencia de los productos seleccionados. La funcionalidad de pago, como mencionó, podría ser una integración externa o manejada por una pasarela de pago en el futuro.
+	
+
+UC - 32
+	Gestionar Productos
+	Objetivos Asociados
+	OBJ - 06 catálogo de productos capilares
+
+
+	Requisitos Asociados
+	IRQ - 07 productos
+	Descripción
+	 Permite a un profesional crear, editar o eliminar productos del catálogo de la aplicación.
+	Precondición
+	El usuario tiene un rol de profesional y ha iniciado sesión.
+	Secuencia Normal
+	Paso
+	Acción
+	
+
+	1
+	El profesional navega a la sección de "Gestión de Productos".
+	2
+	El sistema muestra una lista de los productos existentes en el catálogo.
+	3
+	El profesional selecciona una acción (Crear, Editar, Eliminar).
+	4
+	 Si es "Crear", el sistema presenta un formulario con campos para los detalles del producto (nombre, descripción, precio, stock, etc.). Si es "Editar", el sistema carga los datos del producto seleccionado en el formulario. Si es "Eliminar", el sistema solicita una confirmación.
+	5
+	El profesional completa/modifica la información y guarda los cambios.
+	6
+	El sistema valida los datos y actualiza el registro del producto en la base de datos.
+	7
+	El sistema notifica al profesional que la gestión fue exitosa.
+	Postcondición
+	Un nuevo producto ha sido creado, o uno existente ha sido modificado o eliminado del catálogo.
+	Excepción
+	Paso
+	Acción
+	
+
+	6
+	Si hay errores de validación, el sistema muestra mensajes de error y no guarda los cambios.
+	Rendimiento
+	Paso 
+	Cota de Tiempo
+	
+
+	6
+	 La operación de guardado no debe exceder los 500 ms.
+	Frecuencia 
+	Se espera una frecuencia baja a media, ya que es una tarea de administración.
+	Estabilidad
+	El requisito es estable.
+	Comentario
+	El backend de Django será responsable de la lógica de negocio y la persistencia en PostgreSQL.
+	
+
+UC - 35
+	Generador automático de promociones
+	Objetivos Asociados
+	OBJ - 13
+
+
+	Requisitos Asociados
+	IRQ - 07 Productos.
+IRQ - 08 Promociones y Beneficios.
+IRQ - 03 Servicios. 
+	Descripción
+	Un proceso automatizado que genera promociones basadas en reglas predefinidas por el profesional.
+	Precondición
+	Existen reglas de negocio para las promociones configuradas en el sistema.
+	Secuencia Normal
+	Paso
+	Acción
+	
+
+	1
+	El sistema, a través de un scheduler (ej. una tarea programada en Django), se activa periódicamente (ej. cada semana o mes).
+	2
+	El sistema consulta la base de datos de reglas de promociones (ej. "si el stock de un producto es bajo, aplicar descuento").
+	3
+	El sistema identifica los productos o servicios que cumplen con las reglas.
+	4
+	El sistema genera y activa las promociones, actualizando el estado de los productos/servicios o creando nuevos registros de promoción.
+	5
+	El sistema notifica a la profesional sobre las nuevas promociones generadas.
+	
+
+	6
+	El sistema publica las promociones creadas y notifica a los clientes acerca de nuevas promociones.
+	Postcondición
+	Las promociones han sido generadas y están activas en el sistema.
+	Excepción
+	Paso
+	Acción
+	
+
+	3
+	Si no hay productos o servicios que cumplan con las reglas, el proceso finaliza sin crear nuevas promociones.
+	Rendimiento
+	Paso 
+	Cota de Tiempo
+	
+
+	4
+	La generación de las promociones debe ser casi instantánea.
+	Frecuencia 
+	Se ejecuta de forma programada y automática 
+	Estabilidad
+	El requisito es estable.
+	Comentario
+	Este C.U. no tiene una interfaz de usuario directa para su ejecución, pero la profesional necesitará un UC para "Gestionar reglas de promociones".
+	
+
+UC - 37
+	Guardar contenido educativo
+	Objetivos Asociados
+	OBJ - 05 Contenido educativo y profesional
+	Requisitos Asociados
+	IRQ - 09 contenido educativo
+	Descripción
+	Permite a un cliente marcar un artículo, video o consejo como favorito para acceder a él fácilmente desde su perfil en el futuro.
+	Precondición
+	El cliente ha iniciado sesión.
+	Secuencia Normal
+	Paso
+	Acción
+	
+
+	1
+	El cliente navega por la sección de contenido educativo.
+	2
+	El sistema muestra el contenido disponible.
+	3
+	El cliente selecciona un contenido y hace clic en la opción "Guardar" o "Favorito".
+	4
+	El sistema valida que el contenido exista y crea una relación entre el perfil del cliente y el contenido en la base de datos.
+	5
+	El sistema notifica al cliente que el contenido ha sido guardado en su perfil.
+	Postcondición
+	El contenido seleccionado se ha asociado al perfil del cliente y puede ser consultado en la sección de favoritos.
+	Excepción
+	Paso
+	Acción
+	
+
+	4
+	 Si el contenido ya está guardado como favorito, el sistema lo notifica y no realiza la acción.
+	Rendimiento
+	Paso 
+	Cota de Tiempo
+	
+
+	4
+	La operación de guardado no debe exceder los 300 ms.
+	Frecuencia 
+	Se espera una frecuencia media a alta.
+	Estabilidad
+	El requisito es estable.
+	Comentario
+	El backend de Django gestionará la relación entre el usuario y el contenido favorito a través de un modelo de intermediación en la base de datos de PostgreSQL.
+	
+
+
+
+UC - 
+	Gestionar contenido educativo 
+	Objetivos Asociados
+	OBJ - 05 Contenido educativo y profesional
+	Requisitos Asociados
+	IRQ - 09 Contenido Educativo
+	Descripción
+	Permite a un profesional crear, editar, publicar, despublicar y eliminar contenido educativo (artículos, videos, consejos) en la plataforma.
+	Precondición
+	El usuario tiene un rol de profesional y ha iniciado sesión.
+	Secuencia Normal
+	Paso
+	Acción
+	
+
+	1
+	El profesional navega a la sección de "Gestión de Contenido".
+	2
+	El sistema muestra una lista de todo el contenido existente, indicando su estado (Borrador, Publicado).
+	3
+	El profesional puede realizar las siguientes acciones:
+	Postcondición
+	El catálogo de contenido ha sido actualizado con un nuevo registro, una modificación, un cambio de estado o una eliminación.
+	Excepción
+	Paso
+	Acción
+	
+
+	3.5
+	Si el profesional intenta eliminar un contenido que está vinculado a una rutina activa de un cliente, el sistema muestra una advertencia y solicita una confirmación explícita.
+	Rendimiento
+	Paso 
+	Cota de Tiempo
+	
+
+	3
+	Las operaciones de creación, edición, publicación o eliminación no deben exceder los 500 ms.
+	Frecuencia 
+	Media
+	Estabilidad
+	Estable
+	Comentario
+	El backend de Django gestionará las validaciones y los cambios de estado. El frontend de React.js presentará una interfaz de gestión intuitiva con botones claros para cada una de las acciones.
+	
+
+CREAR CONTENIDO
+Secuencia Normal
+	Paso
+	Acción
+	
+
+	A3.1
+	 El profesional hace clic en "Nuevo Contenido".
+	2
+	El sistema presenta un formulario con campos (título, cuerpo, tipo de contenido, etc.).
+	3
+	El profesional lo completa y lo guarda, creando un nuevo registro en estado Borrador.
+	
+
+EDITAR CONTENIDO
+Secuencia Normal
+	Paso
+	Acción
+	
+
+	A3.2
+	El profesional selecciona un contenido existente (en cualquier estado)
+	2
+	El sistema carga el contenido en el formulario para que el profesional realice modificaciones.
+	
+
+PUBLICAR CONTENIDO
+Secuencia Normal
+	Paso
+	Acción
+	
+
+	A3.2
+	El profesional selecciona un contenido en estado Borrador
+	2
+	El sistema cambia el estado del contenido a Publicado.
+	
+
+Despublicar Contenido
+Secuencia Normal
+	Paso
+	Acción
+	
+
+	A3.2
+	El profesional selecciona un contenido en estado Publicado
+	2
+	El sistema cambia su estado a Borrador, haciéndolo invisible para los clientes.
+	
+
+ELIMINAR CONTENIDO
+Secuencia Normal
+	Paso
+	Acción
+	
+
+	A3.2
+	El profesional selecciona un contenido (en cualquier estado) y confirma la eliminación.
+	2
+	El sistema elimina el registro de la base de datos.
+	
+
+UC - 
+	Gestionar Usuarios
+	Objetivos Asociados
+	OBJ - 1 Gestión integral del salón
+OBJ - 10 Configuración de datos del salón.
+	Requisitos Asociados
+	IRQ - 1 Usuarios y Roles.
+	Descripción
+	 Permite a un profesional o administrador dar de alta, modificar roles/permisos, o dar de baja (desactivar) a otros usuarios del sistema, especialmente a los empleados o futuros administradores.
+	Precondición
+	El usuario ejecutor tiene un rol de profesional o administrador y ha iniciado sesión.
+	Secuencia Normal
+	Paso
+	Acción
+	
+
+	1
+	El usuario (Profesional/Admin) navega a la sección de "Gestión de Usuarios".
+	2
+	El sistema muestra una lista paginada de todos los usuarios registrados (Clientes, Personal, Admins).
+	3
+	El usuario selecciona una acción (Crear Usuario, Editar Usuario, Desactivar Usuario).
+	4
+	Si es "Crear", el sistema presenta un formulario con campos para el nuevo usuario (nombre, email, rol, contraseña inicial). Si es "Editar", el sistema carga los datos del usuario seleccionado, permitiendo modificar el nombre, email, teléfono, rol o estado.
+	5
+	 El usuario realiza los cambios/ingresos y guarda.
+	6
+	El sistema valida los datos (ej. unicidad del email, validez del rol) y actualiza el registro o crea el nuevo usuario en la base de datos.
+	7
+	El sistema notifica al usuario ejecutor que la gestión fue exitosa y, si es un nuevo usuario, envía un correo de bienvenida.
+	Postcondición
+	Se ha modificado el perfil, rol o estado de un usuario existente, o se ha creado un nuevo usuario en el sistema.
+	Excepción
+	Paso
+	Acción
+	
+
+	6
+	Si se intenta asignar un rol con permisos superiores al del usuario ejecutor, el sistema deniega la acción y muestra un mensaje de error.
+	
+
+	6
+	Si se intenta desactivar el propio usuario (profesional/admin), el sistema muestra una advertencia y no permite la acción sin un usuario administrador de respaldo.
+	
+
+	6
+	Si el email ya está en uso, el sistema muestra un error de unicidad.
+	Rendimiento
+	Paso 
+	Cota de Tiempo
+	
+
+	6
+	 La operación de guardado no debe exceder los 500 ms.
+	Frecuencia 
+	Se espera una frecuencia baja, solo cuando hay cambios de personal o crecimiento de la estructura.
+	Estabilidad
+	Media
+	Comentario
+	La gestión de roles (Cliente, Profesional, Administrador) y permisos se implementará utilizando las funcionalidades de autenticación y autorización nativas de Django, que son robustas y fáciles de escalar.
+	
+
+ELIMINAR USUARIO
+Secuencia Normal
+	Paso
+	Acción
+	
+
+	A3.1
+	El usuario ejecutor selecciona un usuario de la lista paginada.
+	2
+	El sistema presenta una confirmación y solicita ingresar el Motivo de la Baja del usuario (ej. "Inactividad", "Baja de Empleado").
+	3
+	El usuario ejecutor confirma la acción.
+	4
+	El sistema valida los permisos y actualiza el campo estado del registro del Usuario a Inactivo (o False en is_active).
+	5
+	El sistema notifica al usuario ejecutor que la baja ha sido aplicada.
+	
+
+
+
+UC - 
+	Gestionar Personal
+	Objetivos Asociados
+	OBJ - 1 Gestión integral del salón
+OBJ - 10 Configuración de datos del salón.
+	Requisitos Asociados
+	IRQ - 1 Usuarios y Roles
+IRQ - 19 Personal
+IRQ - 20 Horarios del personal
+	Descripción
+	Permite a la profesional/administrador dar de alta, modificar información personal, roles específicos, tareas delegadas y el horario de trabajo semanal de los empleados del salón.
+	Precondición
+	El usuario ejecutor tiene un rol de Profesional o Administrador y ha iniciado sesión.
+	Secuencia Normal
+	Paso
+	Acción
+	
+
+	1
+	El usuario (Profesional/Admin) navega a la sección de "Gestión de Personal".
+	2
+	El sistema muestra una lista de los empleados activos del salón.
+	3
+	El usuario selecciona una de las siguientes acciones:
+	4
+	Dar de Alta Nuevo Personal: El sistema presenta un formulario para ingresar datos del empleado (nombre, email, teléfono, rol Empleado).
+	5
+	Editar Datos Operacionales: El sistema permite modificar el Horario de Trabajo semanal del empleado y Asignar Tareas específicas (ej. lavado, secado, aplicación de tratamientos).
+	6
+	Dar de Baja Personal (Desactivar): El usuario confirma la baja. El sistema realiza una Baja Lógica, cambiando el estado del usuario a Inactivo.
+	7
+	El usuario realiza los cambios y guarda la información.
+	8
+	 El sistema valida los datos (ej. horarios válidos, rol correcto) y actualiza el registro o crea el nuevo empleado en la base de datos.
+	9
+	El sistema notifica al profesional que la gestión fue exitosa y, si es un alta nueva, envía credenciales de acceso.
+	Postcondición
+	La información de un empleado (incluyendo su horario de trabajo y tareas) ha sido actualizada o se ha dado de baja lógica a un empleado.
+	Excepción
+	Paso
+	Acción
+	
+
+	5
+	Si el profesional intenta crear un horario con inconsistencias (ej. hora de fin anterior a la de inicio) o que se solape con otro horario ya definido para el mismo empleado en ese día, el sistema muestra un error y no guarda la acción.
+	
+
+	5
+	Si se intenta dar de baja (Baja Lógica) a un empleado que tiene tareas asignadas a turnos futuros Aceptados, el sistema: 1. Muestra una advertencia. 2. Exige que la profesional reasigne explícitamente esas tareas a otro personal calificado antes de permitir la baja.
+	
+
+	5
+	Si la profesional edita las habilidades de un empleado y este pierde la calificación para tareas en turnos futuros Aceptados, el sistema bloquea el guardado y exige la reasignación de esas tareas a otro empleado calificado.
+	
+
+	5
+	Si la modificación del horario laboral (recurrente o excepción/licencia) entra en conflicto con turnos Aceptados o Pendientes de Aprobación, el sistema bloquea el guardado del horario y requiere que la profesional resuelva los turnos afectados (cancelar, reprogramar o reasignar las tareas).
+	
+
+	4
+	Si la profesional intenta asignar una tarea a un empleado de forma manual (ej. en la edición), y el empleado no está calificado (según sus Habilidades/Skills), el sistema deniega la asignación de la tarea específica y muestra un mensaje de "Personal no calificado".
+	
+
+	6
+	Si un usuario con el rol Profesional intenta asignar a otro usuario el rol de Administrador, el sistema deniega la acción por no tener los permisos de nivel superior.
+	Rendimiento
+	Paso 
+	Cota de Tiempo
+	
+
+	7
+	La operación de guardado no debe exceder los 500 ms.
+	Frecuencia 
+	Se espera una frecuencia baja, solo al momento de contratar o cambiar la estructura del equipo.
+	Estabilidad
+	El requisito es estable.
+	Comentario
+	Este C.U. utiliza el mismo registro de Usuario de PostgreSQL que el UC-06, pero se enfoca en los campos y relaciones específicas del personal (ej. Horario_Personal, Tareas_Delegadas).
+	________________
+
+
+
+
+UC - 
+	Gestionar Horario Laboral
+	Objetivos Asociados
+	OBJ - 1 Gestión integral del salón 
+OBJ - 4 Solicitud y gestión de turnos
+OBJ - 12 Optimización de agenda
+	Requisitos Asociados
+	IRQ -  19 Personal
+IRQ - 20 Horarios del personal
+IRQ - 5 Turnos
+IRQ - 4 Agendas y Disponibilidad
+	Descripción
+	Permite a la profesional/administrador definir los horarios laborales recurrentes y las excepciones (licencias, ausencias, feriados) para cada miembro del personal, impactando directamente la disponibilidad de turnos.
+	Precondición
+	El usuario tiene un rol de Profesional o Administrador y ha iniciado sesión. El Personal ya está registrado en el sistema.
+	Secuencia Normal
+	Paso
+	Acción
+	
+
+	1
+	El usuario (Profesional/Admin) navega a la sección de "Gestionar Horarios Laborales".
+	2
+	El sistema muestra una lista del personal y sus horarios recurrentes y excepciones vigentes.
+	3
+	El usuario selecciona un empleado y una acción (Crear Horario Recurrente, Crear Excepción, Editar/Eliminar Horario).
+	4
+	El usuario ingresa los datos (Día de la semana, Hora Inicio, Hora Fin, Fechas de Vigencia o Rango de la Excepción).
+	5
+	El sistema valida la consistencia interna y los conflictos de turnos
+	6
+	El sistema guarda el nuevo horario o excepción en la base de datos, actualizando la disponibilidad de la Agenda (IRQ-04).
+	7
+	El sistema notifica al usuario que la gestión fue exitosa.
+	Postcondición
+	 Los horarios laborales del personal han sido actualizados en la base de datos, reflejando su disponibilidad futura.
+	Excepción
+	Paso
+	Acción
+	
+
+	5
+	Si el profesional intenta modificar un horario laboral y el sistema detecta que el nuevo horario entra en conflicto con turnos Aceptados o Pendientes de Aprobación para ese empleado, el sistema bloquea el guardado y requiere la resolución manual de los turnos afectados (cancelación, reprogramación, o reasignación de tareas) antes de permitir la modificación.
+	4
+	Si el profesional ingresa un horario que es internamente inconsistente (ej. la Hora Fin es anterior a la Hora Inicio, o se solapa con otro horario recurrente previamente definido para el mismo empleado en el mismo día), el sistema deniega la creación/modificación y muestra un error de consistencia.
+	6
+	Si se crea un horario de excepción (ej., una licencia por 3 días) que se solapa con un horario recurrente activo, el sistema permite la creación (dando prioridad a la excepción), pero notifica al profesional que si existen turnos en ese slot, se dispara la Excepción A1 para forzar su resolución.
+	5
+	Si el profesional intenta definir un horario de trabajo que excede la disponibilidad máxima calculada de los recursos físicos del salón para ese periodo, el sistema acepta el horario, pero emite una advertencia y etiqueta el horario como "Riesgo de Sobre-reserva".
+	3
+	Si el profesional intenta eliminar un bloque de horario (recurrente o excepción), el sistema verifica si existen turnos aceptados asociados a ese bloque. Si existen, dispara la Excepción A1 para forzar la resolución de los turnos antes de liberar el tiempo.
+	Rendimiento
+	Paso 
+	Cota de Tiempo
+	
+
+	
+
+	
+
+	Frecuencia 
+	
+
+	Estabilidad
+	
+
+	Comentario
+	
+
+	
+
+UC - 
+	Gestionar Equipamiento
+	Objetivos Asociados
+	OBJ–14: Gestión de Equipamiento.
+OBJ–01: Gestión integral del salón.
+	Requisitos Asociados
+	IRQ–18: Equipamiento del salón.
+IRQ–11: Inventario e Insumos
+	Descripción
+	Permite a la profesional o administradora administrar los recursos físicos del salón (sillas, lavacabezas, cabinas, etc.), controlando su disponibilidad técnica y operativa para asegurar la planificación de turnos.
+	Precondición
+	El usuario tiene un rol de Profesional o Administrador y ha iniciado sesión en el sistema
+	Secuencia Normal
+	Paso
+	Acción
+	
+
+	1
+	El usuario navega a la sección de "Gestión de Equipamiento"
+	2
+	El sistema muestra una lista de los recursos físicos registrados (Nombre, Tipo, Estado actual y Ubicación).
+	3
+	El usuario selecciona una acción: Crear, Editar, Cambiar Estado o Eliminar.
+	4
+	Si es "Crear/Editar": El sistema presenta el formulario con los campos de IRQ-18 (Tipo de recurso, Nombre/Referencia, Ubicación).
+	5
+	Si es "Cambiar Estado": El usuario selecciona un nuevo estado (Disponible, En uso, Fuera de servicio, Mantenimiento)
+	
+
+	El usuario confirma la operación y guarda los cambios.
+	
+
+	El sistema valida la consistencia de los datos y verifica si el cambio de estado afecta turnos futuros (ver Excepciones).
+	
+
+	El sistema actualiza el registro en la base de datos y notifica el éxito de la operación.
+	Postcondición
+	El inventario de equipamiento se actualiza y la disponibilidad se refleja inmediatamente en el motor de reservas de turnos.
+	Excepción
+	Paso
+	Acción
+	
+
+	5
+	El sistema bloquea el cambio, muestra una lista de los turnos afectados y solicita a la profesional reasignar dichos turnos a otro equipo similar o reprogramarlos antes de permitir el cambio de estado.
+	
+
+	
+
+	El sistema realiza una Baja Lógica (cambia estado a "Inactivo" o registra fecha_baja), impidiendo su uso en nuevos turnos pero preservando la integridad de los datos históricos de servicios pasados.
+	Rendimiento
+	Paso 
+	Cota de Tiempo
+	
+
+	
+
+	
+
+	Frecuencia 
+	
+
+	Estabilidad
+	
+
+	Comentario
+	
+
+	
+
+UC - 17
+	Historial Tecnico de cliente  (Profesional)
+	Objetivos Asociados
+	OBJ–01 (Gestión integral)
+OBJ–09 (Auditoría y trazabilidad).
+	Requisitos Asociados
+	IRQ–01 Roles  
+IRQ–02 Perfil capilar
+IRQ–03 Servicios
+IRQ–05 Turnos 
+IRQ–10 Historial Técnico
+	Descripción
+	El profesional accede a un turno aceptado para registrar la fórmula final, comentarios, fotos y el estado del cabello, partiendo de una fórmula base sugerida por el sistema.
+	Precondición
+	El profesional ha iniciado sesión. El turno existe y su estado es "Aceptado". El turno tiene un servicio asignado.
+	Secuencia Normal
+	Paso
+	Acción
+	
+
+	1
+	El Profesional selecciona un turno "Aceptado" desde la agenda.
+	2
+	El profesional selecciona la opción "Cargar Fórmula/Historial".
+	3
+	El sistema busca el ID del servicio vinculado al turno y recupera la formula_estandar y los campos de diagnostico_base.
+	4
+	 El Profesional ajusta las cantidades de la mezcla (ej. cambia "3cm" por "5cm" de oxidante) y completa el campo "Estado Final del Cabello" (ej. "Dañado, porosidad Baja").
+	5
+	El Profesional añade notas técnicas (ej. "Resistió bien la decoloración, no requiere tratamiento extra").
+	6
+	El Profesional captura o sube una fotografía del resultado final.
+	
+
+	7
+	El Profesional presiona "Finalizar y Guardar".
+	
+
+	8
+	El sistema guarda el registro en  Base de datos, marca el turno como "Finalizado" y actualiza el ultimo_diagnostico en el perfil de la clienta.
+	Postcondición
+	El turno puede cambiar a estado "Finalizado". El historial del cliente se actualiza con la nueva fórmula y foto.
+	Excepción
+	Paso
+	Acción
+	
+
+	1
+	Si el servicio es, por ejemplo, "Corte", el sistema no mostrará campos químicos, sino solo un área de texto libre y carga de fotos. Si es un servicio químico sin fórmula previa, el sistema presentará un formulario en blanco para que el profesional cree una desde cero.
+	
+
+	6
+	Error en la carga del archivo de imagen. El sistema solicita reintentar la subida o guardar solo el texto.
+	Rendimiento
+	Paso 
+	Cota de Tiempo
+	
+
+	
+
+	
+
+	Frecuencia 
+	Al finalizar cada servicio técnico en el salón.
+	Estabilidad
+	Alta
+	Comentario
+	La "Fórmula Estándar" debe estar definida previamente en el catálogo de Servicios.
+Al momento de guardar el HistorialTecnico, el sistema debe automáticamente cambiar el estado del Turno de "Aceptado" a "Finalizado".
+Se debe permitir que el profesional edite la fórmula hasta 24 horas después de finalizado el turno.
+	
+
+UC - 
+	
+
+	Objetivos Asociados
+	
+
+	Requisitos Asociados
+	
+
+	Descripción
+	
+
+	Precondición
+	
+
+	Secuencia Normal
+	Paso
+	Acción
+	
+
+	1
+	
+
+	2
+	
+
+	3
+	
+
+	4
+	
+
+	5
+	
+
+	Postcondición
+	
+
+	Excepción
+	Paso
+	Acción
+	
+
+	-
+	-
+	Rendimiento
+	Paso 
+	Cota de Tiempo
+	
+
+	
+
+	
+
+	Frecuencia 
+	
+
+	Estabilidad
+	
+
+	Comentario
+	
+
+	
+
+UC - 
+	
+
+	Objetivos Asociados
+	
+
+	Requisitos Asociados
+	
+
+	Descripción
+	
+
+	Precondición
+	
+
+	Secuencia Normal
+	Paso
+	Acción
+	
+
+	1
+	
+
+	2
+	
+
+	3
+	
+
+	4
+	
+
+	5
+	
+
+	Postcondición
+	
+
+	Excepción
+	Paso
+	Acción
+	
+
+	-
+	-
+	Rendimiento
+	Paso 
+	Cota de Tiempo
+	
+
+	
+
+	
+
+	Frecuencia 
+	
+
+	Estabilidad
+	
+
+	Comentario
+	
+
+	
+
+UC - 
+	
+
+	Objetivos Asociados
+	
+
+	Requisitos Asociados
+	
+
+	Descripción
+	
+
+	Precondición
+	
+
+	Secuencia Normal
+	Paso
+	Acción
+	
+
+	1
+	
+
+	2
+	
+
+	3
+	
+
+	4
+	
+
+	5
+	
+
+	Postcondición
+	
+
+	Excepción
+	Paso
+	Acción
+	
+
+	-
+	-
+	Rendimiento
+	Paso 
+	Cota de Tiempo
+	
+
+	
+
+	
+
+	Frecuencia 
+	
+
+	Estabilidad
+	
+
+	Comentario
+	
+
+	
+
+Matriz de Rastreabilidad
+
+
+Objetivo
+	Descripción resumida
+	Requisitos Funcionales Asociados
+	Requisitos No Funcionales Asociados
+	OBJ–01
+	Gestión integral del salón
+	RF–01 RF–05 
+RF–06 RF–07
+	RNF–01, RNF–02, RNF–04, RNF–07
+	OBJ–02
+	Rutinas personalizadas
+	RF–02 RF–03
+ RF–11
+	RNF–01, RNF–02
+	OBJ–03
+	Recordatorios automáticos
+	RF–03 RF–05
+RF–10 RF–11 
+	RNF–01, RNF–04, RNF–09
+	OBJ–04
+	Solicitud y gestión de turnos
+	RF–05 RF–06
+RF–10 
+	RNF–02, RNF–04
+	OBJ–05
+	Contenido educativo
+	RF–09 
+	RNF–01, RNF–07
+	OBJ–06
+	Catálogo de productos capilares
+	RF–07 RF–08 
+	RNF–01, RNF–07, RNF–09
+	OBJ–07
+	Gestión automatizada de stock
+	RF–07 RF–11
+	RNF–02, RNF–08
+	OBJ–08
+	Reportes estadísticos
+	RF–12 RF–06 RF–07
+	RNF–02, RNF–08, RNF–10
+	OBJ–09
+	Auditoría y trazabilidad
+	RF–04 RF–05  RF–07 RF–10
+RF–11 RF–12
+	RNF–03, RNF–06, RNF–08, RNF–10
+	OBJ–10
+	Configuración de datos del salón
+	RF–01 RF–05
+RF–07 RF–09 
+	RNF–05, RNF–06
+	
+
+
+
+OBJ / RF
+	RF–01 
+	RF–02 
+	RF–03 
+	RF–04 
+	RF–05 
+	RF–06 
+	RF–07 
+	RF–08 
+	RF–09 
+	RF–10 
+	RF–
+11 
+	RF–
+12 
+	OBJ–01 
+	✔️
+	
+
+	
+
+	
+
+	✔️
+	✔️
+	✔️
+	
+
+	
+
+	
+
+	
+
+	
+
+	OBJ–02 
+	
+
+	✔️
+	✔️
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	✔️
+	
+
+	OBJ–03 
+	
+
+	
+
+	✔️
+	
+
+	✔️
+	
+
+	
+
+	
+
+	
+
+	✔️
+	✔️
+	
+
+	OBJ–04 
+	
+
+	
+
+	
+
+	
+
+	✔️
+	✔️
+	
+
+	
+
+	
+
+	✔️
+	
+
+	
+
+	OBJ–05 
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	✔️
+	
+
+	
+
+	
+
+	OBJ–06 
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	✔️
+	✔️
+	
+
+	
+
+	
+
+	
+
+	OBJ–07
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	✔️
+	
+
+	
+
+	
+
+	✔️
+	
+
+	OBJ–08 
+	
+
+	
+
+	
+
+	
+
+	
+
+	✔️
+	✔️
+	
+
+	
+
+	
+
+	
+
+	✔️
+	OBJ–09 
+	
+
+	
+
+	
+
+	✔️
+	✔️
+	
+
+	✔️
+	
+
+	
+
+	✔️
+	✔️
+	✔️
+	OBJ–10 
+	✔️
+	
+
+	
+
+	
+
+	✔️
+	
+
+	✔️
+	
+
+	✔️
+	
+
+	
+
+	
+
+	
+
+________________
+
+
+FASE II - ANÁLISIS
+
+
+
+
+Modelo Conceptual
+Lista de Conceptos candidatos
+Personas y Roles
+   * Cliente / Clienta
+   * Profesional (Yanina)
+   * Administrador/a
+   * Personal (empleadas, asistentes)
+   * Rol / Permiso
+Identidad y Sesión
+   * Usuario
+   * Autenticación (login/logout)
+   * Contraseña
+   * Recuperación de contraseña
+   * Preferencias de notificación
+Cabello y Perfil
+   * Perfil capilar
+   * Tipo de cabello (lacio, ondulado, rizado, afro)
+   * Grosor (fino, medio, grueso)
+   * Porosidad (baja, media, alta)
+   * Estado del cabello (saludable, seco, dañado, muy seco)
+   * Cuero cabelludo (seco, normal, graso)
+   * Diagnóstico capilar
+   * Objetivos de cuidado (color, reparación, hidratación)
+   * Alergias / Observaciones
+Servicios
+   * Servicio
+   * Categoría de servicio (coloración, tratamiento, corte, etc.)
+   * Duración estándar
+   * Fórmula técnica base
+   * Insumos requeridos
+   * Contraindicaciones
+   * Historial de servicios
+
+Turnos y Agenda
+      * Turno
+      * Agenda
+      * Disponibilidad horaria
+      * Estado del turno (pendiente, confirmado, cancelado, no-show)
+      * Seña (pago anticipado parcial)
+      * Lista de espera
+      * Motivo de cancelación
+      * Reprogramación de turno
+Rutinas
+      * Rutina de cuidado
+      * Paso de rutina
+      * Frecuencia
+      * Estado de rutina (activa, vencida)
+      * Versión de rutina
+      * Historial de rutinas
+Productos y Promociones
+      * Producto
+      * Catálogo de productos
+      * Precio
+      * Stock
+      * SKU
+      * Marca
+      * Promoción
+      * Beneficio
+      * Pack de servicios/productos
+      * Promoción automática (last-minute, combos, etc.)
+Inventario y Equipamiento
+      * Inventario
+      * Insumo
+      * Movimiento de stock
+      * Equipamiento (silla, lavacabezas, cabina)
+      * Estado de equipamiento (disponible, en uso, fuera de servicio)
+Contenido y Comunicación
+      * Contenido educativo (artículo, video, imagen)
+      * Notificación
+      * Mensaje
+      * Canal (in-app, email, WhatsApp)
+      * Integración externa (WhatsApp, correo)
+Gestión interna
+      * Personal del salón
+      * Horario laboral del personal
+      * Rol de personal (colorista, asistente)
+      * Habilitación / Skill
+Procesos y Automatizaciones
+      * Generación automática de rutina inicial
+      * Recomendación de turnos
+      * Generador automático de promociones
+      * Asistente de reprogramación
+Datos transversales
+      * Reporte / Métrica
+      * Auditoría / Log de cambios
+      * Estado (activo/inactivo, publicado/borrador)
+      * Archivo/URL (contenido, comprobante seña, imágenes)
+Lista de Conceptos Idóneos
+
+
+      * Usuario
+      * PerfilCapilar
+      * Servicio
+      * Agenda/Disponibilidad
+      * Turno
+      * Seña
+      * Rutina
+      * Producto
+      * Promoción
+      * ContenidoEducativo
+      * HistorialTecnico
+      * FormulaTecnica
+      * Inventario
+      * Notificación
+      * IntegraciónExterna
+      * Reporte/Métrica
+      * ListaDeEspera
+      * Equipamiento
+      * Personal
+      * HorarioLaboral
+      * PlantillaRutina
+      * PasoPlantilla
+      * RutinaCliente
+      * PasoRutinaCliente
+
+
+Descripción de los Conceptos
+
+
+Símbolo
+	Usuario
+	Intención
+	Representar a cualquier persona autenticada que interactúa con el sistema bajo un rol definido.
+	Extensión
+	Incluye clientes, profesional y administrador; excluye visitantes no registrados.
+	
+
+Símbolo
+	PerfilCapilar
+	Intención
+	Registrar el diagnóstico capilar (tipo, grosor, porosidad, cuero cabelludo, estado) para personalizar cuidados y rutinas.
+	Extensión
+	Un perfil vigente por cliente, con posibilidad de histórico; no contempla resultados médicos externos.
+	
+
+Símbolo
+	Servicio
+	Intención
+	Modelar las prestaciones ofrecidas por el salón (ej. corte, coloración, tratamientos) con su duración, requisitos e insumos.
+	Extensión
+	Solo servicios que presta Bohemia Hair; no abarca servicios de terceros.
+	
+
+Símbolo
+	Agenda/Disponibilidad
+	Intención
+	Representar los slots/horarios operativos y excepciones que permiten asignar turnos.
+	Extensión
+	Slots generados a partir de los horarios laborales y recursos; no se usan para eventos ajenos al salón.
+	
+
+Símbolo
+	Turno
+	Intención
+	Reservar un servicio en un horario determinado, gestionando estados (pendiente, confirmado, cancelado, no-show).
+	Extensión
+	Turnos gestionados en el sistema del salón; no aplica a reservas externas.
+	
+
+Símbolo
+	Seña
+	Intención
+	Registrar pagos anticipados y su política de confirmación/vencimiento asociados a un turno.
+	Extensión
+	Señales parciales o totales por turno; no reemplaza el cobro final del servicio.
+	
+
+Símbolo
+	Rutina
+	Intención
+	Concepto paraguas para rutinas de cuidado que orientan el uso del cabello fuera del salón.
+	Extensión
+	Se concreta en Plantillas y RutinasCliente; no incluye generación automática desde cero.
+	
+
+Símbolo
+	Producto
+	Intención
+	Representar ítems del catálogo digital con SKU, marca, precio, stock y compatibilidades.
+	Extensión
+	Solo productos capilares vendidos/promocionados por el salón
+	
+
+Símbolo
+	Promoción
+	Intención
+	Gestionar reglas de descuento o combos con vigencia y estado sobre productos/servicios.
+	Extensión
+	Promociones simples o automáticas (similitud de marca/categoría), packs y last-minute.
+	
+
+Símbolo
+	ContenidoEducativo
+	Intención
+	Publicar piezas informativas (artículos, tips, videos, imágenes) para educar y fidelizar clientes.
+	Extensión
+	Contenidos creados por el salón; pueden relacionarse con productos o rutinas.
+	
+
+Símbolo
+	HistorialTecnico
+	Intención
+	Guardar resultados técnicos de atenciones (fórmulas, tiempos, observaciones, fotos)
+	Extensión
+	Un historial por cada turno/servicio realizado; no sustituye historias clínicas.
+	
+
+Símbolo
+	FormulaTecnica
+	Intención
+	Versionar composiciones empleadas (proporciones, productos, técnicas de coloración).
+	Extensión
+	Asociada a servicios/turnos; puede reutilizarse como base para futuros servicios.
+	
+
+Símbolo
+	Inventario
+	Intención
+	Controlar existencias, mínimos y movimientos de insumos y productos
+	Extensión
+	Stock del salón; soporta consumos automáticos por servicios y reposiciones.
+	
+
+Símbolo
+	Notificación
+	Intención
+	Informar eventos relevantes (recordatorios, cambios de rutina, promociones) por diferentes canales.
+	Extensión
+	Mensajes in-app, email o WhatsApp; con estados de entrega y referencia al evento origen.
+	
+
+Símbolo
+	IntegraciónExterna
+	Intención
+	Configurar proveedores/canales de mensajería (WhatsApp, correo) y sus credenciales/logs.
+	Extensión
+	Parámetros y auditoría de intercambios; no almacena contenido privado del proveedor.
+	
+
+Símbolo
+	Reporte/Metrica
+	Intención
+	Consolidar indicadores del negocio para análisis (turnos, ventas, rutinas, stock).
+	Extensión
+	Vistas y datasets agregados para reportes; no reemplaza registros transaccionales.
+	
+
+Símbolo
+	ListaDeEspera
+	Intención
+	Mantener pedidos de clientas para ocupar huecos por cancelación o reprogramación.
+	Extensión
+	Solicitudes con preferencias por servicio/franja; no garantiza asignación automática.
+	
+
+Símbolo
+	Equipamiento
+	Intención
+	.Modelar recursos físicos del salón (sillas, lavacabezas) con estados de disponibilidad.
+	Extensión
+	Recursos afectables a turnos/servicios; no incluye infraestructura no operativa.
+	
+
+Símbolo
+	Personal
+	Intención
+	Gestionar los miembros del staff y sus habilidades/roles operativos.
+	Extensión
+	Empleadas/os del salón; se vincula con agenda, turnos y servicios habilitados.
+	
+
+Símbolo
+	HorarioLaboral
+	Intención
+	Definir jornadas recurrentes y excepciones del personal para disponibilidad.
+	Extensión
+	Reglas por persona, con licencias/feriados; base para generar la Agenda.
+	
+
+Símbolo
+	PlantillaRutina
+	Intención
+	.Definir rutinas “modelo” creadas por la profesional (objetivo, pasos, productos sugeridos, versión).
+	Extensión
+	Conjunto curado visible a clientas; no incluye personalizaciones individuales.
+	
+
+Símbolo
+	PasoPlantilla 
+	Intención
+	Describir acciones ordenadas y frecuencias que componen una PlantillaRutina.
+	Extensión
+	Pasos estándar de la plantilla; pueden referenciar productos sugeridos.
+	
+
+Símbolo
+	RutinaCliente
+	Intención
+	Instanciar en el perfil de una clienta una rutina derivada de una versión de plantilla.
+	Extensión
+	Rutinas guardadas/descargables, con estado (activa/vencida) y trazabilidad de versión.
+	
+
+Símbolo
+	PasoRutinaCliente
+	Intención
+	Congelar los pasos concretos asignados a la cliente para seguimiento y descarga offline.
+	Extensión
+	Pasos efectivos de la rutina asignada; pueden diferir de la plantilla por personalización.
+	
+
+
+
+Relaciones entre los conceptos
+
+
+
+
+Concepto
+	Ejemplo
+	Usuario - PerfilCapilar
+	Un Usuario (cliente) tiene asociado un PerfilCapilar vigente con su diagnóstico de cabello.
+	
+
+Concepto
+	Ejemplo
+	Usuario - Turno
+	Un Usuario (cliente) puede reservar múltiples Turnos.
+	
+
+Concepto
+	Ejemplo
+	Usuario – RutinaCliente
+	Un Usuario (cliente) puede guardar varias RutinasCliente en su perfil
+	
+
+Concepto
+	Ejemplo
+	Usuario – Notificación
+	Un Usuario recibe múltiples Notificaciones (recordatorios, cambios de rutina, promos).
+	
+
+Concepto
+	Ejemplo
+	Usuario – Seña
+	Un Usuario (cliente) puede realizar una Seña asociada a un Turno.
+	
+
+Concepto
+	Ejemplo
+	Servicio – Turno
+	Un Servicio se agenda en un Turno específico.
+	
+
+Concepto
+	Ejemplo
+	Servicio – Personal
+	Un Servicio solo puede ser realizado por Personal habilitado para esa técnica.
+	
+
+Concepto
+	Ejemplo
+	Servicio – FormulaTecnica
+	Un Servicio utiliza una o varias Fórmulas Técnicas.
+	
+
+Concepto
+	Ejemplo
+	Turno – Seña
+	Un Turno puede tener asociada una Seña de confirmación.
+	
+
+Concepto
+	Ejemplo
+	Turno – HistorialTecnico
+	Cada Turno realizado genera un HistorialTecnico con detalles del procedimiento.
+	
+
+Concepto
+	Ejemplo
+	Turno – Inventario
+	Un Turno consume insumos del Inventario en función del Servicio ejecutado.
+	
+
+Concepto
+	Ejemplo
+	Turno – Equipamiento
+	Un Turno puede requerir un Equipamiento (ej. lavacabezas) durante cierta franja.
+	
+
+Concepto
+	Ejemplo
+	Turno – ListaDeEspera
+	Una cancelación de Turno puede liberar un espacio para la ListaDeEspera.
+	
+
+Concepto
+	Ejemplo
+	Agenda/Disponibilidad – Turno
+	Cada slot de la Agenda puede asignarse a un Turno o quedar libre.
+	
+
+Concepto
+	Ejemplo
+	Agenda/Disponibilidad – HorarioLaboral
+	La Agenda se genera a partir de los HorariosLaborales del Personal.
+	
+
+Concepto
+	Ejemplo
+	PlantillaRutina – PasoPlantilla
+	Una PlantillaRutina está compuesta por varios PasoPlantilla.
+	
+
+Concepto
+	Ejemplo
+	PlantillaRutina – RutinaCliente
+	Una PlantillaRutina puede ser asignada a muchas RutinasCliente (con versión registrada).
+	
+
+Concepto
+	Ejemplo
+	RutinaCliente – PasoRutinaCliente
+	Cada RutinaCliente guarda la secuencia de PasoRutinaCliente concretos.
+	
+
+Concepto
+	Ejemplo
+	RutinaCliente – Producto
+	Una RutinaCliente puede recomendar Productos específicos para el cuidado.
+	
+
+Concepto
+	Ejemplo
+	Promoción – Producto
+	Una Promoción puede aplicarse a uno o varios Productos del catálogo.
+	
+
+Concepto
+	Ejemplo
+	Promoción – Servicio
+	Una Promoción puede incluir descuentos en ciertos Servicios.
+	
+
+Concepto
+	Ejemplo
+	Promoción – Notificación
+	Una Promoción publicada genera Notificaciones a los clientes.
+	
+
+Concepto
+	Ejemplo
+	ContenidoEducativo – Producto
+	Un ContenidoEducativo puede referenciar Productos relacionados (ej. tutorial con shampoo).
+	
+
+Concepto
+	Ejemplo
+	Reporte/Métrica – Servicio
+	Reportes incluyen métricas como cantidad de veces que se tomó un Servicio.
+	
+
+Concepto
+	Ejemplo
+	Reporte/Métrica – Producto
+	Reportes muestran productos más vendidos y stock crítico.
+	
+
+Concepto
+	Ejemplo
+	IntegraciónExterna – Notificación
+	Las Notificaciones pueden ser enviadas a través de integraciones (WhatsApp, email).
+	
+
+
+
+Descripción de los Atributos
+
+
+
+
+Concepto
+	Atributo - Descripción
+	Usuario
+	id_usuario – Identificador único del usuario.
+nombre, apellido – Datos personales básicos.
+email – Usado para autenticación y notificaciones.
+contraseña_hash – Contraseña en formato seguro.
+rol – Define permisos (Cliente, Profesional, Admin).
+telefono, redes_sociales – Contacto alternativo.
+fecha_nacimiento – Datos de perfil de cliente.
+created_at, updated_at – Auditoría de creación y actualización.
+	
+
+Concepto
+	Atributo - Descripción
+	PerfilCapilar
+	id_perfil – Identificador único del perfil.
+cliente_id – Relación con Usuario.
+tipo_cabello – {Lacio, Ondulado, Rizado, Afro}.
+grosor – {Fino, Medio, Grueso}.
+porosidad – {Baja, Media, Alta}.
+cuero_cabelludo – {Seco, Normal, Graso}.
+estado_cabello – {Muy saludable, Medio, Seco, Muy seco}.
+observaciones – Notas adicionales.
+fecha_diagnostico – Fecha del último diagnóstico
+	
+
+Concepto
+	Atributo - Descripción
+	Servicio
+	id_servicio – Identificador del servicio.
+nombre – Ej. “Balayage”, “Corte”.
+categoria – Clasificación (coloración, tratamiento, corte).
+descripcion – Detalle del servicio.
+duracion_estimada – En minutos/horas.
+precio_base – Tarifa inicial.
+requisitos – Condiciones previas.
+contraindicaciones – Restricciones médicas o técnicas.
+insumos_requeridos – Relación con Inventario
+	
+
+Concepto
+	Atributo - Descripción
+	Agenda/Disponibidad
+	id_slot – Identificador del bloque.
+fecha, hora_inicio, hora_fin – Franja del turno.
+estado – {Disponible, Ocupado, Bloqueado, Promocionable}.
+profesional_id – Relación con Personal.
+equipamiento_id – Relación con Equipamiento (si aplica).
+	
+
+Concepto
+	Atributo - Descripción
+	Turno
+	id_turno – Identificador de turno.
+cliente_id – Cliente que lo reservó.
+servicio_id – Servicio solicitado.
+fecha_hora – Momento de la cita.
+estado – {Pendiente, Confirmado, Cancelado, No-show}.
+canal_origen – Web, app, admin.
+motivo_cancelacion – Texto/enum.
+contador_reprogramaciones – Número de cambios.
+created_at, updated_at – Auditoría
+	
+
+Concepto
+	Atributo - Descripción
+	Seña
+	id_senia – Identificador único.
+turno_id – Relación con Turno.
+monto – Importe pagado como adelanto.
+estado – {Pendiente, Confirmada, Vencida}.
+deadline – Fecha/hora límite para confirmar la reserva.
+comprobante_url – Archivo digital del pago.
+created_at, updated_at – Auditoría.
+	
+
+Concepto
+	Atributo - Descripción
+	Rutina
+	id_rutina – Identificador general (cuando se la maneja como entidad abstracta).
+nombre – Nombre o título de la rutina.
+objetivo – Ej. Nutrición, Hidratación, Reparación.
+descripcion – Explicación breve.
+estado – {Activa, Vencida, Eliminada}.
+version – Número de versión actual.
+fecha_creacion, fecha_actualizacion – Auditoría.
+	
+
+Concepto
+	Atributo - Descripción
+	Producto
+	id_producto – Identificador único.
+sku – Código de stock.
+nombre – Nombre comercial.
+marca – Marca del producto.
+descripcion – Detalle corto.
+precio – Valor actual.
+stock_actual – Cantidad disponible.
+compatibilidades – Lista/enum (ej. con qué servicios/rutinas va).
+estado_publicacion – {Publicado, Oculto}.
+imagen_url – Foto del producto.
+	
+
+Concepto
+	Atributo - Descripción
+	Promoción
+	id_promocion – Identificador único.
+nombre – Título de la promo.
+descripcion – Explicación.
+tipo – {Pack, Combo, Last-minute, Descuento simple}.
+vigencia_desde, vigencia_hasta – Periodo de validez.
+estado – {Activa, Pausada, Finalizada}.
+condiciones – Texto/regla de aplicación.
+alcance – {Producto, Servicio, Ambos}.
+items_aplicados – Relación a Productos/Servicios incluidos.
+	
+
+Concepto
+	Atributo - Descripción
+	ContenidoEducativo
+	id_contenido – Identificador único.
+titulo – Nombre del contenido.
+descripcion – Resumen.
+tipo – {Artículo, Video, Imagen, Tip}.
+autor – Profesional que lo publica.
+fecha_publicacion – Fecha del alta.
+url_recurso – Enlace al contenido multimedia.
+visibilidad – {Publicado, Borrador}.
+metricas – Vistas, likes, descargas.
+	
+
+Concepto
+	Atributo - Descripción
+	HistorialTecnico
+	id_historial – Identificador único.
+turno_id – Relación con Turno realizado.
+servicio_id – Servicio aplicado.
+formula_id – Fórmula técnica usada.
+observaciones – Notas técnicas.
+tiempo_aplicacion – Duración real del procedimiento.
+imagenes_url – Evidencia fotográfica (opcional).
+fecha_registro – Fecha de carga.
+profesional_id – Quién realizó el servicio.
+	
+
+Concepto
+	Atributo - Descripción
+	FormulaTecnica
+	id_formula – Identificador único.
+nombre – Nombre de la fórmula (ej. Rubio miel, Balayage frío).
+version – Número de versión.
+componentes – Lista de productos e insumos usados.
+proporciones – Detalle de cantidades.
+observaciones – Notas adicionales.
+fecha_creacion – Auditoría de alta.
+	
+
+Concepto
+	Atributo - Descripción
+	Inventario
+	id_inventario – Identificador único.
+producto_id/insumo_id – Referencia al producto/insumo.
+stock_actual – Cantidad disponible.
+stock_minimo – Nivel de alerta.
+unidad_medida – Ej. ml, unidades.
+ubicacion – Estante o depósito.
+ultimo_movimiento – Fecha del último cambio.
+alerta – Indicador de stock bajo.
+	
+
+Concepto
+	Atributo - Descripción
+	Notificación
+	id_notificacion – Identificador único.
+usuario_id – Destinatario.
+tipo – {Recordatorio, Cambio rutina, Promo, Seña}…
+canal – {In-app, Email, WhatsApp}.
+titulo, mensaje – Contenido.
+estado – {Pendiente, Enviado, Leído}.
+fecha_envio – Cuándo se emitió.
+	
+
+Concepto
+	Atributo - Descripción
+	IntegraciónExterna
+	id_integracion – Identificador único.
+nombre_proveedor – Ej. WhatsApp, Gmail.
+credenciales – Tokens/keys de configuración.
+estado – {Activo, Inactivo}.
+logs – Registro de últimos envíos/errores.
+fecha_configuracion – Auditoría de alta.
+	
+
+Concepto
+	Atributo - Descripción
+	Reporte/Métrica
+	d_reporte – Identificador único.
+nombre – Título del reporte (ej. “Turnos confirmados por mes”).
+tipo – {Operativo, Comercial, Rutinas, Stock}.
+periodo – Intervalo de análisis (mensual, semanal, etc.).
+fuente_datos – Qué entidades alimentan el reporte.
+kpi_valor – Resultado numérico o porcentaje.
+fecha_generacion – Fecha de emisión.
+generado_por – Usuario o proceso automático que lo creó.
+	
+
+Concepto
+	Atributo - Descripción
+	ListaDeEspera
+	id_lista – Identificador único.
+cliente_id – Clienta que solicita.
+servicio_id – Servicio deseado.
+preferencia_horario – Franja deseada (mañana/tarde).
+estado – {Activa, Atendida, Cancelada}.
+fecha_solicitud – Fecha de ingreso.
+notificado – Flag si recibió aviso de disponibilidad.
+	
+
+Concepto
+	Atributo - Descripción
+	Equipamiento
+	id_equipo – Identificador único.
+nombre – Ej. “Lavacabezas 1”, “Silla corte”.
+tipo – {Silla, Lavacabezas, Cabina}.
+estado – {Disponible, En uso, Fuera de servicio}.
+ubicacion – Área del salón.
+capacidad – Opcional (si aplica).
+fecha_mantenimiento – Último mantenimiento.
+	
+
+Concepto
+	Atributo - Descripción
+	Personal
+	id_personal – Identificador único.
+nombre, apellido – Datos del empleado.
+rol – {Colorista, Asistente, Recepción}.
+habilidades – Lista de servicios que puede realizar.
+estado – {Activo, Inactivo}.
+fecha_alta – Ingreso al salón.
+usuario_id – Relación si también accede al sistema.
+	
+
+Concepto
+	Atributo - Descripción
+	HorarioLaboral
+	id_horario – Identificador único.
+personal_id – Relación con Personal.
+dia_semana – {Lunes…Domingo}.
+hora_inicio, hora_fin – Franja de trabajo.
+excepcion – Feriado/licencia (bool).
+vigencia_desde, vigencia_hasta – Rango de validez.
+	
+
+Concepto
+	Atributo - Descripción
+	PlantillaRutina
+	id_plantilla – Identificador único.
+nombre – Título de la rutina (ej. “Nutrición intensiva”).
+objetivo – Propósito (Nutrir, Reparar, Hidratar).
+descripcion – Explicación breve.
+version – Número de versión.
+estado – {Vigente, Obsoleta}.
+creada_por – Profesional que la definió.
+fecha_creacion, fecha_actualizacion – Auditoría.
+	
+
+Concepto
+	Atributo - Descripción
+	PasoPlantilla
+	id_paso – Identificador único.
+plantilla_id – Relación con PlantillaRutina.
+orden – Secuencia del paso.
+descripcion – Acción a realizar.
+frecuencia – Ej. “2 veces por semana”.
+producto_id – Producto sugerido (opcional).
+	
+
+Concepto
+	Atributo - Descripción
+	RutinaCliente
+	id_rutina_cliente – Identificador único.
+cliente_id – Relación con Usuario.
+plantilla_id – Plantilla de origen.
+version_asignada – Número de versión en la que se basó.
+estado – {Activa, Vencida, Eliminada}.
+fecha_asignacion – Cuándo se le otorgó.
+descargada – Flag si la clienta la descargó para offline.
+	
+
+Concepto
+	Atributo - Descripción
+	PasoRutinaCliente
+	id_paso_cliente – Identificador único.
+rutina_cliente_id – Relación con RutinaCliente.
+orden – Secuencia del paso.
+descripcion – Acción concreta asignada.
+frecuencia – Recomendación de uso.
+producto_id – Producto asignado (opcional).
+	
+
+Diagrama Conceptual
+  
+
+
+
+Comportamiento del Sistema
+Diagrama de Secuencia a nivel de Sistema            
+  
+Diagrama de Clase
+  
+
+ pág. 
+[a]Se agrego un comentario necesario para el catalogo de productos, destacando que las compras no se realizan internamente.
+[b]Modificar los objetivos: Que necesita hacer el sistema y como.
+[c]No puedo tener módulos con un solo artefacto.

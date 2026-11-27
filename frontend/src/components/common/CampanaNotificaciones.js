@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { confirmarAccion, notify } from '../../utils/notificaciones';
+import { IconBellOff, IconCalendar, IconCheckCircle, IconClock, IconFastForward, IconInfo, IconWarning } from './Icons';
 
 const CampanaNotificaciones = () => {
     const [notificaciones, setNotificaciones] = useState([]);
@@ -84,28 +85,14 @@ const CampanaNotificaciones = () => {
             setProcesando(prev => ({ ...prev, [notif.id]: true }));
             const token = localStorage.getItem('access_token');
 
-            // Opción 1: Si existe endpoint específico de aceptar notificación
-            try {
-                await axios.post(
-                    `http://127.0.0.1:8000/api/gestion/notificaciones/${notif.id}/aceptar/`,
-                    {},
-                    { headers: { 'Authorization': `Bearer ${token}` } }
-                );
-            } catch (err) {
-                // Si no existe ese endpoint, usamos el PATCH directo al turno            
-                if (turno_actual_id) {
-                    await axios.patch(
-                        `http://127.0.0.1:8000/api/gestion/turnos/${turno_actual_id}/`,
-                        {
-                            fecha: fecha_oferta,
-                            hora_inicio: hora_oferta
-                        },
-                        { headers: { 'Authorization': `Bearer ${token}` } }
-                    );
-                } else {
-                    throw new Error('ID de turno no encontrado en notificación');
-                }
+            if (!turno_actual_id) {
+                throw new Error('ID de turno no encontrado en notificación');
             }
+            await axios.post(
+                `http://127.0.0.1:8000/api/gestion/notificaciones/${notif.id}/aceptar/`,
+                {},
+                { headers: { 'Authorization': `Bearer ${token}` } }
+            );
 
             // Si llegamos aquí, el cambio fue exitoso
             notify.success("¡Turno adelantado correctamente!");
@@ -130,11 +117,15 @@ const CampanaNotificaciones = () => {
 
     // Función auxiliar para el color del icono según el tipo
     const getIconoTipo = (tipo) => {
-        switch(tipo) {
-            case 'alerta': return '🔴'; // Rojo para cancelaciones/urgente
-            case 'recordatorio': return '⏰';
-            case 'ADELANTO': return '⏩'; // Adelanto rápido
-            default: return 'ℹ️'; // Info normal
+        switch (tipo) {
+            case 'alerta':
+                return <IconWarning className="h-4 w-4 text-red-600" />;
+            case 'recordatorio':
+                return <IconClock className="h-4 w-4 text-amber-600" />;
+            case 'ADELANTO':
+                return <IconFastForward className="h-4 w-4 text-blue-600" />;
+            default:
+                return <IconInfo className="h-4 w-4 text-gray-500" />;
         }
     };
 
@@ -169,7 +160,9 @@ const CampanaNotificaciones = () => {
                     <div className="max-h-80 overflow-y-auto">
                         {notificaciones.length === 0 ? (
                             <div className="p-8 text-center text-gray-400">
-                                <p className="text-2xl mb-2">🔕</p>
+                                <div className="flex justify-center mb-2">
+                                    <IconBellOff className="h-8 w-8" />
+                                </div>
                                 <p className="text-sm">No tienes notificaciones.</p>
                             </div>
                         ) : (
@@ -182,7 +175,10 @@ const CampanaNotificaciones = () => {
                                     {/* Título y Mensaje */}
                                     <div className="flex justify-between items-start mb-1">
                                         <h4 className={`text-sm ${notif.estado === 'pendiente' ? 'font-bold text-gray-900' : 'font-semibold text-gray-600'}`}>
-                                            {getIconoTipo(notif.tipo)} {notif.titulo}
+                                            <span className="inline-flex items-center gap-2">
+                                                {getIconoTipo(notif.tipo)}
+                                                {notif.titulo}
+                                            </span>
                                         </h4>
                                         <span className="text-xs text-gray-400 whitespace-nowrap ml-2">
                                             {new Date(notif.fecha_envio).toLocaleDateString()}
@@ -199,7 +195,10 @@ const CampanaNotificaciones = () => {
                                     {notif.tipo === 'ADELANTO' && notif.datos_extra && notif.estado === 'pendiente' && (
                                         <div className="mt-3 bg-gradient-to-r from-blue-50 to-indigo-50 p-3 rounded border-2 border-blue-200">
                                             <p className="text-xs text-blue-800 mb-3 font-bold">
-                                                📅 Nueva fecha: <span className="text-blue-900">{notif.datos_extra.fecha_oferta}</span> a las <span className="text-blue-900">{notif.datos_extra.hora_oferta}</span>
+                                                <span className="inline-flex items-center gap-2">
+                                                    <IconCalendar className="h-4 w-4" />
+                                                    Nueva fecha: <span className="text-blue-900">{notif.datos_extra.fecha_oferta}</span> a las <span className="text-blue-900">{notif.datos_extra.hora_oferta}</span>
+                                                </span>
                                             </p>
                                             
                                             <div className="flex gap-2">
@@ -208,7 +207,15 @@ const CampanaNotificaciones = () => {
                                                     disabled={procesando[notif.id]}
                                                     className="flex-1 bg-green-600 text-white text-xs font-bold py-2 rounded hover:bg-green-700 shadow-sm transition disabled:bg-gray-400 disabled:cursor-not-allowed"
                                                 >
-                                                    {procesando[notif.id] ? '⏳ Procesando...' : '✅ ACEPTAR'}
+                                                    {procesando[notif.id] ? (
+                                                        <span className="inline-flex items-center gap-2">
+                                                            <IconClock className="h-3 w-3" /> Procesando...
+                                                        </span>
+                                                    ) : (
+                                                        <span className="inline-flex items-center gap-2">
+                                                            <IconCheckCircle className="h-3 w-3" /> Aceptar
+                                                        </span>
+                                                    )}
                                                 </button>
                                                 <button 
                                                     onClick={() => marcarComoLeida(notif.id)}
@@ -223,9 +230,22 @@ const CampanaNotificaciones = () => {
                                     
                                     {/* Si es ADELANTO pero ya fue aceptada/leída */}
                                     {notif.tipo === 'ADELANTO' && notif.estado === 'leido' && (
-                                        <div className="mt-3 bg-green-50 p-3 rounded border-2 border-green-200">
-                                            <p className="text-xs text-green-700 font-bold">
-                                                ✅ Turno adelantado correctamente
+                                        <div className={`mt-3 p-3 rounded border-2 ${
+                                            notif.datos_extra?.oferta_cerrada
+                                                ? 'bg-amber-50 border-amber-200'
+                                                : 'bg-green-50 border-green-200'
+                                        }`}>
+                                            <p className={`text-xs font-bold ${
+                                                notif.datos_extra?.oferta_cerrada
+                                                    ? 'text-amber-700'
+                                                    : 'text-green-700'
+                                            }`}>
+                                                <span className="inline-flex items-center gap-2">
+                                                    <IconCheckCircle className="h-3 w-3" />
+                                                    {notif.datos_extra?.oferta_cerrada
+                                                        ? 'Otro cliente ya acepto el adelantamiento.'
+                                                        : 'Turno adelantado correctamente'}
+                                                </span>
                                             </p>
                                         </div>
                                     )}

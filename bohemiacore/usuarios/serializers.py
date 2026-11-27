@@ -1,21 +1,235 @@
 from rest_framework import serializers
 from django.db import transaction
+from django.core.exceptions import ValidationError
 from .models import Usuario, Cliente
 from django.contrib.auth.password_validation import validate_password
+import re
 from gestion.models import (
     TipoCabello,
     GrosorCabello,
     EstadoGeneral,
     PorosidadCabello,
     CueroCabelludo,
-    Servicio 
+    DiagnosticoCapilar,
+    Servicio,
+    VigenciaCampoPerfilCapilar,
 )
+from usuarios.access_services import assign_initial_client_role
+from usuarios.roles import BusinessPermission, get_business_role
+from gestion.effective_access import build_session_capabilities
+from usuarios.contact_normalization import (
+    InvalidArgentinePhone,
+    normalize_argentine_phone,
+)
+
+
+class StrictInputFieldsMixin:
+    """Reject fields outside an explicit command contract."""
+
+    def to_internal_value(self, data):
+        if hasattr(data, 'keys'):
+            unexpected_fields = set(data.keys()) - set(self.fields)
+            if unexpected_fields:
+                raise serializers.ValidationError({
+                    field: ['Este campo no está permitido.']
+                    for field in sorted(unexpected_fields)
+                })
+        return super().to_internal_value(data)
+
+
+class AdminClientAccountCreateCommandSerializer(
+    StrictInputFieldsMixin,
+    serializers.Serializer,
+):
+    first_name = serializers.CharField(
+        max_length=150,
+        allow_blank=False,
+        trim_whitespace=True,
+    )
+    last_name = serializers.CharField(
+        max_length=150,
+        allow_blank=False,
+        trim_whitespace=True,
+    )
+    email = serializers.EmailField()
+    password_temporal = serializers.CharField(
+        write_only=True,
+        trim_whitespace=False,
+    )
+    telefono = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=20,
+        trim_whitespace=True,
+    )
+    zona = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=100,
+        trim_whitespace=True,
+    )
+    motivo = serializers.CharField(
+        min_length=3,
+        max_length=500,
+        allow_blank=False,
+        trim_whitespace=True,
+    )
+
+    def validate_password_temporal(self, value):
+        try:
+            validate_password(value)
+        except ValidationError as exc:
+            raise serializers.ValidationError(exc.messages) from exc
+        return value
+
+
+class AdminAdministratorAccountCreateCommandSerializer(
+    StrictInputFieldsMixin,
+    serializers.Serializer,
+):
+    first_name = serializers.CharField(
+        max_length=150,
+        allow_blank=False,
+        trim_whitespace=True,
+    )
+    last_name = serializers.CharField(
+        max_length=150,
+        allow_blank=False,
+        trim_whitespace=True,
+    )
+    email = serializers.EmailField()
+    password_temporal = serializers.CharField(
+        write_only=True,
+        trim_whitespace=False,
+    )
+    motivo = serializers.CharField(
+        min_length=3,
+        max_length=500,
+        allow_blank=False,
+        trim_whitespace=True,
+    )
+
+    def validate_password_temporal(self, value):
+        try:
+            validate_password(value)
+        except ValidationError as exc:
+            raise serializers.ValidationError(exc.messages) from exc
+        return value
+
+
+class WalkInClientCreateCommandSerializer(
+    StrictInputFieldsMixin,
+    serializers.Serializer,
+):
+    first_name = serializers.CharField(max_length=150, trim_whitespace=True)
+    last_name = serializers.CharField(max_length=150, trim_whitespace=True)
+    email = serializers.EmailField(required=False, allow_null=True, allow_blank=True)
+    telefono = serializers.CharField(required=False, allow_blank=True, max_length=20)
+    zona = serializers.CharField(required=False, allow_blank=True, max_length=100)
+    motivo = serializers.CharField(min_length=3, max_length=500)
+    medio_alta = serializers.ChoiceField(
+        choices=('PRESENCIAL',),
+        default='PRESENCIAL',
+    )
+    duplicate_resolution = serializers.ChoiceField(
+        choices=('USE_EXISTING', 'CREATE_DISTINCT'),
+        required=False,
+    )
+    candidate_client_id = serializers.IntegerField(min_value=1, required=False)
+    reviewed_candidate_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        required=False,
+        allow_empty=True,
+    )
+    duplicate_reason = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=500,
+    )
+
+
+class WebAccessClaimRequestSerializer(
+    StrictInputFieldsMixin,
+    serializers.Serializer,
+):
+    email = serializers.EmailField()
+
+
+class WebAccessClaimConfirmSerializer(
+    StrictInputFieldsMixin,
+    serializers.Serializer,
+):
+    token = serializers.CharField(max_length=200)
+    password = serializers.CharField(write_only=True, trim_whitespace=False)
+    password2 = serializers.CharField(write_only=True, trim_whitespace=False)
+
+    def validate(self, attrs):
+        if attrs['password'] != attrs['password2']:
+            raise serializers.ValidationError({
+                'password': ['Las contraseñas no coinciden.'],
+            })
+        return attrs
+
+
+class CurrentSessionUserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Usuario
+        fields = (
+            'id',
+            'email',
+            'first_name',
+            'last_name',
+            'is_active',
+            'web_access_status',
+        )
+        read_only_fields = fields
+
+
+class CurrentSessionSerializer(serializers.Serializer):
+    """Read-only context for the currently authenticated SPA session."""
+
+    user = CurrentSessionUserSerializer(source='*', read_only=True)
+    business_role = serializers.SerializerMethodField()
+    permissions = serializers.SerializerMethodField()
+    profiles = serializers.SerializerMethodField()
+    capabilities = serializers.SerializerMethodField()
+
+    def get_business_role(self, obj):
+        return get_business_role(obj)
+
+    def get_permissions(self, obj):
+        # Django superusers receive every registered permission; the
+        # intersection keeps the session contract limited to business access.
+        canonical_permissions = set(BusinessPermission.ALL)
+        return sorted(obj.get_all_permissions() & canonical_permissions)
+
+    def get_profiles(self, obj):
+        cliente = getattr(obj, 'cliente', None)
+        personal = getattr(obj, 'perfil_profesional', None)
+
+        return {
+            'cliente': {
+                'exists': cliente is not None,
+                'id': cliente.pk if cliente is not None else None,
+                'active': cliente.activo if cliente is not None else None,
+            },
+            'personal': {
+                'exists': personal is not None,
+                'id': personal.pk if personal is not None else None,
+                'active': personal.activo if personal is not None else None,
+                'function_role': personal.rol if personal is not None else None,
+            },
+        }
+
+    def get_capabilities(self, obj):
+        return build_session_capabilities(obj)
+
 
 class UsuarioPerfilReadSerializer(serializers.ModelSerializer):
     """
     Serializer de "solo lectura" (plano) para MOSTRAR el perfil.
     """
-    email = serializers.EmailField()
+    email = serializers.EmailField(allow_null=True)
     first_name = serializers.CharField()
     last_name = serializers.CharField()
     
@@ -25,6 +239,7 @@ class UsuarioPerfilReadSerializer(serializers.ModelSerializer):
     fecha_nacimiento = serializers.SerializerMethodField()
     sexo = serializers.SerializerMethodField()
     redes = serializers.SerializerMethodField()
+    productos_actuales = serializers.SerializerMethodField()
     
     # Campos con los IDs (para actualización)
     tipo_cabello = serializers.SerializerMethodField()
@@ -32,6 +247,12 @@ class UsuarioPerfilReadSerializer(serializers.ModelSerializer):
     porosidad_cabello = serializers.SerializerMethodField()
     cuero_cabelludo = serializers.SerializerMethodField()
     estado_general = serializers.SerializerMethodField()
+    tipo_cabello_id = serializers.SerializerMethodField()
+    grosor_cabello_id = serializers.SerializerMethodField()
+    porosidad_cabello_id = serializers.SerializerMethodField()
+    cuero_cabelludo_id = serializers.SerializerMethodField()
+    estado_general_id = serializers.SerializerMethodField()
+    perfil_capilar = serializers.SerializerMethodField()
     historial_servicios = serializers.SerializerMethodField()
 
     class Meta:
@@ -40,7 +261,9 @@ class UsuarioPerfilReadSerializer(serializers.ModelSerializer):
             'email', 'first_name', 'last_name', 'zona', 'numero', 'fecha_nacimiento',
             'sexo', 'redes','is_staff', 'tipo_cabello', 'grosor_cabello',
             'porosidad_cabello', 'cuero_cabelludo', 'estado_general',
-            'historial_servicios'
+            'tipo_cabello_id', 'grosor_cabello_id', 'porosidad_cabello_id',
+            'cuero_cabelludo_id', 'estado_general_id', 'perfil_capilar',
+            'productos_actuales', 'historial_servicios'
         ]
     
     def get_zona(self, obj):
@@ -57,6 +280,9 @@ class UsuarioPerfilReadSerializer(serializers.ModelSerializer):
     
     def get_redes(self, obj):
         return obj.cliente.redes if hasattr(obj, 'cliente') else None
+
+    def get_productos_actuales(self, obj):
+        return obj.cliente.productos_actuales if hasattr(obj, 'cliente') else None
     
     def get_tipo_cabello(self, obj):
         if hasattr(obj, 'cliente') and obj.cliente.tipo_cabello:
@@ -82,6 +308,63 @@ class UsuarioPerfilReadSerializer(serializers.ModelSerializer):
         if hasattr(obj, 'cliente') and obj.cliente.estado_general:
             return obj.cliente.estado_general.nombre
         return None
+
+    @staticmethod
+    def _get_hair_id(obj, field):
+        cliente = getattr(obj, 'cliente', None)
+        return getattr(cliente, f'{field}_id', None) if cliente else None
+
+    def get_tipo_cabello_id(self, obj):
+        return self._get_hair_id(obj, 'tipo_cabello')
+
+    def get_grosor_cabello_id(self, obj):
+        return self._get_hair_id(obj, 'grosor_cabello')
+
+    def get_porosidad_cabello_id(self, obj):
+        return self._get_hair_id(obj, 'porosidad_cabello')
+
+    def get_cuero_cabelludo_id(self, obj):
+        return self._get_hair_id(obj, 'cuero_cabelludo')
+
+    def get_estado_general_id(self, obj):
+        return self._get_hair_id(obj, 'estado_general')
+
+    def get_perfil_capilar(self, obj):
+        cliente = getattr(obj, 'cliente', None)
+        if cliente is None:
+            return {}
+        states = {
+            state.campo: state
+            for state in VigenciaCampoPerfilCapilar.objects.filter(
+                cliente=cliente
+            ).select_related('diagnostico_fuente', 'actor')
+        }
+        result = {}
+        for field in (
+            'tipo_cabello',
+            'grosor_cabello',
+            'porosidad_cabello',
+            'cuero_cabelludo',
+            'estado_general',
+        ):
+            value = getattr(cliente, field)
+            state = states.get(field)
+            result[field] = {
+                'id': value.pk if value else None,
+                'nombre': value.nombre if value else None,
+                'procedencia': (
+                    state.procedencia
+                    if state is not None
+                    else DiagnosticoCapilar.Procedencia.DESCONOCIDO
+                ),
+                'diagnostico_fuente_id': (
+                    state.diagnostico_fuente_id if state is not None else None
+                ),
+                'actualizado_en': (
+                    state.actualizado_en if state is not None else None
+                ),
+            }
+        return result
     
     def get_historial_servicios(self, obj):
         if hasattr(obj, 'cliente'):
@@ -142,44 +425,83 @@ class UsuarioPerfilUpdateSerializer(serializers.ModelSerializer):
 
     def to_internal_value(self, data):
         # Mapeo de nombres del frontend al modelo
-        if 'porosidad' in data and 'porosidad_cabello' not in data:
-            data['porosidad_cabello'] = data.pop('porosidad')
-        if 'grosor' in data and 'grosor_cabello' not in data:
-            data['grosor_cabello'] = data.pop('grosor')
+        normalized_data = data.copy()
+        if 'porosidad' in normalized_data and 'porosidad_cabello' not in normalized_data:
+            normalized_data['porosidad_cabello'] = normalized_data.pop('porosidad')
+        if 'grosor' in normalized_data and 'grosor_cabello' not in normalized_data:
+            normalized_data['grosor_cabello'] = normalized_data.pop('grosor')
         
-        return super().to_internal_value(data)
+        return super().to_internal_value(normalized_data)
 
 
     @transaction.atomic
     def update(self, instance, validated_data):
+        from gestion.hair_profile_services import record_client_self_report
+
+        hair_data = {
+            field: validated_data.pop(field)
+            for field in (
+                'tipo_cabello',
+                'grosor_cabello',
+                'porosidad_cabello',
+                'cuero_cabelludo',
+                'estado_general',
+            )
+            if field in validated_data
+        }
         # 1. Extraer campos del Usuario
         instance.first_name = validated_data.get('first_name', instance.first_name)
         instance.last_name = validated_data.get('last_name', instance.last_name)
-        instance.save()
+        instance.save(update_fields=['first_name', 'last_name'])
 
         # 2. Preparar datos para el Cliente
         cliente = instance.cliente
         
         # Mapeo de campos del Cliente
         cliente.zona = validated_data.get('zona', cliente.zona)
-        cliente.numero = validated_data.get('numero', cliente.numero)
+        if 'numero' in validated_data:
+            numero = validated_data['numero'].strip()
+            cliente.numero = numero or None
+            if numero:
+                try:
+                    cliente.numero_normalizado = normalize_argentine_phone(numero)
+                except InvalidArgentinePhone as exc:
+                    raise serializers.ValidationError({
+                        'numero': [str(exc)],
+                    }) from exc
+                cliente.numero_normalizacion_estado = (
+                    Cliente.PhoneNormalizationStatus.VALID
+                )
+            else:
+                cliente.numero_normalizado = None
+                cliente.numero_normalizacion_estado = (
+                    Cliente.PhoneNormalizationStatus.LEGACY_UNKNOWN
+                )
         cliente.fecha_nacimiento = validated_data.get('fecha_nacimiento', cliente.fecha_nacimiento)
         cliente.sexo = validated_data.get('sexo', cliente.sexo)
         cliente.redes = validated_data.get('redes', cliente.redes)
-        
-        # Relaciones ForeignKey
-        if 'tipo_cabello' in validated_data:
-            cliente.tipo_cabello = validated_data['tipo_cabello']
-        if 'grosor_cabello' in validated_data:
-            cliente.grosor_cabello = validated_data['grosor_cabello']
-        if 'porosidad_cabello' in validated_data:
-            cliente.porosidad_cabello = validated_data['porosidad_cabello']
-        if 'cuero_cabelludo' in validated_data:
-            cliente.cuero_cabelludo = validated_data['cuero_cabelludo']
-        if 'estado_general' in validated_data:
-            cliente.estado_general = validated_data['estado_general']
-        
-        cliente.save()
+        cliente.productos_actuales = validated_data.get(
+            'productos_actuales',
+            cliente.productos_actuales,
+        )
+        cliente.save(update_fields=[
+            'zona',
+            'numero',
+            'numero_normalizado',
+            'numero_normalizacion_estado',
+            'fecha_nacimiento',
+            'sexo',
+            'redes',
+            'productos_actuales',
+            'fecha_actualizacion',
+        ])
+        if hair_data:
+            record_client_self_report(
+                actor=instance,
+                values=hair_data,
+                reason='Actualización declarada por el Cliente desde su perfil.',
+            )
+            cliente.refresh_from_db()
 
         return instance
 
@@ -190,7 +512,7 @@ class UsuarioDetalleSerializer(serializers.ModelSerializer):
         fields = ['id', 'email', 'first_name', 'last_name']
 
 
-class RegistroSerializer(serializers.ModelSerializer):
+class RegistroSerializer(StrictInputFieldsMixin, serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=True, style={'input_type': 'password'})
     password2 = serializers.CharField(write_only=True, required=True, style={'input_type': 'password'})
     
@@ -242,19 +564,52 @@ class RegistroSerializer(serializers.ModelSerializer):
         }
 
     def to_internal_value(self, data):
-        # Mapeo de nombres del frontend al modelo
-        if 'porosidad' in data and 'porosidad_cabello' not in data:
-            data['porosidad_cabello'] = data.pop('porosidad')
-        if 'grosor' in data and 'grosor_cabello' not in data:
-            data['grosor_cabello'] = data.pop('grosor')
+        # Preserve the public aliases without mutating request.data.
+        normalized_data = data.copy()
+        if 'porosidad' in normalized_data:
+            if 'porosidad_cabello' not in normalized_data:
+                normalized_data['porosidad_cabello'] = normalized_data[
+                    'porosidad'
+                ]
+            normalized_data.pop('porosidad')
+        if 'grosor' in normalized_data:
+            if 'grosor_cabello' not in normalized_data:
+                normalized_data['grosor_cabello'] = normalized_data['grosor']
+            normalized_data.pop('grosor')
         
-        return super().to_internal_value(data)
+        return super().to_internal_value(normalized_data)
 
     def validate(self, attrs):
         if attrs['password'] != attrs['password2']:
             raise serializers.ValidationError({"password": "Las contraseñas no coinciden."})
+
+        password = attrs['password']
+        if not re.search(r'[A-Za-z]', password):
+            raise serializers.ValidationError({"password": "La contraseña debe incluir al menos una letra."})
+        if not re.search(r'\d', password):
+            raise serializers.ValidationError({"password": "La contraseña debe incluir al menos un número."})
+        if not re.search(r'[^A-Za-z0-9]', password):
+            raise serializers.ValidationError({"password": "La contraseña debe incluir al menos un signo especial."})
+
         validate_password(attrs['password'])
         return attrs
+
+    def validate_email(self, value):
+        normalized = Usuario.objects.normalize_email(value.strip())
+        if Usuario.objects.filter(email__iexact=normalized).exists():
+            raise serializers.ValidationError(
+                'Ya existe un Usuario con este email.'
+            )
+        return normalized
+
+    def validate_numero(self, value):
+        if not value:
+            return value
+        try:
+            normalize_argentine_phone(value)
+        except InvalidArgentinePhone as exc:
+            raise serializers.ValidationError(str(exc)) from exc
+        return value.strip()
 
     @transaction.atomic
     def create(self, validated_data):
@@ -267,37 +622,53 @@ class RegistroSerializer(serializers.ModelSerializer):
             'redes': validated_data.pop('redes', ''),
             'sexo': validated_data.pop('sexo', 'F'),
             'fecha_nacimiento': validated_data.pop('fecha_nacimiento', None),
-            'tipo_cabello': validated_data.pop('tipo_cabello', None),
-            'grosor_cabello': validated_data.pop('grosor_cabello', None),
-            'porosidad_cabello': validated_data.pop('porosidad_cabello', None),
-            'cuero_cabelludo': validated_data.pop('cuero_cabelludo', None),
-            'estado_general': validated_data.pop('estado_general', None),
+        }
+        if cliente_data['numero']:
+            cliente_data['numero_normalizado'] = normalize_argentine_phone(
+                cliente_data['numero']
+            )
+            cliente_data['numero_normalizacion_estado'] = (
+                Cliente.PhoneNormalizationStatus.VALID
+            )
+        hair_data = {
+            field: validated_data.pop(field)
+            for field in (
+                'tipo_cabello',
+                'grosor_cabello',
+                'porosidad_cabello',
+                'cuero_cabelludo',
+                'estado_general',
+            )
+            if field in validated_data and validated_data[field] is not None
         }
         
         # Crear el Usuario
-        user = Usuario.objects.create_user(**validated_data)
+        user = Usuario.objects.create_user(
+            **validated_data,
+            web_access_status=Usuario.WebAccessStatus.CLAIMED,
+        )
         
         # Crear el Cliente con todos los datos
         cliente = Cliente.objects.create(usuario=user, **cliente_data)
         
-        # AUTOMÁTICO: Si hay datos capilares, crear diagnóstico
-        if cliente.tipo_cabello or cliente.grosor_cabello or cliente.porosidad_cabello or cliente.cuero_cabelludo or cliente.estado_general:
-            from gestion.models import DiagnosticoCapilar
+        # Los datos capilares opcionales se registran como autorreporte trazable.
+        if hair_data:
+            from gestion.hair_profile_services import record_client_self_report
             from gestion.views import DiagnosticoCapilarViewSet
-            
-            # Crear el diagnóstico inicial
-            diag = DiagnosticoCapilar.objects.create(
-                cliente=cliente,
-                tipo_cabello=cliente.tipo_cabello,
-                grosor_cabello=cliente.grosor_cabello,
-                porosidad_cabello=cliente.porosidad_cabello,
-                cuero_cabelludo=cliente.cuero_cabelludo,
-                estado_general=cliente.estado_general
+
+            record_client_self_report(
+                actor=user,
+                values=hair_data,
+                reason='Autorreporte inicial del registro público.',
+                run_engine=(
+                    DiagnosticoCapilarViewSet()._ejecutar_motor_diagnostico
+                ),
             )
-            
-            # Ejecutar el motor diagnóstico automáticamente
-            viewset = DiagnosticoCapilarViewSet()
-            viewset._ejecutar_motor_diagnostico(diag)
+
+        assign_initial_client_role(
+            user,
+            source='public_registration',
+        )
         
         return user
 
