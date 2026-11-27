@@ -131,20 +131,44 @@ posteriormente como trabajo complementario en el Incremento 4 de flujos
 profesionales enlazado en la documentación general. La auditoría BH-062 conserva
 su resultado histórico y no se reescribe retroactivamente.
 
-Pendiente funcional separado de ambos cierres: analizar la relación de estos
-procesos con BH-063 y BH-064 sin anticipar sus políticas.
+La relación con BH-063 y BH-064 se documenta en sus cierres separados, sin
+alterar el alcance histórico de BH-062 ni de los flujos profesionales 0–5.
 
 El seguimiento capilar basado en autoevaluaciones periódicas permanece como una
 propuesta funcional no analizada ni implementada. Este cierre no modifica el
 modelo de diagnóstico ni el motor de rutinas, y no crea códigos de backlog ni
 tareas nuevas.
 
+### [BH-063](BH-063/) — cerrado técnicamente
+
+Turnos asistidos/presenciales: solicitud BH-057, consentimiento, disponibilidad,
+hold, pago, confirmación y continuidad profesional. Contiene 1 documento.
+
+- [Cierre técnico de turnos asistidos/presenciales](BH-063/CIERRE_BH063_TURNOS_ASISTIDOS_PRESENCIALES.md)
+
+La ruta legacy `crear-para-cliente` sigue ocupando capacidad con Turnos
+`SOLICITADO` sin BH-057. La reauditoría no encontró una transición de
+confirmación para esos registros fuera de la cadena moderna. Es una excepción
+residual documentada, no una nueva autorización funcional.
+
+### [BH-064](BH-064/) — cerrado técnicamente
+
+Alta rápida de Cliente presencial: identidad comercial, búsqueda minimizada,
+coincidencias, entrega a recepción y reclamo por email. Contiene 1 documento.
+
+- [Cierre técnico de alta rápida de Cliente presencial](BH-064/CIERRE_BH064_ALTA_RAPIDA_CLIENTE_PRESENCIAL.md)
+
+El reclamo está probado en código y en aislamiento; el worker desplegado está
+**NO VERIFICADO**. Para ambas tareas quedan pendientes las pruebas manuales
+integrales y las condiciones operativas de despliegue. El cierre técnico no
+equivale a preparación para producción.
+
 ## Documentación transversal
 
 ### [Generales](generales/)
 
 Análisis e impactos transversales sobre flujos, permisos, sesiones y acceso de
-Personal, además de la auditoría integral del proyecto. Contiene 22 documentos.
+Personal, además de la auditoría integral del proyecto. Contiene 25 documentos.
 
 `FLUJOS PROFESIONALES 0–5 = CERRADOS TÉCNICAMENTE`. Este trabajo complementario
 es posterior al cierre histórico de BH-062 y no modifica retroactivamente su
@@ -168,18 +192,24 @@ Documentos principales:
 - [BH-063/BH-064, Incremento 0: decisiones y contratos](generales/DECISIONES_Y_CONTRATOS_BH063_BH064.md)
 - [BH-064, Incremento 1: identidad presencial y alta rápida idempotente](generales/IMPLEMENTACION_BH064_1_IDENTIDAD_PRESENCIAL.md)
 - [BH-063, Incremento 2: solicitud asistida, riesgo y consentimiento](generales/IMPLEMENTACION_BH063_2_SOLICITUD_RIESGO_CONSENTIMIENTO.md)
-- [BH-063/BH-064, implementación consolidada de Incrementos 1–3](generales/IMPLEMENTACION_BH063_BH064_CONSOLIDADA.md)
+- [BH-063/BH-064, implementación consolidada de Incrementos 1–5 y correcciones](generales/IMPLEMENTACION_BH063_BH064_CONSOLIDADA.md)
+- [BH-063/BH-064, auditoría original: BLOQUEADOS en `3209dbd`](generales/AUDITORIA_INDEPENDIENTE_BH063_BH064.md)
+- [BH-063/BH-064, reauditoría: LISTOS PARA CIERRE TÉCNICO en `6556209`](generales/REAUDITORIA_BH063_BH064_POST_AI01_AI05.md)
 - [Roles y permisos](generales/ANALISIS_ROLES_PERMISOS.md)
 - [Gestión de acceso de Personal](generales/IMPACTO_GESTION_ACCESO_PERSONAL.md)
 
 `BH-063/BH-064 INCREMENTO 0 = CERRADO DOCUMENTALMENTE`.
 
-`BH-064 INCREMENTO 1 = VALIDADO Y PUBLICADO` y
-`BH-063 INCREMENTO 3 = VALIDADO`. Los Incrementos 2–3 integran solicitud
-asistida multiservicio, BH-057, consentimiento, disponibilidad y `SlotHold`
-temporal sin crear Pago ni Turno. Los Incrementos 4–5 continúan fuera de alcance.
+`BH-063 Y BH-064 = CERRADOS TÉCNICAMENTE` para el baseline funcional
+`6556209e4eea78055962928cbd4e11ec9ff62383`. Los Incrementos 4–5 completaron la
+confirmación financiera y la recuperación de recepción. La corrección de
+AI-01–AI-05 y la reauditoría no alteran el veredicto original en `3209dbd`.
+El build estándar aprobó; `CI=true` sigue fallando por avisos históricos. El
+E2E aislado observó los escenarios y comprobó la BD, con timeout en la salida
+del proceso.
 
-El cierre conserva como riesgos no resueltos R-01 a R-07 de la auditoría:
+La auditoría histórica de flujos profesionales conserva sus hallazgos R-01 a
+R-07 tal como se observaron entonces:
 
 - **R-01:** `EN_PROCESO` admite edición de ficha, pero no finalización;
 - **R-02:** la creación asistida queda en `SOLICITADO` sin orquestación integral
@@ -193,18 +223,13 @@ El cierre conserva como riesgos no resueltos R-01 a R-07 de la auditoría:
   desconocida cuando no existe evidencia;
 - **R-07:** permanecen warnings históricos y no se ejecutó navegador E2E.
 
-Continuidad oficial pendiente:
-
-- **BH-063 — Turnos asistidos/presenciales:** deberá resolver la transición
-  autorizada hasta `CONFIRMADO`, el evaluador técnico moderno, disponibilidad,
-  concurrencia e idempotencia de creación, conservando compatibilidad con el
-  recorrido técnico publicado;
-- **BH-064 — Alta rápida de cliente presencial:** deberá definir un alta básica
-  idempotente sin diagnóstico universal y entregar la identidad mínima de
-  Cliente requerida por BH-063.
+El cierre BH-063 documenta la finalización desde `EN_PROCESO` y delimita R-02
+al flujo legacy persistente. El E2E de la reauditoría sólo cubre el alcance
+aislado descrito; no agota R-07. No se presume resuelto el resto de los riesgos.
 
 El registro externo de backlog debe verificarse y actualizarse manualmente, sin
-crear un sustituto de `BACKLOH.xlsx`: BH-062 conserva su cierre histórico, los
-flujos profesionales 0–5 se registran como trabajo posterior cerrado y BH-063 y
-BH-064 permanecen pendientes. Las autoevaluaciones periódicas continúan siendo
-una propuesta no analizada ni implementada.
+crear un sustituto de `BACKLOH.xlsx`. El propietario debe registrar el cierre
+técnico de BH-063 y BH-064 por separado, sin marcarlas listas para producción.
+BH-062 y los flujos profesionales 0–5 conservan sus cierres históricos. Las
+autoevaluaciones periódicas continúan siendo una propuesta no analizada ni
+implementada.
